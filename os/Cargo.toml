@@ -6,4 +6,11 @@ edition = "2021"
 [profile.dev]
 panic = "abort"
 
+[features]
+default = []
+test = []
+
+
 [dependencies]
+buddy_system_allocator = "0.10.0"
+lazy_static = { version = "1.5.0", features = ["spin_no_std"] }
