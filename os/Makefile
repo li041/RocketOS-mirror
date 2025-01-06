@@ -27,12 +27,18 @@ ifeq ($(MODE), release)
 	MODE_ARG := --release
 endif
 
+# File system
+FS_IMG := ../img/sdcard.img
+
 # QEMU
+# 添加一块虚拟硬盘, 命名为`x0`, 将`sdcard.img`挂载到这块硬盘上, VirtIO总线通过MMIO进行控制, 且该块设备在总线中的编号为0
 QEMU_ARGS := 	-machine virt \
 				-m $(MEM_SIZE) \
 				-kernel $(KERNEL_BIN) \
 				-nographic \
 				-bios $(BOOTLOADER_ELF)\
+			    -drive file=$(FS_IMG),if=none,format=raw,id=x0 \
+			 	-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
 
 # gdb
 GDB_CLIENT := riscv64-unknown-elf-gdb

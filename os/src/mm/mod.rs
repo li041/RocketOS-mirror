@@ -6,7 +6,7 @@ use heap_allocator::heap_test;
 pub mod address;
 pub mod frame_allocator;
 pub mod heap_allocator;
-mod memory_set;
+pub mod memory_set;
 pub mod page_table;
 
 pub use address::*;

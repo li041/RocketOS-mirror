@@ -50,6 +50,7 @@ use alloc::sync::Arc;
 lazy_static! {
     pub static ref KERNEL_SPACE: Arc<SpinNoIrqLock<MemorySet>> =
         Arc::new(SpinNoIrqLock::new(MemorySet::new_kernel()));
+    pub static ref KERNEL_SATP: usize = KERNEL_SPACE.lock().page_table.token();
 }
 
 // 这个是内核一级页表的最后一项, 部分用于映射内核栈
@@ -96,8 +97,16 @@ impl MemorySet {
             memory_set.push(new_area, None, 0);
             // 复制数据
             for vpn in area.vpn_range {
-                let src_ppn = user_memory_set.page_table.translate(vpn).unwrap().ppn();
-                let dst_ppn = memory_set.page_table.translate(vpn).unwrap().ppn();
+                let src_ppn = user_memory_set
+                    .page_table
+                    .translate_vpn_to_pte(vpn)
+                    .unwrap()
+                    .ppn();
+                let dst_ppn = memory_set
+                    .page_table
+                    .translate_vpn_to_pte(vpn)
+                    .unwrap()
+                    .ppn();
                 dst_ppn
                     .get_bytes_array()
                     .copy_from_slice(src_ppn.get_bytes_array());
@@ -428,7 +437,7 @@ impl MapArea {
         if offset != 0 {
             let src = &data[0..len.min(0 + PAGE_SIZE - offset)];
             let dst = &mut page_table
-                .translate(current_vpn)
+                .translate_vpn_to_pte(current_vpn)
                 .unwrap()
                 .ppn()
                 .get_bytes_array()[offset..offset + src.len()];
@@ -443,7 +452,7 @@ impl MapArea {
             }
             let src = &data[start..len.min(start + PAGE_SIZE)];
             let dst = &mut page_table
-                .translate(current_vpn)
+                .translate_vpn_to_pte(current_vpn)
                 .unwrap()
                 .ppn()
                 .get_bytes_array()[..src.len()];

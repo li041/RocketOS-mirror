@@ -6,8 +6,20 @@ use core::{
     fmt::{self, Debug, Formatter},
 };
 
+use super::address::{PhysAddr, PhysPageNum, VirtPageNum};
+use crate::{
+    config::{KERNEL_DIRECT_OFFSET, PAGE_SIZE_BITS},
+    DEBUG_FLAG,
+};
 use bitflags::bitflags;
-use riscv::{addr::Page, paging::PTE};
+
+use super::{
+    frame_allocator::{frame_alloc, FrameTracker},
+    memory_set::KERNEL_SPACE,
+    VirtAddr,
+};
+use alloc::vec::Vec;
+use alloc::{string::String, vec};
 
 bitflags! {
     pub struct PTEFlags: u16 {
@@ -22,19 +34,6 @@ bitflags! {
         const COW = 1 << 8;
     }
 }
-
-use crate::{
-    config::{KERNEL_DIRECT_OFFSET, PAGE_SIZE_BITS},
-    DEBUG_FLAG,
-};
-
-use super::{
-    frame_allocator::{frame_alloc, FrameTracker},
-    memory_set::KERNEL_SPACE,
-    PhysPageNum, VirtPageNum,
-};
-use alloc::vec::Vec;
-use alloc::{string::String, vec};
 
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -243,8 +242,15 @@ impl PageTable {
 
 impl PageTable {
     // 根据vpn找到对应的pte, 若找不到则返回None
-    pub fn translate(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
+    pub fn translate_vpn_to_pte(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
         self.find_pte(vpn).map(|pte| *pte)
+    }
+    // 返回虚拟地址对应的物理地址, 使用usize类型更加灵活
+    pub fn translate_va_to_pa(&self, va: VirtAddr) -> Option<usize> {
+        self.find_pte(va.clone().floor()).map(|pte| {
+            let aligned_pa = PhysAddr::from(pte.ppn().0 << PAGE_SIZE_BITS);
+            aligned_pa.0 + va.page_offset()
+        })
     }
     /// Get root ppn
     pub fn token(&self) -> usize {
