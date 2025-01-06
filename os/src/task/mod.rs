@@ -9,6 +9,7 @@ pub mod switch;
 use crate::{
     boards::qemu::CLOCK_FREQ,
     config::PAGE_SIZE,
+    fs::{path::Path, File, Stdin, Stdout},
     loader::get_app_data_by_name,
     mm::KERNEL_SPACE,
     mutex::SpinNoIrqLock,
@@ -17,11 +18,12 @@ use crate::{
     trap::{trap_handler, TrapContext},
     utils::c_str_to_string,
 };
+use alloc::vec;
 use alloc::{
     sync::{Arc, Weak},
     vec::Vec,
 };
-use core::{arch::asm, mem};
+use core::arch::asm;
 use lazy_static::lazy_static;
 use riscv::asm;
 
@@ -56,6 +58,8 @@ pub struct TaskInner {
     pub parent: Option<Weak<Task>>,
     pub children: Vec<Arc<Task>>,
     pub exit_code: i32,
+    pub fd_table: Vec<Option<Arc<dyn File + Send + Sync>>>,
+    pub cwd: Path,
 }
 
 // 通过tp寄存器使用裸指针获取当前Task
@@ -86,6 +90,8 @@ impl Task {
                 parent: None,
                 children: Vec::new(),
                 exit_code: 0,
+                fd_table: Vec::new(),
+                cwd: Path::new_absolute(),
             }),
         }
     }
@@ -113,6 +119,15 @@ impl Task {
                 parent: None,
                 children: Vec::new(),
                 exit_code: 0,
+                fd_table: vec![
+                    // 0 -> stdin
+                    Some(Arc::new(Stdin)),
+                    // 1 -> stdout
+                    Some(Arc::new(Stdout)),
+                    // Todo: 2 -> stderr, 没有实现, 暂时指向stdout
+                    Some(Arc::new(Stdout)),
+                ],
+                cwd: Path::new_absolute(),
             }),
         });
         let task_ptr = Arc::as_ptr(&task) as usize;
@@ -134,6 +149,12 @@ impl Task {
         task
     }
     pub fn fork(self: &Arc<Self>) -> Arc<Self> {
+        // 1. 复制内存空间
+        // 2. 复制内核栈中的`TrapContext`, 不复制父进程在内核中函数调用的栈帧
+        // 3. 复制fd_table, cwd
+        // 4. 创建子进程的`Task`, 并分配新的tid
+        // 5. 设置子进程的`TrapContext`, 与父进程相比, 1.修改a0为0, 作为fork的返回值 2.设置tp寄存器指向Task结构体, 3.设置satp
+        // 6. 设置子进程的`TaskContext`
         let mut parent_inner = self.inner.lock();
         // 复制内存空间
         let memory_set = MemorySet::from_existed_user(&parent_inner.memory_set);
@@ -152,11 +173,20 @@ impl Task {
             (dst_kstack_top - core::mem::size_of::<TrapContext>()) as *mut TrapContext;
         let task_cx_ptr =
             (dst_trap_cx_ptr as usize - core::mem::size_of::<TaskContext>()) as *mut TaskContext;
-        // Debug
-        log::error!("src_trap_cx_ptr: {:#x}", src_trap_cx_ptr as usize);
-        log::error!("dst_trap_cx_ptr: {:#x}", dst_trap_cx_ptr as usize);
+
+        // 复制fd_table和cwd
+        let mut child_fd_table: Vec<Option<Arc<dyn File + Send + Sync>>> = Vec::new();
+        for fd in parent_inner.fd_table.iter() {
+            if let Some(file) = fd {
+                child_fd_table.push(Some(file.clone()));
+            } else {
+                child_fd_table.push(None);
+            }
+        }
+        let child_cwd = parent_inner.cwd.clone();
         // 分配新的tid
         let tid = tid_alloc();
+
         let task = Arc::new(Task {
             // 对于fork出的子进程, 内核栈是新分配的, 其中只有`TrapContext`是父进程的副本, 然后是初始化的`TaskContext`
             kstack: KernelStack(task_cx_ptr as usize),
@@ -167,6 +197,8 @@ impl Task {
                 parent: Some(Arc::downgrade(self)),
                 children: Vec::new(),
                 exit_code: 0,
+                fd_table: child_fd_table,
+                cwd: child_cwd,
             }),
         });
 
@@ -220,13 +252,6 @@ impl Task {
         let kstack_top = get_stack_top_by_sp(self.kstack.0);
 
         let trap_cx_ptr = (kstack_top - core::mem::size_of::<TrapContext>()) as *mut TrapContext;
-        // Debug: 打印先前栈中的`TrapContext`
-        // let prev_trap_cx = unsafe { trap_cx_ptr.read() };
-        // log::info!(
-        //     "[Task::exec] prev_trap_cx_sepc: {:x}, prev_trap_cx_sp: {:x}",
-        //     prev_trap_cx.sepc,
-        //     prev_trap_cx.x[2]
-        // );
         let trap_cx = TrapContext::app_init_trap_context(entry_point, ustack_top);
         unsafe {
             *trap_cx_ptr = trap_cx;
@@ -282,8 +307,6 @@ pub fn sys_fork() -> isize {
     child_tid
 }
 
-// Debug
-#[no_mangle]
 pub fn sys_exec(path: *const u8) -> isize {
     let path = c_str_to_string(path);
     if let Some(elf_data) = get_app_data_by_name(&path) {

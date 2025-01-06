@@ -16,6 +16,9 @@ mod mm;
 pub mod mutex;
 mod sbi;
 // mod sched;
+mod drivers;
+mod fat32;
+mod fs;
 mod syscall;
 mod task;
 mod timer;
@@ -25,6 +28,7 @@ pub mod config;
 pub mod utils;
 
 use alloc::sync::Arc;
+use drivers::block::block_device_test;
 use loader::get_app_data_by_name;
 use riscv::register::sstatus;
 use task::{add_initproc, processor::run_tasks, scheduler::add_task};
@@ -101,7 +105,10 @@ pub fn rust_main(_hart_id: usize) -> ! {
 
     trap::enable_timer_interrupt();
     timer::set_next_trigger();
-    loader::list_apps();
+    fs::list_apps();
+    // loader::list_apps();
+    // pass block_device_test, 注意实际运行时别调用这个函数, 会覆盖Block内容
+    // block_device_test();
     DEBUG_FLAG.store(1, core::sync::atomic::Ordering::SeqCst);
     run_tasks();
     panic!("shutdown machine");

@@ -6,3 +6,5 @@ pub const KERNEL_DIRECT_OFFSET: usize = KERNEL_BASE >> 12;
 pub const PAGE_SIZE_BITS: usize = 0xc;
 /// 用户栈大小: 两页
 pub const USER_STACK_SIZE: usize = PAGE_SIZE << 4;
+
+pub type SysResult<T> = Result<T, usize>;
