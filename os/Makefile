@@ -58,7 +58,11 @@ build:
 	cargo build $(MODE_ARG) --features $(FEATURES)
 	@$(OBJCOPY) $(KERNEL_ELF) --strip-all -O binary $(KERNEL_BIN)
 	
-run: env build 
+make-user:
+	@cd ../user && make
+	@./build
+
+run: env make-user build 
 	qemu-system-riscv64 $(QEMU_ARGS)
 
 clean:
