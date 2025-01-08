@@ -1,6 +1,7 @@
 #![no_std]
 #![feature(linkage)]
 #![feature(alloc_error_handler)]
+#![feature(panic_info_message)]
 
 #[macro_use]
 pub mod console;
@@ -98,7 +99,6 @@ pub fn waitpid(pid: usize, exit_code: &mut i32) -> isize {
     loop {
         match sys_waitpid(pid as isize, exit_code as *mut _) {
             -2 => {
-
                 yield_();
             }
             // -1 or a real pid

@@ -5,13 +5,13 @@ use core::panic::PanicInfo;
 fn panic(info: &PanicInfo) -> ! {
     if let Some(location) = info.location() {
         println!(
-            "Panicked at {}:{} {}",
+            "Panicked at {}:{} {:?}",
             location.file(),
             location.line(),
             info.message()
         );
     } else {
-        println!("Panicked: {}", info.message());
+        println!("Panicked: {:?}", info.message());
     }
     shutdown(true)
 }

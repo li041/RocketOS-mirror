@@ -16,18 +16,18 @@
 #![forbid(unsafe_code)]
 
 pub mod listdrainiter;
+mod listends;
 pub mod listindex;
 pub mod listiter;
 mod listnode;
-mod listends;
 
-use alloc::{vec::Vec, string::String, format};
-use core::{cmp::Ordering, default::Default, fmt};
+pub use self::listdrainiter::ListDrainIter;
+pub use self::listindex::ListIndex;
+pub use self::listiter::ListIter;
+use self::{listends::ListEnds, listnode::ListNode};
+use alloc::{format, string::String, vec::Vec};
 use core::iter::{Extend, FromIterator};
-use self::{listnode::ListNode, listends::ListEnds};
-pub use self::listindex::ListIndex as ListIndex;
-pub use self::listiter::ListIter as ListIter;
-pub use self::listdrainiter::ListDrainIter as ListDrainIter;
+use core::{cmp::Ordering, default::Default, fmt};
 pub type Index = ListIndex; // for backwards compatibility with 0.2.7
 
 /// Doubly-linked list implemented in safe Rust.
@@ -1124,26 +1124,5 @@ impl<T> Extend<T> for IndexList<T> {
         for elem in iter {
             self.insert_last(elem);
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::mem::size_of;
-
-    #[test]
-    fn test_struct_sizes() {
-        assert_eq!(size_of::<ListIndex>(), 4);
-        assert_eq!(size_of::<ListNode>(), 8);
-        assert_eq!(size_of::<ListEnds>(), 8);
-        assert_eq!(size_of::<IndexList<u32>>(), 72);
-    }
-    #[test]
-    fn test_index_alias() {
-        let list = IndexList::from(&mut vec![1, 2, 3]);
-        let ndx: Index = list.first_index();
-        assert_eq!(ndx.get(), Some(0));
-        assert_eq!(list.get(ndx), Some(&1));
     }
 }

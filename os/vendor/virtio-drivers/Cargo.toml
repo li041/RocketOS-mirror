@@ -18,17 +18,8 @@ authors = [
     "Runji Wang <wangrunji0408@163.com>",
     "Yuekai Jia <equation618@gmail.com>",
 ]
-build = false
-autobins = false
-autoexamples = false
-autotests = false
-autobenches = false
 description = "VirtIO guest drivers."
 readme = "README.md"
-
-[lib]
-name = "virtio_drivers"
-path = "src/lib.rs"
 
 [dependencies]
 bitflags = "1.3"
