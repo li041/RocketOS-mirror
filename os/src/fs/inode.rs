@@ -1,5 +1,3 @@
-use core::sync::atomic::{AtomicUsize, Ordering};
-
 use alloc::{
     collections::BTreeMap,
     string::{String, ToString},
@@ -31,6 +29,7 @@ pub trait Inode: Send + Sync {
     fn clear(&self);
 }
 
+#[allow(unused)]
 impl dyn Inode {
     pub fn insert_child(&self, name: String, inode: Arc<dyn Inode>) {
         self.get_meta().inner.lock().children.insert(name, inode);
@@ -115,10 +114,10 @@ impl dyn Inode {
     }
 }
 
-
 const FAT32_INODE_CONST: usize = 0x1000_0000;
 
 /// FAT的inode设置为常量, 与on-disk location无关
+#[allow(unused)]
 pub struct InodeMeta {
     /// inode number
     pub ino: usize,
@@ -179,6 +178,7 @@ impl InodeMeta {
 }
 
 #[derive(PartialEq, Debug, Clone)]
+#[allow(unused)]
 pub enum InodeState {
     /// children not loaded yet
     Init,
@@ -189,6 +189,7 @@ pub enum InodeState {
 }
 
 #[derive(Clone)]
+#[allow(unused)]
 pub struct InodeMetaInner {
     /// last access time, need to flush to disk.
     pub st_atim: TimeSpec,

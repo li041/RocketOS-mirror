@@ -127,9 +127,6 @@ impl FAT32File {
                 get_block_cache(sector_id + j, self.fat.block_device.clone())
                     .lock()
                     .read(0, |data: &[u8; SECTOR_SIZE]| tmp_data.copy_from_slice(data));
-                log::warn!("sector_id: {:?}", sector_id,);
-                // 这里读的就是全0, 错的
-                // log::warn!("[FAAT32File]tmp_data: {:?}", tmp_data);
                 // 将范围内的数据拷贝到data中
                 for i in cur_st..cur_ed {
                     data[i - st] = tmp_data[i - sector_st];

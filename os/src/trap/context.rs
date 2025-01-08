@@ -1,12 +1,9 @@
 use core::arch::asm;
 
 use alloc::vec::Vec;
-use riscv::{
-    asm,
-    register::sstatus::{self, Sstatus, SPP},
-};
+use riscv::register::sstatus::{self, Sstatus, SPP};
 
-use crate::{config::PAGE_SIZE_BITS, console::print, mm::frame_allocator::frame_alloc};
+use crate::{config::PAGE_SIZE_BITS, mm::frame_allocator::frame_alloc};
 
 use crate::mm::page_table::map_temp;
 /// Trap Context
@@ -31,11 +28,24 @@ impl TrapContext {
         self.x[4] = tp;
     }
     /// init app context
-    pub fn app_init_trap_context(entry: usize, ustack_top: usize) -> Self {
+    /// argc, argv_base, envp_base, auxv_base分别放在x[10], x[11], x[12], x[13]
+    pub fn app_init_trap_context(
+        entry: usize,
+        ustack_top: usize,
+        argc: usize,
+        argv_base: usize,
+        envp_base: usize,
+        auxv_base: usize,
+    ) -> Self {
         let mut sstatus = sstatus::read(); // CSR sstatus
         sstatus.set_spp(SPP::User); //previous privilege mode: user mode
+        let mut gerneal_regs = [0; 32];
+        gerneal_regs[10] = argc;
+        gerneal_regs[11] = argv_base;
+        gerneal_regs[12] = envp_base;
+        gerneal_regs[13] = auxv_base;
         let mut cx = Self {
-            x: [0; 32],
+            x: gerneal_regs,
             sstatus,
             sepc: entry, // entry point of app
         };
@@ -65,7 +75,7 @@ pub fn trap_cx_test() {
         *write_addr = cx;
     }
     let read_addr: u64 = 0xffff_ffff_ffff_f000;
-    let mut read_cx: TrapContext = TrapContext::app_init_trap_context(0, 0);
+    let mut read_cx: TrapContext = TrapContext::app_init_trap_context(0, 0, 0, 0, 0, 0);
     let mut read_cx_sstatus: usize;
     // 在这里使用汇编代码读取内核栈的值
     unsafe {

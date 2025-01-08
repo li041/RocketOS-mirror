@@ -2,15 +2,15 @@
 !.github/*
 !.devcontainer/devcontainer.json
 
-.vscode/*
 .idea
 **/target/
-Cargo.lock
 
 os/src/link_app.S
 os/src/linker.ld
+user/build
 user/target/*
 
+testsuits-for-oskernel/*
 img/*
 
 kernel-qemu

@@ -1,6 +1,6 @@
 use core::arch::{asm, global_asm};
 
-use super::{kstack::KernelStack, Task};
+use super::Task;
 use alloc::sync::Arc;
 use lazy_static::lazy_static;
 

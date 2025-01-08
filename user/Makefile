@@ -11,9 +11,18 @@ OBJCOPY := rust-objcopy --binary-architecture=riscv64
 CP := cp 
 
 TEST ?= 
+SUBMIT :=
 
-elf: $(APPS)
-	@cargo build --release
+ifeq ($(MODE), release)
+	MODE_ARG := --release
+endif
+
+elf: $(APPS) 
+ifeq ($(SUBMIT), true)
+	@cargo build --offline --release
+else
+	@cargo build $(MODE_ARG)
+endif
 ifeq ($(TEST), 1)
 	@$(CP) $(TARGET_DIR)/usertests $(TARGET_DIR)/initproc
 endif
@@ -21,7 +30,11 @@ endif
 binary: elf
 	@$(foreach elf, $(ELFS), $(OBJCOPY) $(elf) --strip-all -O binary $(patsubst $(TARGET_DIR)/%, $(TARGET_DIR)/%.bin, $(elf));)
 
-build: binary
+move-cargo:
+	@rm -rf .cargo
+	@cp -r cargo .cargo
+
+build: move-cargo binary
 
 clean:
 	@cargo clean

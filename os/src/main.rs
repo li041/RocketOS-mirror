@@ -27,13 +27,8 @@ mod trap;
 pub mod config;
 pub mod utils;
 
-use alloc::sync::Arc;
-use drivers::block::block_device_test;
-use loader::get_app_data_by_name;
 use riscv::register::sstatus;
-use task::{add_initproc, processor::run_tasks, scheduler::add_task};
-
-use crate::task::Task;
+use task::{add_initproc, processor::run_tasks};
 
 use crate::config::KERNEL_BASE;
 use core::{
@@ -76,6 +71,7 @@ pub fn fake_main(hart_id: usize) {
     }
 }
 
+#[allow(unused)]
 static DEBUG_FLAG: AtomicU8 = AtomicU8::new(0);
 
 #[no_mangle]
@@ -102,11 +98,10 @@ pub fn rust_main(_hart_id: usize) -> ! {
     // let init_proc = Arc::new(Task::new(elf_data));
     show_context_size();
     add_initproc();
-
     trap::enable_timer_interrupt();
     timer::set_next_trigger();
     fs::list_apps();
-    // loader::list_apps();
+    loader::list_apps();
     // pass block_device_test, 注意实际运行时别调用这个函数, 会覆盖Block内容
     // block_device_test();
     DEBUG_FLAG.store(1, core::sync::atomic::Ordering::SeqCst);

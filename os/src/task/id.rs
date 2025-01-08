@@ -1,9 +1,12 @@
 //! id allocator
 
+use core::fmt::Display;
+
 use crate::mutex::SpinNoIrqLock;
 use alloc::vec::Vec;
 use lazy_static::lazy_static;
 
+/// Generic Allocator struct
 pub struct IdAllocator {
     next: usize,
     recycled: Vec<usize>,
@@ -34,6 +37,28 @@ impl IdAllocator {
     }
 }
 
+#[derive(PartialEq, Debug)]
+pub struct TidHandle(pub usize);
+impl Drop for TidHandle {
+    fn drop(&mut self) {
+        TID_ALLOCATOR.lock().dealloc(self.0);
+    }
+}
+
+impl Display for TidHandle {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(PartialEq, Debug)]
+pub struct KIdHandle(pub usize);
+impl Drop for KIdHandle {
+    fn drop(&mut self) {
+        KID_ALLOCATOR.lock().dealloc(self.0);
+    }
+}
+
 lazy_static! {
     /// kstack id allocator instance through lazy_static!
     pub static ref KID_ALLOCATOR: SpinNoIrqLock<IdAllocator> = SpinNoIrqLock::new(IdAllocator::new());
@@ -44,8 +69,8 @@ pub fn kid_alloc() -> usize {
     KID_ALLOCATOR.lock().alloc()
 }
 
-pub fn tid_alloc() -> usize {
-    TID_ALLOCATOR.lock().alloc()
+pub fn tid_alloc() -> TidHandle {
+    TidHandle(TID_ALLOCATOR.lock().alloc())
 }
 
 #[cfg(test)]

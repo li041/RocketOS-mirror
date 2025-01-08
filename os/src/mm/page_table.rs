@@ -7,10 +7,7 @@ use core::{
 };
 
 use super::address::{PhysAddr, PhysPageNum, VirtPageNum};
-use crate::{
-    config::{KERNEL_DIRECT_OFFSET, PAGE_SIZE_BITS},
-    DEBUG_FLAG,
-};
+use crate::config::{KERNEL_DIRECT_OFFSET, PAGE_SIZE_BITS};
 use bitflags::bitflags;
 
 use super::{
@@ -237,6 +234,15 @@ impl PageTable {
         assert!(!pte.is_valid(), "vpn {:?} is mapped before mapping", vpn);
         // *pte = PageTableEntry::new(ppn, flags | PTEFlags::V);
         *pte = PageTableEntry::new(ppn, flags | PTEFlags::V | PTEFlags::A | PTEFlags::D);
+    }
+    pub fn unmap(&mut self, vpn: VirtPageNum) {
+        let pte = self.find_pte(vpn).unwrap();
+        assert!(
+            pte.is_valid(),
+            "vpn {:?} is not mapped before unmapping",
+            vpn
+        );
+        *pte = PageTableEntry::empty();
     }
 }
 

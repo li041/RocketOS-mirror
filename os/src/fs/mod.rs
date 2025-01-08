@@ -31,11 +31,12 @@ pub trait File: Send + Sync {
     fn seek(&self, offset: usize);
 }
 
+// 指示在当前工作目录下打开文件
 pub const AT_FDCWD: isize = -100;
 pub const AT_REMOVEDIR: u32 = 0x200;
 
 use alloc::sync::Arc;
 use inode::Inode;
 // use alloc::sync::Arc;
-pub use os_inode::{create_dir, list_apps, open_file, open_inode, OSInode, OpenFlags};
+pub use os_inode::{create_dir, list_apps, open_file, open_inode, OpenFlags};
 pub use stdio::{Stdin, Stdout};

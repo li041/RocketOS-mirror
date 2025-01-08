@@ -1,16 +1,7 @@
-use core::{arch::asm, intrinsics::drop_in_place};
-
 use alloc::sync::Arc;
 use lazy_static::lazy_static;
 
-use crate::{
-    mm::{
-        page_table::{self, PageTable},
-        KERNEL_SPACE,
-    },
-    mutex::SpinNoIrqLock,
-    task::{context::check_task_context_in_kernel_stack, current_task, processor},
-};
+use crate::mutex::SpinNoIrqLock;
 
 use super::{
     switch::{self, IDLE_TASK},
@@ -53,11 +44,6 @@ pub fn run_tasks() {
             current_task_inner.task_status = TaskStatus::Ready;
             next_task_inner.task_status = TaskStatus::Running;
             let next_task_kernel_stack = next_task.kstack.0;
-            let next_tp = Arc::as_ptr(&next_task) as usize;
-            log::error!("next_tp: {:#x}", next_tp);
-            log::info!("next_task_kernel_stack: {:#x}", next_task_kernel_stack);
-
-            log::info!("switch to task {}", next_task.tid);
             // 注意这里要主动drop, 否则会造成死锁
             drop(current_task_inner);
             drop(next_task_inner);
