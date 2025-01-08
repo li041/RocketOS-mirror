@@ -1,0 +1,45 @@
+.altmacro
+.macro SAVE_CALLEE n
+    sd s\n, (\n+2)*8(sp)
+.endm
+.macro LOAD_CALLEE n
+    ld s\n, (\n+2)*8(a0)
+.endm
+    .section .text
+    .globl __switch
+__switch:
+    # __swtich(
+    #    next_task_kernel_stack: *const usize,
+    # )
+    # a0 -> next_task_kernel_stack
+    # 硬编码, 这里在现任务的内核栈中分配一块空间大小为`TaskContext`的空间
+    addi sp, sp, -14*8
+    # save ra,tp and s0~s11 of current execution
+    sd ra, 0(sp)
+    sd tp, 8(sp)
+    .set n, 0
+    .rept 12
+        SAVE_CALLEE %n
+        .set n, n+1
+    .endr
+    # 更新当前任务的内核栈指针, 通过tp指向的TaskControlBlock来更新, 注意此时tp指向的是当前任务的TCB
+    sd sp, 0(tp)
+
+    # a0指向的是下一个任务的内核栈
+    # restore ra, tp and s0~s11 of next execution
+    ld ra, 0(a0)
+    ld tp, 8(a0)
+    # tp指向的是下一个任务的TCB
+    .set n, 0
+    .rept 12
+        LOAD_CALLEE %n
+        .set n, n+1
+    .endr
+    # return to next execution, 硬编码
+    addi a0, a0, 14*8
+    // Todo: 检验, 好像不需要修改next task TCB中的sp
+    # sd a0, 0(tp)
+    ld sp, a0
+    # 现在sp指向的是下一个任务的内核栈
+    ret
+
