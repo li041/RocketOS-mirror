@@ -4,8 +4,8 @@ use core::fmt::{Debug, Formatter};
 
 use alloc::fmt;
 
-use crate::config::{KERNEL_BASE, PAGE_SIZE_BITS};
 use super::page_table::PageTableEntry;
+use crate::config::{KERNEL_BASE, PAGE_SIZE_BITS};
 
 #[repr(C)]
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -58,7 +58,6 @@ pub struct VirtAddr(pub usize);
 
 impl From<usize> for VirtAddr {
     fn from(addr: usize) -> Self {
-        // Self(addr & ((1 << VA_WIDTH_SV39) - 1))
         Self(addr)
     }
 }
@@ -79,7 +78,8 @@ impl VirtAddr {
         if self.0 == 0 {
             return VirtPageNum(0);
         }
-        VirtPageNum((self.0 + (1 << PAGE_SIZE_BITS) - 1) >> PAGE_SIZE_BITS)
+        // 注意这里要先减1, 因为对于kstack_id = 0的栈top为0xffff_ffff_ffff_f000, 会溢出
+        VirtPageNum((self.0 - 1 + (1 << PAGE_SIZE_BITS)) >> PAGE_SIZE_BITS)
     }
     /// Get page offset
     pub fn page_offset(&self) -> usize {
@@ -120,14 +120,14 @@ impl PhysPageNum {
         let pa = PhysAddr::from(*self);
         let va = VirtAddr::from(pa.0 + KERNEL_BASE);
         let ptr = va.0 as *mut PageTableEntry;
-        unsafe { core::slice::from_raw_parts_mut(ptr , 512) }
+        unsafe { core::slice::from_raw_parts_mut(ptr, 512) }
     }
     /// Get u8 array on `PhysPageNum`
     pub fn get_bytes_array(&self) -> &'static mut [u8] {
         let pa = PhysAddr::from(*self);
         let va = VirtAddr::from(pa.0 + KERNEL_BASE);
         let ptr = va.0 as *mut u8;
-        unsafe { core::slice::from_raw_parts_mut(ptr , 4096) }
+        unsafe { core::slice::from_raw_parts_mut(ptr, 4096) }
     }
     /// Get mutable reference to T on `PhysPageNum`
     pub fn get_mut<T>(&self) -> &'static mut T {
@@ -137,7 +137,6 @@ impl PhysPageNum {
         unsafe { &mut *ptr }
     }
 }
-
 
 #[repr(C)]
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -168,8 +167,6 @@ impl StepByOne for VirtPageNum {
         self.0 += 1;
     }
 }
-
-
 
 impl Debug for VirtAddr {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {

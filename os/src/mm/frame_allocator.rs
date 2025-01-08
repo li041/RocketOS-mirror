@@ -2,8 +2,8 @@
 //! controls all the frames in the operating system.
 
 use super::{PhysAddr, PhysPageNum};
-use crate::{boards::qemu::MEMORY_END, config::KERNEL_BASE};
 use crate::mutex::SpinNoIrqLock;
+use crate::{boards::qemu::MEMORY_END, config::KERNEL_BASE};
 use alloc::vec::Vec;
 use core::fmt::{self, Debug, Formatter};
 use lazy_static::*;
@@ -102,6 +102,11 @@ pub fn init_frame_allocator() {
     FRAME_ALLOCATOR.lock().init(
         PhysAddr::from((ekernel as usize - KERNEL_BASE) as usize).ceil(),
         PhysAddr::from(MEMORY_END).floor(),
+    );
+    log::error!(
+        "frame allocator: {:#x?} - {:#x?}",
+        ekernel as usize,
+        MEMORY_END
     );
 }
 
