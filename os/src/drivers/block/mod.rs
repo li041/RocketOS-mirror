@@ -15,8 +15,6 @@ lazy_static! {
     pub static ref BLOCK_DEVICE: Arc<dyn BlockDevice> = Arc::new(BlockDeviceImpl::new());
 }
 
-pub const VIRTIO_BLOCK_SIZE: usize = 512;
-
 #[allow(unused)]
 pub fn block_device_test() {
     let block_device = BLOCK_DEVICE.clone();

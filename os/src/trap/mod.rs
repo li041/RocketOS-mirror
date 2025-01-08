@@ -1,4 +1,4 @@
-use core::arch::{asm, global_asm};
+use core::arch::global_asm;
 
 pub use context::TrapContext;
 use riscv::register::{
@@ -12,13 +12,7 @@ use riscv::register::{
 };
 
 use crate::{
-    config::KERNEL_BASE,
-    mm::{page_table::PageTable, VirtAddr},
-    sbi::shutdown,
-    syscall::syscall,
-    task::{kstack::KSTACK_BOTTOM, suspend_current_and_run_next},
-    timer::set_next_trigger,
-    DEBUG_FLAG,
+    mm::page_table::PageTable, syscall::syscall, task::yield_current_task, timer::set_next_trigger,
 };
 
 pub mod context;
@@ -37,12 +31,6 @@ extern "C" {
 pub fn init() {
     let mut sstatus = sstatus::read();
     sstatus.set_spp(SPP::Supervisor);
-    unsafe {
-        stvec::write(__trap_from_kernel as usize, TrapMode::Direct);
-    }
-}
-
-pub fn set_kernel_trap_entry() {
     unsafe {
         stvec::write(__trap_from_kernel as usize, TrapMode::Direct);
     }
@@ -89,9 +77,11 @@ pub fn trap_handler(cx: &mut TrapContext) {
         }
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
             set_next_trigger();
-            suspend_current_and_run_next();
+            yield_current_task();
         }
         _ => {
+            let current_task = crate::task::current_task();
+            log::error!("task {} trap", current_task.tid,);
             panic!(
                 "Unsupported trap {:?}, stval = {:#x}, sepc = {:#x}!",
                 scause.cause(),
@@ -100,9 +90,6 @@ pub fn trap_handler(cx: &mut TrapContext) {
             );
         }
     }
-    if cx.x[10] == 0xffffffc080203d6c {
-        panic!("a0 is 0xffffffc080203d6c");
-    }
     return;
 }
 
@@ -110,7 +97,6 @@ pub fn trap_handler(cx: &mut TrapContext) {
 pub fn kernel_trap_handler(cx: &mut TrapContext) {
     log::warn!("[kernel_trap_handler]");
     let scause = scause::read();
-    let stval = stval::read();
     match scause.cause() {
         Trap::Exception(Exception::Breakpoint) => {
             log::info!("Breakpoint at 0x{:x}", cx.sepc);

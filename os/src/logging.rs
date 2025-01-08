@@ -48,6 +48,7 @@ pub fn init() {
     );
 }
 
+#[cfg(test)]
 pub fn test() {
     println!("[test] logging test starts");
     log::error!("log::error!");

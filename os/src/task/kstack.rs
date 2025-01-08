@@ -4,14 +4,10 @@ use crate::mm::MapPermission;
 use crate::mm::KERNEL_SPACE;
 
 use super::id::kid_alloc;
-use super::KID_ALLOCATOR;
 
 pub const KSTACK_TOP: usize = 0xffff_ffff_ffff_f000;
-pub const MAX_TASKS: usize = 64;
 pub const KSTACK_SIZE: usize = (PAGE_SIZE << 4) - PAGE_SIZE;
 /// 内核栈的底部, 注意每个内核栈下面还有一个页用于保护
-pub const KSTACK_BOTTOM: usize = KSTACK_TOP - MAX_TASKS * (KSTACK_SIZE + PAGE_SIZE);
-pub const STACK_TOTAL_SPACE_SIZE: usize = KSTACK_TOP - KSTACK_BOTTOM;
 
 // usize记录用户内核栈的sp
 pub struct KernelStack(pub usize);
@@ -28,11 +24,10 @@ pub fn kstack_alloc() -> usize {
         kstack_bottom
     );
 
-    KERNEL_SPACE.lock().insert_framed_area(
+    KERNEL_SPACE.lock().insert_framed_area_va(
         kstack_bottom.into(),
         kstack_top.into(),
         MapPermission::R | MapPermission::W,
-        0,
     );
     kstack_top
 }

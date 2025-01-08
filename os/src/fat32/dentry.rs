@@ -2,7 +2,6 @@ use alloc::{
     format,
     string::{String, ToString},
 };
-use log::info;
 
 use super::{file::FAT32File, time::FAT32Timestamp, LNAME_MAXLEN, SNAME_LEN};
 
@@ -123,7 +122,7 @@ impl FAT32DirEntry {
                 let data = lsb16!($data_idx);
                 if data != 0xFFFF && data != 0 {
                     if $lname_idx >= LNAME_MAXLEN {
-                        info!("[Dentry] Too long lname!");
+                        log::info!("[FAT32DirEntry::read_dentry] Too long lname!");
                         return None;
                     }
                     lname[$lname_idx] = lsb16!($data_idx);
@@ -163,13 +162,13 @@ impl FAT32DirEntry {
                 // check ord
                 if next_ord.is_some() {
                     if next_ord.unwrap() != real_ord {
-                        info!("[Dentry] Long Dir ID not match!");
+                        log::info!("[FAT32DirEntry::read_dentry] Long Dir ID not match!");
                         return None;
                     }
                 } else {
                     // 长文件名的目录项是倒序存储的, 所以第一个目录项应该是长文件最后一个目录项
                     if (ord & LAST_LONG_ENTRY) != LAST_LONG_ENTRY {
-                        info!("[Dentry] Not first dentry!");
+                        log::info!("[FAT32DirEntry::read_dentry] Not first dentry!");
                         return None;
                     }
                 }
@@ -183,7 +182,7 @@ impl FAT32DirEntry {
                 // 检查检验和
                 if s_chksum.is_some() {
                     if s_chksum.unwrap() != chksum {
-                        info!("[Dentry] Chksum not match!");
+                        log::info!("[FAT32DirEntry::read_dentry] Chksum not match!");
                         return None;
                     }
                 } else {
@@ -210,14 +209,14 @@ impl FAT32DirEntry {
             } else {
                 // 短文件名
                 if next_ord.is_some() {
-                    info!("[Dentry] Expect long name but met with short!");
+                    log::info!("[FAT32DirEntry::read_dentry] Expect long name but met with short!");
                     return None;
                 }
 
                 if s_chksum.is_some() {
                     let calc_chksum = shortname_checksum(&read_buf[0..11]);
                     if calc_chksum != s_chksum.unwrap() {
-                        info!("[Dentry] Chksum not match!");
+                        log::info!("[FAT32DirEntry::read_dentry] Chksum not match!");
                         return None;
                     }
                 }

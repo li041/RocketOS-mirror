@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, sync::Arc, vec::Vec};
+use alloc::{sync::Arc, vec::Vec};
 
 use crate::{
     config::SysResult,

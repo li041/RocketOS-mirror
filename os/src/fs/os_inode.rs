@@ -58,7 +58,7 @@ impl OSInode {
         }
     }
     /// Read all data inside a inode into vector
-    pub async fn read_all(&self) -> Vec<u8> {
+    pub fn read_all(&self) -> Vec<u8> {
         let inode = self.inner_handler(|inner| inner.inode.clone());
         let mut buffer = [0u8; 512];
         let mut v: Vec<u8> = Vec::new();
@@ -218,10 +218,10 @@ pub fn open_file(dirfd: isize, path: &Path, flags: OpenFlags) -> SysResult<Arc<O
     }
 }
 
-pub fn create_dir(dirfd: isize, path: &Path) -> SysResult<usize> {
+pub fn create_dir(dirfd: isize, path: &Path) -> usize {
     match open_cwd(dirfd, path).open_path(path, false, true) {
-        Ok(_) => Ok(0),
-        Err(e) => Err(e),
+        Ok(_) => 0,
+        Err(e) => e,
     }
 }
 

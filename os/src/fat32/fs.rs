@@ -14,7 +14,6 @@ use super::{
 use crate::drivers::block::block_dev::BlockDevice;
 
 pub struct FAT32FileSystem {
-    pub block_device: Arc<dyn BlockDevice>,
     pub root_inode: Arc<dyn Inode>,
 }
 
@@ -30,7 +29,7 @@ impl FAT32FileSystem {
                     boot_sector.is_valid(),
                     "FAT32FileSystem::open(): Error loading boot_sector!"
                 );
-                log::info!("{:?}", boot_sector);
+                // log::info!("{:?}", boot_sector);
                 Arc::new(FAT32Meta::new(boot_sector))
             },
         );
@@ -49,7 +48,6 @@ impl FAT32FileSystem {
                 );
                 Arc::new(FSMutex::new(FAT32Info::new(fs_info_sector)))
             });
-        let root_path = Path::from("/");
         // 读取根目录inode
         let root_inode = Arc::new(FAT32Inode::new_root(
             Arc::new(FAT32FileAllocTable::new(
@@ -61,10 +59,7 @@ impl FAT32FileSystem {
             &Path::new_absolute(),
             fs_meta.root_cluster_id,
         ));
-        Arc::new(FSMutex::new(Self {
-            block_device,
-            root_inode,
-        }))
+        Arc::new(FSMutex::new(Self { root_inode }))
     }
 
     pub fn root_inode(&self) -> Arc<(dyn Inode + 'static)> {
@@ -74,6 +69,7 @@ impl FAT32FileSystem {
 
 /// immutable struct, initialized at open
 /// in-memory struct of FAT32BootSector
+#[allow(unused)]
 pub struct FAT32Meta {
     // bytes_per_sector: hardwired `512` for simplicity, the same as blocksize
     pub sector_per_cluster: usize,

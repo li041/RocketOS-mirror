@@ -6,7 +6,7 @@
 
 # Building
 TARGET := riscv64gc-unknown-none-elf
-MODE := debug
+MODE := release
 KERNEL_ELF := target/$(TARGET)/$(MODE)/os
 KERNEL_BIN := $(KERNEL_ELF).bin
 FEATURES := default
@@ -16,6 +16,10 @@ BOARD := qemu
 SBI ?= opensbi
 BOOTLOADER := ../bootloader/$(SBI)-$(BOARD).bin
 BOOTLOADER_ELF := ../bootloader/$(SBI)-$(BOARD)
+
+# TEST
+TEST_KERNEL_BIN = kernel-qemu
+TEST_bios = sbi-qemu
 
 # Configs
 MEM_SIZE = 128M
@@ -36,9 +40,22 @@ QEMU_ARGS := 	-machine virt \
 				-m $(MEM_SIZE) \
 				-kernel $(KERNEL_BIN) \
 				-nographic \
+				-smp 2\
 				-bios $(BOOTLOADER_ELF)\
 			    -drive file=$(FS_IMG),if=none,format=raw,id=x0 \
-			 	-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
+			 	-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0\
+				-device virtio-net-device,netdev=net -netdev user,id=net
+
+TEST_QEMU_ARGS := 	-machine virt \
+				-m $(MEM_SIZE) \
+				-kernel $(TEST_KERNEL_BIN) \
+				-nographic \
+				-smp 2\
+				-bios $(TEST_bios)\
+			    -drive file=$(FS_IMG),if=none,format=raw,id=x0 \
+			 	-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0\
+				-device virtio-net-device,netdev=net -netdev user,id=net
+
 
 # gdb
 GDB_CLIENT := riscv64-unknown-elf-gdb
@@ -46,30 +63,23 @@ GDB_ARGS := -ex 'file target/riscv64gc-unknown-none-elf/debug/os' \
     		-ex 'set arch riscv:rv64' \
 			-ex 'target remote localhost:1234'
 
-# 检查是否存在 riscv64-unknown-elf-gdb
-ifeq ("$(shell command -v $(GDB_CLIENT))", "")
-    GDB_CLIENT := gdb-multiarch
-# 检查是否存在 gdb-multiarch
-else ifeq ("$(shell command -v $(GDB_CLIENT))", "")
-    $(error "No suitable GDB client found. Please install riscv64-unknown-elf-gdb or gdb-multiarch.")
-endif
+# # 检查是否存在 riscv64-unknown-elf-gdb
+# ifeq ("$(shell command -v $(GDB_CLIENT))", "")
+#     GDB_CLIENT := gdb-multiarch
+# # 检查是否存在 gdb-multiarch
+# else ifeq ("$(shell command -v $(GDB_CLIENT))", "")
+#     $(error "No suitable GDB client found. Please install riscv64-unknown-elf-gdb or gdb-multiarch.")
+# endif
 
-env:
-	(rustup target list | grep "riscv64gc-unknown-none-elf (installed)") || rustup target add $(TARGET)
-	cargo install cargo-binutils
-	rustup component add rust-src
-	rustup component add llvm-tools-preview
-
-build:    
-	cargo build $(MODE_ARG) --features $(FEATURES)
+build: 
+	cargo build $(MODE_ARG) --features $(FEATURES) --offline
 	@$(OBJCOPY) $(KERNEL_ELF) --strip-all -O binary $(KERNEL_BIN)
 	
-make-user:
-	@cd ../user && make
-	@./build
-
-run: env make-user build 
+run: build 
 	qemu-system-riscv64 $(QEMU_ARGS)
+
+run-test: build
+	qemu-system-riscv64 $(TEST_QEMU_ARGS)
 
 clean:
 	@cargo clean
@@ -81,4 +91,17 @@ gdbclient:
 	@echo "Using GDB: $(GDB_CLIENT)"
 	$(GDB_CLIENT) $(GDB_ARGS)
 
-.PHONY: build	
+move-cargo:
+	@cp -r cargo .cargo
+
+move-bin:
+	@cp $(KERNEL_BIN) ../kernel-qemu
+	@cp $(BOOTLOADER_ELF) ../sbi-qemu
+
+make-user:
+	@cd ../user && make
+	@./build
+
+all: move-cargo make-user build move-bin
+
+.PHONY: move-cargo make-user build move-bin

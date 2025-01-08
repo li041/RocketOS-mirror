@@ -1,83 +1,148 @@
-use core::fmt::Display;
+use alloc::sync::Arc;
+use log::debug;
 
-use alloc::{
-    string::{String, ToString},
-    vec::Vec,
-};
+use crate::{mutex::SpinNoIrqLock, task::yield_current_task};
 
-#[derive(Debug, Clone)]
-pub struct Path {
-    inner: Vec<String>,
-    is_relative: bool,
+use super::{File, FileMeta};
+
+const PIPE_BUFFER_SIZE: usize = 4096;
+
+pub struct Pipe {
+    buffer: Arc<SpinNoIrqLock<PipeRingBuffer>>,
+    readable: bool,
+    writeable: bool,
 }
 
-impl From<&str> for Path {
-    fn from(v: &str) -> Self {
-        let is_relative = !v.starts_with("/");
-        Self {
-            inner: v
-                .split("/")
-                .filter(|s| s.len() > 0)
-                .map(|s| s.to_string())
-                .collect(),
-            is_relative,
+impl Pipe {
+    /// return (pipe_read, pipe_write)
+    pub fn new_pair() -> (Arc<Self>, Arc<Self>) {
+        let buffer = Arc::new(SpinNoIrqLock::new(PipeRingBuffer {
+            buffer: [0; PIPE_BUFFER_SIZE],
+            read_pos: 0,
+            write_pos: 0,
+            eof: false,
+        }));
+        (
+            Arc::new(Self {
+                buffer: buffer.clone(),
+                readable: true,
+                writeable: false,
+            }),
+            Arc::new(Self {
+                buffer: buffer.clone(),
+                readable: false,
+                writeable: true,
+            }),
+        )
+    }
+
+    pub fn read_inner(&self, buf: &mut [u8]) -> usize {
+        let mut read_size = 0;
+        let mut buffer = self.buffer.lock();
+        for char in buf {
+            if let Some(c) = buffer.read_char() {
+                *char = c;
+                read_size += 1;
+            } else {
+                break;
+            }
+        }
+        read_size
+    }
+
+    pub fn write_inner(&self, buf: &[u8]) -> usize {
+        let mut write_size = 0;
+        let mut buffer = self.buffer.lock();
+        for char in buf {
+            if !buffer.write_char(*char) {
+                break;
+            }
+            write_size += 1;
+        }
+        write_size
+    }
+}
+
+impl File for Pipe {
+    fn readable(&self) -> bool {
+        self.readable
+    }
+
+    fn writable(&self) -> bool {
+        self.writeable
+    }
+    fn read<'a>(&'a self, buf: &'a mut [u8]) -> usize {
+        // if self.buffer.lock().eof() {
+        //     return Ok(0);
+        // }
+        loop {
+            let ret = self.read_inner(buf);
+            if ret != 0 {
+                return ret;
+            } else if self.buffer.lock().eof() {
+                // empty buffer and no writer, EOF
+                return 0;
+            } else {
+                // empty buffer but writer exists, wait
+                yield_current_task();
+                continue;
+            }
+            // yield_task().await;
+            // continue;
+        }
+    }
+
+    fn write<'a>(&'a self, buf: &'a [u8]) -> usize {
+        debug!("[Pipe::write] entered");
+        self.write_inner(buf)
+    }
+
+    fn get_meta(&self) -> FileMeta {
+        FileMeta::new(None, 0)
+    }
+
+    fn seek(&self, _offset: usize) {
+        panic!("Pipe does not support seek")
+    }
+}
+
+impl Drop for Pipe {
+    fn drop(&mut self) {
+        if self.writeable {
+            let mut buffer = self.buffer.lock();
+            buffer.eof = true;
         }
     }
 }
 
-impl From<String> for Path {
-    fn from(v: String) -> Self {
-        Self::from(v.as_str())
-    }
+struct PipeRingBuffer {
+    buffer: [u8; PIPE_BUFFER_SIZE],
+    read_pos: usize,
+    write_pos: usize,
+    // whether writer exists
+    eof: bool,
 }
 
-// you can call to_string() or println!("{}", path) to get path concated by "/"
-impl Display for Path {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if self.is_relative {
-            write!(f, "{}", &self.inner.join("/"))
+impl PipeRingBuffer {
+    fn read_char(&mut self) -> Option<u8> {
+        if self.read_pos == self.write_pos {
+            None
         } else {
-            write!(f, "{}", "/".to_string() + &self.inner.join("/"))
+            let c = self.buffer[self.read_pos];
+            self.read_pos = (self.read_pos + 1) % PIPE_BUFFER_SIZE;
+            Some(c)
         }
     }
-}
-
-impl Path {
-    fn push(&mut self, s: &str) {
-        self.inner.push(s.to_string());
-    }
-
-    #[allow(unused)]
-    fn pop(&mut self) -> Option<String> {
-        self.inner.pop() /* .unwrap_or(String::new()) */
-    }
-
-    pub fn new_absolute() -> Self {
-        Self {
-            inner: Vec::new(),
-            is_relative: false,
+    fn write_char(&mut self, c: u8) -> bool {
+        if (self.write_pos + 1) % PIPE_BUFFER_SIZE == self.read_pos {
+            false
+        } else {
+            self.buffer[self.write_pos] = c;
+            self.write_pos = (self.write_pos + 1) % PIPE_BUFFER_SIZE;
+            true
         }
     }
-
-    pub fn get_name(&self) -> String {
-        self.inner.last().unwrap_or(&String::new()).to_string()
-    }
-
-    pub fn len(&self) -> usize {
-        self.inner.len()
-    }
-
-    pub fn is_relative(&self) -> bool {
-        self.is_relative
-    }
-
-    pub fn get_inner(&self) -> &Vec<String> {
-        &self.inner
-    }
-
-    pub fn clone_and_append(&self, s: &str) -> Self {
-        let mut ret = self.clone();
-        ret.push(s);
-        ret
+    fn eof(&self) -> bool {
+        self.eof
     }
 }
