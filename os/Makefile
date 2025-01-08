@@ -72,7 +72,7 @@ GDB_ARGS := -ex 'file target/riscv64gc-unknown-none-elf/debug/os' \
 # endif
 
 build: 
-	cargo build $(MODE_ARG) --features $(FEATURES) --offline
+	cargo build $(MODE_ARG) --features $(FEATURES) --offline 
 	@$(OBJCOPY) $(KERNEL_ELF) --strip-all -O binary $(KERNEL_BIN)
 	
 run: build 
@@ -92,7 +92,9 @@ gdbclient:
 	$(GDB_CLIENT) $(GDB_ARGS)
 
 move-cargo:
-	@cp -r cargo .cargo
+	@rm -rf .cargo
+	@mkdir .cargo
+	@cp cargo/* .cargo/
 
 move-bin:
 	@cp $(KERNEL_BIN) ../kernel-qemu
