@@ -1,3 +1,6 @@
+use crate::mutex::SpinNoIrqLock;
+
+/* 内存布局 */
 pub const KERNEL_HEAP_SIZE: usize = 0x300_0000; // 48MB
 pub const PAGE_SIZE: usize = 0x1000; // 4KB
 pub const KERNEL_BASE: usize = 0xffff_ffc0_0000_0000;
@@ -13,4 +16,5 @@ pub const MMAP_MIN_ADDR: usize = 0x0000_0020_0000_0000;
 pub const MMAP_MAX_ADDR: usize = 0x0000_002f_ffff_ffff;
 pub const MMAP_AREA_SIZE: usize = MMAP_MAX_ADDR - MMAP_MIN_ADDR;
 
+/* 系统调用 */
 pub type SysResult<T> = Result<T, usize>;

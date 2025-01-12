@@ -2,9 +2,9 @@ use core::cmp::{max, min};
 
 use alloc::{sync::Arc, vec::Vec};
 
-use super::{
-    block_cache::get_block_cache, fat::FAT32FileAllocTable, FATENTRY_MIN_EOC, SECTOR_SIZE,
-};
+use crate::drivers::block::block_cache::get_block_cache;
+
+use super::{fat::FAT32FileAllocTable, FATENTRY_MIN_EOC, SECTOR_SIZE};
 
 pub struct FAT32File {
     pub fat: Arc<FAT32FileAllocTable>,

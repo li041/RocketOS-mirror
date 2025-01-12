@@ -2,13 +2,13 @@ use alloc::sync::Arc;
 use log::info;
 
 use super::{
-    block_cache::get_block_cache,
     fs::{FAT32Info, FAT32Meta},
-    FSMutex, FATENTRY_EOC, FATENTRY_MASK, FATENTRY_MIN_EOC, FAT_ENTRY_PER_SECTOR,
-    FSINFO_NOT_AVAILABLE,
+    FATENTRY_EOC, FATENTRY_MASK, FATENTRY_MIN_EOC, FAT_ENTRY_PER_SECTOR, FSINFO_NOT_AVAILABLE,
 };
 
-use crate::drivers::block::block_dev::BlockDevice;
+use crate::fs::FSMutex;
+
+use crate::drivers::block::{block_cache::get_block_cache, block_dev::BlockDevice};
 
 // 在`read_fat_entry`和`write_fat_entry`中，我们使用了`get_block_cache`函数来获取`BlockCache`的引用。
 // 然后使用get_mut<T>和get_ref<T>来将`BlockCache`的引用转换为`FATSector`的引用。

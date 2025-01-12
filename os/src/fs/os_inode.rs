@@ -4,11 +4,12 @@
 //!
 //! `UPSafeCell<OSInodeInner>` -> `OSInode`: for static `ROOT_INODE`,we
 //! need to wrap `OSInodeInner` into `UPSafeCell`
-use super::inode::Inode;
+use super::inode::{Inode, InodeMeta, InodeMode};
 use super::path::Path;
 use super::{File, FileMeta};
 use crate::config::SysResult;
 use crate::drivers::BLOCK_DEVICE;
+use crate::ext4::fs::Ext4FileSystem;
 use crate::fat32::fs::FAT32FileSystem;
 use crate::fs::AT_FDCWD;
 use crate::mutex::SpinNoIrqLock;
@@ -75,6 +76,50 @@ impl OSInode {
     }
 }
 
+// lazy_static! {
+//     pub static ref ROOT_INODE: Arc<dyn Inode> = {
+//         FAT32FileSystem::open(BLOCK_DEVICE.clone())
+//             .lock()
+//             .root_inode()
+//     };
+// }
+/// List all files in the filesystems
+
+struct FAKE_ROOT_INODE;
+
+impl Inode for FAKE_ROOT_INODE {
+    fn read<'a>(&'a self, _offset: usize, _buf: &'a mut [u8]) -> usize {
+        todo!()
+    }
+    fn write<'a>(&'a self, _offset: usize, _buf: &'a [u8]) -> usize {
+        todo!()
+    }
+    fn mknod(
+        &self,
+        _this: Arc<dyn Inode>,
+        _name: &str,
+        _mode: InodeMode,
+    ) -> SysResult<Arc<dyn Inode>> {
+        todo!()
+    }
+    fn find(&self, _this: Arc<dyn Inode>, _name: &str) -> SysResult<Arc<dyn Inode>> {
+        todo!()
+    }
+    fn list(&self, _this: Arc<dyn Inode>) -> SysResult<Vec<Arc<dyn Inode>>> {
+        todo!()
+    }
+    fn get_meta(&self) -> Arc<InodeMeta> {
+        todo!()
+    }
+    fn load_children_from_disk(&self, _this: Arc<dyn Inode>) {
+        todo!()
+    }
+    fn clear(&self) {
+        todo!()
+    }
+}
+
+// fake ROOT_INODE
 lazy_static! {
     pub static ref ROOT_INODE: Arc<dyn Inode> = {
         FAT32FileSystem::open(BLOCK_DEVICE.clone())
@@ -82,7 +127,7 @@ lazy_static! {
             .root_inode()
     };
 }
-/// List all files in the filesystems
+
 pub fn list_apps() {
     println!("/**** ROOT APPS ****");
     let apps = ROOT_INODE.list(ROOT_INODE.clone()).unwrap();

@@ -1,5 +1,6 @@
-use super::{FSMutex, BLOCK_CACHE_SIZE, BLOCK_SIZE};
+use super::{BLOCK_CACHE_SIZE, BLOCK_SIZE};
 use crate::drivers::block::block_dev::BlockDevice;
+use crate::mutex::SpinNoIrqLock;
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use lazy_static::*;
@@ -77,7 +78,7 @@ impl Drop for BlockCache {
 }
 
 pub struct BlockCacheManager {
-    queue: VecDeque<(usize, Arc<FSMutex<BlockCache>>)>,
+    queue: VecDeque<(usize, Arc<SpinNoIrqLock<BlockCache>>)>,
 }
 
 impl BlockCacheManager {
@@ -91,7 +92,7 @@ impl BlockCacheManager {
         &mut self,
         block_id: usize,
         block_device: Arc<dyn BlockDevice>,
-    ) -> Arc<FSMutex<BlockCache>> {
+    ) -> Arc<SpinNoIrqLock<BlockCache>> {
         if let Some(pair) = self.queue.iter().find(|pair| pair.0 == block_id) {
             // 找到对应的block
             Arc::clone(&pair.1)
@@ -113,7 +114,7 @@ impl BlockCacheManager {
                 }
             }
             // load block into mem and push back
-            let block_cache = Arc::new(FSMutex::new(BlockCache::new(
+            let block_cache = Arc::new(SpinNoIrqLock::new(BlockCache::new(
                 block_id,
                 Arc::clone(&block_device),
             )));
@@ -125,14 +126,14 @@ impl BlockCacheManager {
 
 lazy_static! {
     /// The global block cache manager
-    pub static ref BLOCK_CACHE_MANAGER: FSMutex<BlockCacheManager> =
-        FSMutex::new(BlockCacheManager::new());
+    pub static ref BLOCK_CACHE_MANAGER: SpinNoIrqLock<BlockCacheManager> =
+        SpinNoIrqLock::new(BlockCacheManager::new());
 }
 /// Get the block cache corresponding to the given block id and block device
 pub fn get_block_cache(
     block_id: usize,
     block_device: Arc<dyn BlockDevice>,
-) -> Arc<FSMutex<BlockCache>> {
+) -> Arc<SpinNoIrqLock<BlockCache>> {
     BLOCK_CACHE_MANAGER
         .lock()
         .get_block_cache(block_id, block_device)

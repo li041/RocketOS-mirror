@@ -21,7 +21,7 @@ use user_lib::console::getchar;
 use user_lib::{exec, fork, waitpid};
 
 fn print_prompt() {
-    print!("{}@Arona >> {}", THEME_COLOR, RESET_COLOR);
+    print!("{}RROS>> {}", THEME_COLOR, RESET_COLOR);
 }
 
 #[no_mangle]
