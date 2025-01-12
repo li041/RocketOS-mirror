@@ -5,7 +5,6 @@
 
 use crate::mutex::SpinNoIrqLock;
 
-mod block_cache;
 mod dentry;
 mod fat;
 mod file;
@@ -14,12 +13,10 @@ pub mod inode;
 mod layout;
 mod time;
 
-// 文件系统的锁先使用SpinNoIrqLock, Todo: 改成RwLock
-pub type FSMutex<T> = SpinNoIrqLock<T>;
 
-const BLOCK_SIZE: usize = 512;
+
+
 const SECTOR_SIZE: usize = 512;
-const BLOCK_CACHE_SIZE: usize = 16;
 const SNAME_LEN: usize = 11;
 // FAT32的长文件名最大支持255个字符(UniCode, 一个字符占2字节)
 const LNAME_MAXLEN: usize = 255;

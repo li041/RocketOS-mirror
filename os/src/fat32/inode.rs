@@ -5,6 +5,7 @@ use crate::{
     fs::{
         inode::{Inode, InodeMeta, InodeMode},
         path::Path,
+        FSMutex,
     },
 };
 
@@ -12,7 +13,6 @@ use super::{
     dentry::{FAT32DentryContent, FAT32DirEntry, ATTR_DIRECTORY},
     fat::FAT32FileAllocTable,
     file::FAT32File,
-    FSMutex,
 };
 
 pub struct FAT32Inode {

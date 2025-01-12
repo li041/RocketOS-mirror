@@ -6,9 +6,9 @@ use alloc::{
 };
 use log::debug;
 
-use crate::{config::SysResult, fat32::FSMutex, timer::TimeSpec};
+use crate::{config::SysResult, timer::TimeSpec};
 
-use super::path::Path;
+use super::{path::Path, FSMutex};
 
 #[derive(PartialEq, Debug, Clone, Copy)]
 pub enum InodeMode {

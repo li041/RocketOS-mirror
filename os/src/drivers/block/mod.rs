@@ -1,3 +1,4 @@
+pub mod block_cache;
 pub mod block_dev;
 mod virtio_blk;
 
@@ -15,11 +16,15 @@ lazy_static! {
     pub static ref BLOCK_DEVICE: Arc<dyn BlockDevice> = Arc::new(BlockDeviceImpl::new());
 }
 
+const BLOCK_SIZE: usize = 1024;
+const BLOCK_CACHE_SIZE: usize = 16;
+
 #[allow(unused)]
+/// 注意这个函数会破坏文件镜像
 pub fn block_device_test() {
     let block_device = BLOCK_DEVICE.clone();
-    let mut write_buffer = [0u8; 512];
-    let mut read_buffer = [0u8; 512];
+    let mut write_buffer = [0u8; BLOCK_SIZE];
+    let mut read_buffer = [0u8; BLOCK_SIZE];
     for i in 0..512 {
         for byte in write_buffer.iter_mut() {
             *byte = i as u8;

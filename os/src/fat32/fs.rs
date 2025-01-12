@@ -1,14 +1,14 @@
 use alloc::sync::Arc;
-use log::debug;
 
-use crate::fs::{inode::Inode, path::Path};
+use crate::{
+    drivers::block::block_cache::get_block_cache,
+    fs::{inode::Inode, path::Path, FSMutex},
+};
 
 use super::{
-    block_cache::get_block_cache,
     fat::FAT32FileAllocTable,
     inode::FAT32Inode,
     layout::{FAT32BootSector, FAT32FSInfoSector},
-    FSMutex,
 };
 
 use crate::drivers::block::block_dev::BlockDevice;
@@ -19,12 +19,11 @@ pub struct FAT32FileSystem {
 
 impl FAT32FileSystem {
     pub fn open(block_device: Arc<dyn BlockDevice>) -> Arc<FSMutex<Self>> {
-        debug!("FAT32FileSystem::open()");
+        log::debug!("FAT32FileSystem::open()");
         // 读取引导扇区
         let fs_meta = get_block_cache(0, block_device.clone()).lock().read(
             0,
             |boot_sector: &FAT32BootSector| {
-                debug!("FAT32FileSystem::open(): boot_sector: {:?}", boot_sector);
                 assert!(
                     boot_sector.is_valid(),
                     "FAT32FileSystem::open(): Error loading boot_sector!"
