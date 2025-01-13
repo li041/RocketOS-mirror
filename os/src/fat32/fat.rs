@@ -3,7 +3,8 @@ use log::info;
 
 use super::{
     fs::{FAT32Info, FAT32Meta},
-    FATENTRY_EOC, FATENTRY_MASK, FATENTRY_MIN_EOC, FAT_ENTRY_PER_SECTOR, FSINFO_NOT_AVAILABLE,
+    FAT32_SECTOR_SIZE, FATENTRY_EOC, FATENTRY_MASK, FATENTRY_MIN_EOC, FAT_ENTRY_PER_SECTOR,
+    FSINFO_NOT_AVAILABLE,
 };
 
 use crate::fs::FSMutex;
@@ -97,6 +98,7 @@ impl FAT32FileAllocTable {
         get_block_cache(
             self.meta.fat_start_sector + sector_id,
             self.block_device.clone(),
+            FAT32_SECTOR_SIZE,
         )
         .lock()
         .read(0, |fat_sector: &FATSector| fat_sector.read(offset))
@@ -112,6 +114,7 @@ impl FAT32FileAllocTable {
         get_block_cache(
             self.meta.fat_start_sector + sector_id,
             self.block_device.clone(),
+            FAT32_SECTOR_SIZE,
         )
         .lock()
         .modify(0, |fat_sector: &mut FATSector| {

@@ -35,3 +35,4 @@ bitflags = "2.6.0"
 zerocopy = { version = "0.7.35", features = ["derive"] }
 
 virtio-drivers = { git = "https://github.com/li041/virtio-drivers", branch = 'lxh'}
+memoffset = "0.9.1"
