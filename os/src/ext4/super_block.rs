@@ -60,8 +60,8 @@ pub struct Ext4SuperBlock {
     write_time: u32,      // 最后一次写入时间
     mnt_count: u16,       // 已挂载计数
     max_mnt_count: u16,   // 允许的最大挂载计数, 达到这个值后需要进行`fsck`检查
-    magic: u16,           // 魔数, 用于识别是否为EXT文件系统, EXT4的值为`0xEF53`
-    state: u16, // 文件系统的状态, EXT4_VALID_FS(0x0001)表示文件系统正常, EXT4_ERROR_FS(0x0002)表示文件系统有错误, EXT$_ORPHAN_FS(0x0004)表示有孤立的inode
+    pub magic: u16,       // 魔数, 用于识别是否为EXT文件系统, EXT4的值为`0xEF53`
+    pub state: u16, // 文件系统的状态, EXT4_VALID_FS(0x0001)表示文件系统正常, EXT4_ERROR_FS(0x0002)表示文件系统有错误, EXT$_ORPHAN_FS(0x0004)表示有孤立的inode
     errors: u16, // 错误处理方式, EXT4_ERRORS_CONTINUE(1)表示遇到错误后继续, EXT4_ERRORS_RO(2)表示遇到错误后只读, EXT4_ERRORS_PANIC(3)表示遇到错误后系统panic
     minor_rev_level: u16, // 次要版本号
     /* 40 */
@@ -190,6 +190,12 @@ impl Ext4SuperBlock {
     pub fn is_valid(&self) -> bool {
         // ext4 magic number: 0xEF53
         // Todo: 根据校验和, 检查superblock是否有效
+        // 通过raw_pointer的方式, 读取self.state的值
+        let raw_pointer = self as *const Self;
+        let state = unsafe { (*raw_pointer).state };
+        let magic = unsafe { (*raw_pointer).magic };
+        log::error!("state: {:x}, magic: {:x}", state, magic);
+
         self.magic == 0xEF53 && self.state == EXT4_VALID_FS
     }
 }

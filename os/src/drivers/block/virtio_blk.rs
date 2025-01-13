@@ -199,13 +199,13 @@ lazy_static! {
 }
 
 impl BlockDevice for VirtIOBlock {
-    fn read_block(&self, block_id: usize, buf: &mut [u8]) {
+    fn read_blocks(&self, block_id: usize, buf: &mut [u8]) {
         self.0
             .lock()
             .read_blocks(block_id, buf)
             .expect("Error when reading VirtIOBlk");
     }
-    fn write_block(&self, block_id: usize, buf: &[u8]) {
+    fn write_blocks(&self, block_id: usize, buf: &[u8]) {
         self.0
             .lock()
             .write_blocks(block_id, buf)

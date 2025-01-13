@@ -2,6 +2,7 @@ use alloc::sync::Arc;
 
 use crate::{
     drivers::block::block_cache::get_block_cache,
+    fat32::FAT32_SECTOR_SIZE,
     fs::{inode::Inode, path::Path, FSMutex},
 };
 
@@ -21,32 +22,36 @@ impl FAT32FileSystem {
     pub fn open(block_device: Arc<dyn BlockDevice>) -> Arc<FSMutex<Self>> {
         log::debug!("FAT32FileSystem::open()");
         // 读取引导扇区
-        let fs_meta = get_block_cache(0, block_device.clone()).lock().read(
-            0,
-            |boot_sector: &FAT32BootSector| {
+        let fs_meta = get_block_cache(0, block_device.clone(), FAT32_SECTOR_SIZE)
+            .lock()
+            .read(0, |boot_sector: &FAT32BootSector| {
+                log::info!("FAT32FileSystem::open(): boot_sector: {:?}", boot_sector);
                 assert!(
                     boot_sector.is_valid(),
                     "FAT32FileSystem::open(): Error loading boot_sector!"
                 );
                 // log::info!("{:?}", boot_sector);
                 Arc::new(FAT32Meta::new(boot_sector))
-            },
-        );
+            });
         log::info!(
             "FAT32FileSystem::open(): sector_per_cluster: {:?}, data_start_sector: {:?}",
             fs_meta.sector_per_cluster,
             fs_meta.data_start_sector
         );
         // 读取FSInfoSector
-        let fs_info = get_block_cache(fs_meta.fs_info_sector_id, block_device.clone())
-            .lock()
-            .read(0, |fs_info_sector: &FAT32FSInfoSector| {
-                assert!(
-                    fs_info_sector.is_valid(),
-                    "FAT32FileSystem::open(): Error loading fs_info_sector!"
-                );
-                Arc::new(FSMutex::new(FAT32Info::new(fs_info_sector)))
-            });
+        let fs_info = get_block_cache(
+            fs_meta.fs_info_sector_id,
+            block_device.clone(),
+            FAT32_SECTOR_SIZE,
+        )
+        .lock()
+        .read(0, |fs_info_sector: &FAT32FSInfoSector| {
+            assert!(
+                fs_info_sector.is_valid(),
+                "FAT32FileSystem::open(): Error loading fs_info_sector!"
+            );
+            Arc::new(FSMutex::new(FAT32Info::new(fs_info_sector)))
+        });
         // 读取根目录inode
         let root_inode = Arc::new(FAT32Inode::new_root(
             Arc::new(FAT32FileAllocTable::new(

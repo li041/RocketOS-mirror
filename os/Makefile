@@ -32,7 +32,8 @@ ifeq ($(MODE), release)
 endif
 
 # File system
-FS_IMG := ../img/sdcard-riscv.img
+FS_IMG := ../img/sdcard.img
+
 
 # QEMU
 # 添加一块虚拟硬盘, 命名为`x0`, 将`sdcard.img`挂载到这块硬盘上, VirtIO总线通过MMIO进行控制, 且该块设备在总线中的编号为0

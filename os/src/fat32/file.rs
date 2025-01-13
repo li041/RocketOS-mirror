@@ -4,7 +4,7 @@ use alloc::{sync::Arc, vec::Vec};
 
 use crate::drivers::block::block_cache::get_block_cache;
 
-use super::{fat::FAT32FileAllocTable, FATENTRY_MIN_EOC, SECTOR_SIZE};
+use super::{fat::FAT32FileAllocTable, FAT32_SECTOR_SIZE, FATENTRY_MIN_EOC};
 
 pub struct FAT32File {
     pub fat: Arc<FAT32FileAllocTable>,
@@ -50,7 +50,8 @@ impl FAT32File {
         }
         // 大小是对齐到簇的大小
         if self.size.is_none() {
-            self.size = Some(self.clusters.len() * SECTOR_SIZE * self.fat.meta.sector_per_cluster);
+            self.size =
+                Some(self.clusters.len() * FAT32_SECTOR_SIZE * self.fat.meta.sector_per_cluster);
         }
     }
 
@@ -60,8 +61,8 @@ impl FAT32File {
         // 缩小文件
         if delta < 0 && (self.size.unwrap() as isize) + delta >= 0 {
             let new_sz = ((self.size.unwrap() as isize) + delta) as usize;
-            let cluster_count = (new_sz + sector_per_cluster * SECTOR_SIZE - 1)
-                / (sector_per_cluster * SECTOR_SIZE);
+            let cluster_count = (new_sz + sector_per_cluster * FAT32_SECTOR_SIZE - 1)
+                / (sector_per_cluster * FAT32_SECTOR_SIZE);
             while self.clusters.len() > cluster_count {
                 let end0 = self.clusters.pop().unwrap();
                 if self.clusters.len() > 0 {
@@ -75,8 +76,8 @@ impl FAT32File {
         } else if delta > 0 {
             // 增大文件
             let new_sz = self.size.unwrap() + (delta as usize);
-            let cluster_count = (new_sz + sector_per_cluster * SECTOR_SIZE - 1)
-                / (sector_per_cluster * SECTOR_SIZE);
+            let cluster_count = (new_sz + sector_per_cluster * FAT32_SECTOR_SIZE - 1)
+                / (sector_per_cluster * FAT32_SECTOR_SIZE);
             while self.clusters.len() < cluster_count {
                 let new_cluster;
                 if self.clusters.len() > 0 {
@@ -101,9 +102,9 @@ impl FAT32File {
         let ed = min(offset + data.len(), self.size.unwrap());
         let sector_per_cluster = self.fat.meta.sector_per_cluster;
         let ret = ed - st;
-        let st_cluster = st / (sector_per_cluster * SECTOR_SIZE);
-        let ed_cluster =
-            (ed + sector_per_cluster * SECTOR_SIZE - 1) / (sector_per_cluster * SECTOR_SIZE);
+        let st_cluster = st / (sector_per_cluster * FAT32_SECTOR_SIZE);
+        let ed_cluster = (ed + sector_per_cluster * FAT32_SECTOR_SIZE - 1)
+            / (sector_per_cluster * FAT32_SECTOR_SIZE);
         for cseq in st_cluster..ed_cluster {
             let cluster_id = self.clusters[cseq];
             let sector_id = self.fat.meta.cid_to_sid(cluster_id).unwrap();
@@ -112,8 +113,8 @@ impl FAT32File {
                 // byte=[off*SECTOR_SIZE, (off+1)*SECTOR_SIZE)
                 let off = cseq * sector_per_cluster + j;
                 // 当前扇区的起始和结束位置(字节, 从file的角度来看)
-                let sector_st = off * SECTOR_SIZE;
-                let sector_ed = sector_st + SECTOR_SIZE;
+                let sector_st = off * FAT32_SECTOR_SIZE;
+                let sector_ed = sector_st + FAT32_SECTOR_SIZE;
 
                 if sector_ed <= st || sector_st >= ed {
                     // 不在读取范围内
@@ -123,10 +124,16 @@ impl FAT32File {
                 let cur_st = max(sector_st, st);
                 let cur_ed = min(sector_ed, ed);
                 // 把整个扇区都读取到tmp_data中
-                let mut tmp_data: [u8; SECTOR_SIZE] = [0; SECTOR_SIZE];
-                get_block_cache(sector_id + j, self.fat.block_device.clone())
-                    .lock()
-                    .read(0, |data: &[u8; SECTOR_SIZE]| tmp_data.copy_from_slice(data));
+                let mut tmp_data: [u8; FAT32_SECTOR_SIZE] = [0; FAT32_SECTOR_SIZE];
+                get_block_cache(
+                    sector_id + j,
+                    self.fat.block_device.clone(),
+                    FAT32_SECTOR_SIZE,
+                )
+                .lock()
+                .read(0, |data: &[u8; FAT32_SECTOR_SIZE]| {
+                    tmp_data.copy_from_slice(data)
+                });
                 // 将范围内的数据拷贝到data中
                 for i in cur_st..cur_ed {
                     data[i - st] = tmp_data[i - sector_st];
@@ -145,9 +152,9 @@ impl FAT32File {
             self.modify_size((ed - self.size.unwrap()) as isize);
         }
         let ret = ed - st;
-        let st_cluster = st / (sector_per_cluster * SECTOR_SIZE);
-        let ed_cluster =
-            (ed + sector_per_cluster * SECTOR_SIZE - 1) / (sector_per_cluster * SECTOR_SIZE);
+        let st_cluster = st / (sector_per_cluster * FAT32_SECTOR_SIZE);
+        let ed_cluster = (ed + sector_per_cluster * FAT32_SECTOR_SIZE - 1)
+            / (sector_per_cluster * FAT32_SECTOR_SIZE);
         for cseq in st_cluster..ed_cluster {
             let cluster_id = self.clusters[cseq];
             let sector_id = self.fat.meta.cid_to_sid(cluster_id).unwrap();
@@ -155,25 +162,31 @@ impl FAT32File {
                 // off=(cseq*SectorPerCluster+j)
                 // byte=[off*SECTOR_SIZE, (off+1)*SECTOR_SIZE)
                 let off = cseq * sector_per_cluster + j;
-                let sector_st = off * SECTOR_SIZE;
-                let sector_ed = sector_st + SECTOR_SIZE;
+                let sector_st = off * FAT32_SECTOR_SIZE;
+                let sector_ed = sector_st + FAT32_SECTOR_SIZE;
                 if sector_ed <= st || sector_st >= ed {
                     continue;
                 }
                 let cur_st = max(sector_st, st);
                 let cur_ed = min(sector_ed, ed);
-                let mut tmp_data: [u8; SECTOR_SIZE] = [0; SECTOR_SIZE];
+                let mut tmp_data: [u8; FAT32_SECTOR_SIZE] = [0; FAT32_SECTOR_SIZE];
                 if cur_st != sector_st || cur_ed != sector_ed {
-                    get_block_cache(sector_id + j, self.fat.block_device.clone())
-                        .lock()
-                        .read(0, |data: &[u8; SECTOR_SIZE]| tmp_data.copy_from_slice(data));
+                    get_block_cache(
+                        sector_id + j,
+                        self.fat.block_device.clone(),
+                        FAT32_SECTOR_SIZE,
+                    )
+                    .lock()
+                    .read(0, |data: &[u8; FAT32_SECTOR_SIZE]| {
+                        tmp_data.copy_from_slice(data)
+                    });
                 }
                 for i in cur_st..cur_ed {
                     tmp_data[i - sector_st] = data[i - st];
                 }
-                get_block_cache(sector_id + j, self.fat.block_device.clone())
+                get_block_cache(sector_id + j, self.fat.block_device.clone(), FAT32_SECTOR_SIZE)
                     .lock()
-                    .modify(0, |data: &mut [u8; SECTOR_SIZE]| {
+                    .modify(0, |data: &mut [u8; FAT32_SECTOR_SIZE]| {
                         data.copy_from_slice(&tmp_data)
                     });
             }

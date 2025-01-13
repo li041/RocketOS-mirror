@@ -19,7 +19,6 @@ mod sbi;
 // mod sched;
 mod drivers;
 mod ext4;
-mod ext4;
 mod fat32;
 mod fs;
 mod syscall;
@@ -31,8 +30,6 @@ pub mod config;
 pub mod utils;
 
 use drivers::BLOCK_DEVICE;
-use drivers::BLOCK_DEVICE;
-use ext4::fs::Ext4FileSystem;
 use ext4::fs::Ext4FileSystem;
 use riscv::register::sstatus;
 use task::{add_initproc, processor::run_tasks};
@@ -41,7 +38,7 @@ use crate::config::KERNEL_BASE;
 use core::{
     arch::{asm, global_asm},
     ffi::c_void,
-    panic, panic, ptr,
+    panic, ptr,
     sync::atomic::AtomicU8,
 };
 
@@ -107,10 +104,10 @@ pub fn rust_main(_hart_id: usize) -> ! {
     add_initproc();
     trap::enable_timer_interrupt();
     timer::set_next_trigger();
-    let fs = Ext4FileSystem::open(BLOCK_DEVICE.clone());
-    println!("fs: {:?}", fs.lock().ext4_meta);
-    panic!("shutdown machine");
-    // fs::list_apps();
+    // let fs = Ext4FileSystem::open(BLOCK_DEVICE.clone());
+    // println!("fs: {:?}", fs.lock().ext4_meta);
+    // panic!("shutdown machine");
+    fs::list_apps();
     loader::list_apps();
     // pass block_device_test, 注意实际运行时别调用这个函数, 会覆盖Block内容
     DEBUG_FLAG.store(1, core::sync::atomic::Ordering::SeqCst);

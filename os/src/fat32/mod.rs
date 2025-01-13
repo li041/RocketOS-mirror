@@ -13,15 +13,12 @@ pub mod inode;
 mod layout;
 mod time;
 
-
-
-
-const SECTOR_SIZE: usize = 512;
+const FAT32_SECTOR_SIZE: usize = 512;
 const SNAME_LEN: usize = 11;
 // FAT32的长文件名最大支持255个字符(UniCode, 一个字符占2字节)
 const LNAME_MAXLEN: usize = 255;
 // const BOOT_SECTOR_ID: usize = 0;
-const FAT_ENTRY_PER_SECTOR: usize = SECTOR_SIZE / 4;
+const FAT_ENTRY_PER_SECTOR: usize = FAT32_SECTOR_SIZE / 4;
 const FATENTRY_MASK: u32 = 0x0FFFFFFF;
 // 结束簇的值通常是 0x0FFFFFF8 到 0x0FFFFFFF 之间的值。
 const FATENTRY_MIN_EOC: u32 = 0x0FFFFFF8;

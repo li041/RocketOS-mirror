@@ -3,15 +3,11 @@ use crate::drivers::block::block_dev::BlockDevice;
 use crate::mutex::SpinNoIrqLock;
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
-use alloc::vec;
-use alloc::vec::Vec;
 use lazy_static::*;
-
 /// Cached block inside memory
 pub struct BlockCache {
     /// cached block data
-    cache: Vec<u8>,
-    cache_size: usize,
+    cache: [u8; VIRTIO_BLOCK_SIZE],
     /// underlying block id
     block_id: usize,
     /// underlying block device
@@ -22,28 +18,16 @@ pub struct BlockCache {
 
 impl BlockCache {
     /// Load a new BlockCache from disk.
-    /// 从磁盘start_block_id开始连续读取cache_size大小的数据到内存中
-    pub fn new(
-        start_block_id: usize,
-        block_device: Arc<dyn BlockDevice>,
-        cache_size: usize,
-    ) -> Self {
-        assert!(
-            cache_size & (VIRTIO_BLOCK_SIZE - 1) == 0,
-            "Cache size must be a multiple of VIRTIO_BLOCK_SIZE, which is {}",
-            cache_size
-        );
-        let mut cache = vec![0u8; cache_size];
-        block_device.read_blocks(start_block_id, &mut cache);
+    pub fn new(block_id: usize, block_device: Arc<dyn BlockDevice>) -> Self {
+        let mut cache = [0u8; VIRTIO_BLOCK_SIZE];
+        block_device.read_block(block_id, &mut cache);
         Self {
             cache,
-            cache_size,
-            block_id: start_block_id,
+            block_id,
             block_device,
             modified: false,
         }
     }
-
     /// Get the address of an offset inside the cached block data
     fn addr_of_offset(&self, offset: usize) -> usize {
         &self.cache[offset] as *const _ as usize
@@ -54,7 +38,7 @@ impl BlockCache {
         T: Sized,
     {
         let type_size = core::mem::size_of::<T>();
-        assert!(offset + type_size <= self.cache_size);
+        assert!(offset + type_size <= VIRTIO_BLOCK_SIZE);
         let addr = self.addr_of_offset(offset);
         unsafe { &*(addr as *const T) }
     }
@@ -64,7 +48,7 @@ impl BlockCache {
         T: Sized,
     {
         let type_size = core::mem::size_of::<T>();
-        assert!(offset + type_size <= self.cache_size);
+        assert!(offset + type_size <= VIRTIO_BLOCK_SIZE);
         self.modified = true;
         let addr = self.addr_of_offset(offset);
         unsafe { &mut *(addr as *mut T) }
@@ -74,7 +58,7 @@ impl BlockCache {
         f(self.get_ref(offset))
     }
 
-    // Modify the cached data through the closure function f
+    // 由传递的闭包函数 f 修改缓存中的数据, T和V分别是闭包函数的输入和输出类型
     pub fn modify<T, V>(&mut self, offset: usize, f: impl FnOnce(&mut T) -> V) -> V {
         f(self.get_mut(offset))
     }
@@ -82,7 +66,7 @@ impl BlockCache {
     pub fn sync(&mut self) {
         if self.modified {
             self.modified = false;
-            self.block_device.write_blocks(self.block_id, &self.cache);
+            self.block_device.write_block(self.block_id, &self.cache);
         }
     }
 }
@@ -104,22 +88,29 @@ impl BlockCacheManager {
         }
     }
 
+    // 只读取数据缓存，不修改, 支持一次读取多个block
+    pub fn get_data_caches_from_start_block(
+        &mut self,
+        start_block_id: usize,
+        block_device: Arc<dyn BlockDevice>,
+        count: usize,
+    ) {
+    }
+
+    // 用来读写block cache
     pub fn get_block_cache(
         &mut self,
         block_id: usize,
         block_device: Arc<dyn BlockDevice>,
-        cache_size: usize,
     ) -> Arc<SpinNoIrqLock<BlockCache>> {
-        if let Some(pair) = self
-            .queue
-            .iter()
-            // .find(|pair| block_id <= pair.0 && block_id + cache_size > pair.0)
-            .find(|pair| block_id >= pair.0 && block_id < pair.0 + cache_size / VIRTIO_BLOCK_SIZE)
-        {
-            // 找对应的块(大小不定, 512byts的倍数)
+        if let Some(pair) = self.queue.iter().find(|pair| pair.0 == block_id) {
+            // 找到对应的block
             Arc::clone(&pair.1)
         } else {
+            // 没有找到对应的block
             if self.queue.len() == BLOCK_CACHE_SIZE {
+                // 如果缓存已满，从队首开始查找 Arc 引用计数为 1 的缓存（即未被其他地方引用的缓存），并移除。
+                // from front to tail
                 if let Some((idx, _)) = self
                     .queue
                     .iter()
@@ -128,13 +119,14 @@ impl BlockCacheManager {
                 {
                     self.queue.drain(idx..=idx);
                 } else {
+                    // 如果没有找到引用计数为 1 的缓存，直接 panic
                     panic!("Run out of BLOCK_CACHE!");
                 }
             }
+            // load block into mem and push back
             let block_cache = Arc::new(SpinNoIrqLock::new(BlockCache::new(
                 block_id,
                 Arc::clone(&block_device),
-                cache_size,
             )));
             self.queue.push_back((block_id, Arc::clone(&block_cache)));
             block_cache
@@ -147,18 +139,15 @@ lazy_static! {
     pub static ref BLOCK_CACHE_MANAGER: SpinNoIrqLock<BlockCacheManager> =
         SpinNoIrqLock::new(BlockCacheManager::new());
 }
-
 /// Get the block cache corresponding to the given block id and block device
 pub fn get_block_cache(
     block_id: usize,
     block_device: Arc<dyn BlockDevice>,
-    cache_size: usize,
 ) -> Arc<SpinNoIrqLock<BlockCache>> {
     BLOCK_CACHE_MANAGER
         .lock()
-        .get_block_cache(block_id, block_device, cache_size)
+        .get_block_cache(block_id, block_device)
 }
-
 /// Sync all block cache to block device
 #[allow(unused)]
 pub fn block_cache_sync_all() {
