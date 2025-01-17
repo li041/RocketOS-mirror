@@ -1,22 +1,34 @@
+use crate::drivers::block;
+
+use super::block_group;
+
 #[derive(Debug)]
 pub struct Ext4Meta {
     /* 基本信息 */
-    pub inodes_count: u32,         // inode总数
-    free_inodes_count: u32,        // 空闲的inode总数
-    pub blocks_count_lo: u32,      // block总数(低32位)
-    reserved_blocks_count_lo: u32, // 保留的block总数(低32位)
-    free_blocks_count_lo: u32,     // 空闲的block总数(低32位)
-    first_data_block: u32,         // 第一个数据block的编号(总为1)
-    block_size: u32,               // block大小(bytes)
-    cluster_size: u32,             // cluster大小(多少个block)
+    pub inodes_count: u32,             // inode总数
+    pub free_inodes_count: u32,        // 空闲的inode总数
+    pub blocks_count_lo: u32,          // block总数(低32位)
+    pub reserved_blocks_count_lo: u32, // 保留的block总数(低32位)
+    pub free_blocks_count_lo: u32,     // 空闲的block总数(低32位)
+    pub first_data_block: u32,         // 第一个数据block的编号(总为1)
+    pub block_size: u32,               // block大小(bytes)
+    pub cluster_size: u32,             // cluster大小(多少个block)
     /* 块组信息 */
-    blocks_per_group: u32,   // 每个块组的block数
-    clusters_per_group: u32, // 每个块组的cluster数
-    inodes_per_group: u32,   // 每个块组的inode数
+    pub blocks_per_group: u32,   // 每个块组的block数
+    pub clusters_per_group: u32, // 每个块组的cluster数
+    pub inodes_per_group: u32,   // 每个块组的inode数
+
+    // rev_level为1时, 以下字段有效
+    pub inode_size: u16, // inode的大小
+
+    // 推理出的字段
+    pub block_group_count: u32, // 块组总数
 }
 
 impl Ext4Meta {
     pub fn new(super_block: &Ext4SuperBlock) -> Self {
+        let block_group_count = (super_block.blocks_count_lo + super_block.blocks_per_group - 1)
+            / super_block.blocks_per_group;
         Self {
             inodes_count: super_block.inodes_count,
             free_inodes_count: super_block.free_inodes_count,
@@ -29,11 +41,13 @@ impl Ext4Meta {
             blocks_per_group: super_block.blocks_per_group,
             clusters_per_group: super_block.clusters_per_group,
             inodes_per_group: super_block.inodes_per_group,
+            inode_size: super_block.inode_size,
+            block_group_count,
         }
     }
 }
 
-#[repr(C, packed)]
+#[repr(C)]
 #[derive(Debug)]
 /// Ext4SuperBlock是用来操作底层磁盘上的super_block的, 位置偏移是对应的
 /// Ext4Meta是在os中使用的, 是Ext4的核心元数据
@@ -69,7 +83,7 @@ pub struct Ext4SuperBlock {
     checkinterval: u32, // 两次检查之间的最大间隔时间
 
     creator_os: u32, // 创建文件系统的操作系统
-    rev_level: u32,  // 版本号
+    rev_level: u32, // 版本号, 0 Original format, 1 v2 format w/ dynamic inode sizes, 2 v3 format w/ dynamic inode sizes
     /* 50 */
     def_reserved_uid: u16, // 保留块的默认用户ID
     def_reserved_gid: u16, // 保留块的默认组ID
@@ -86,7 +100,7 @@ pub struct Ext4SuperBlock {
      * things it doesn't understand...
      */
     first_nonres_ino: u32, // 第一个非保留inode的编号
-    inode_size: u16,       // inode的大小
+    pub inode_size: u16,   // inode的大小
     block_group_nr: u16,   // 本块组的编号
     feature_compat: u32,   // 兼容特性集
     /*  60  */

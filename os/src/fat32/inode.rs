@@ -3,7 +3,7 @@ use alloc::{sync::Arc, vec::Vec};
 use crate::{
     config::SysResult,
     fs::{
-        inode::{Inode, InodeMeta, InodeMode},
+        inode_trait::{InodeMeta, InodeMode, InodeTrait},
         path::Path,
         FSMutex,
     },
@@ -24,7 +24,7 @@ pub struct FAT32Inode {
 impl FAT32Inode {
     pub fn new_root(
         fat: Arc<FAT32FileAllocTable>,
-        fa_inode: Option<Arc<dyn Inode>>,
+        fa_inode: Option<Arc<dyn InodeTrait>>,
         path: &Path,
         first_cluster: usize,
     ) -> Self {
@@ -44,7 +44,7 @@ impl FAT32Inode {
     pub fn from_dentry(
         fat: Arc<FAT32FileAllocTable>,
         // fa_inode: Option<Arc<dyn Inode>>,
-        fa_inode: Arc<dyn Inode>,
+        fa_inode: Arc<dyn InodeTrait>,
         dentry: &FAT32DirEntry,
     ) -> Self {
         let parent_path = &fa_inode.get_meta().path;
@@ -76,7 +76,7 @@ impl FAT32Inode {
 
     pub fn new(
         fat: Arc<FAT32FileAllocTable>,
-        fa_inode: Arc<dyn Inode>,
+        fa_inode: Arc<dyn InodeTrait>,
         name: &str,
         mode: InodeMode,
     ) -> Self {
@@ -108,9 +108,9 @@ impl FAT32Inode {
     }
 }
 
-impl Inode for FAT32Inode {
-    fn read<'a>(&'a self, _offset: usize, _buf: &'a mut [u8]) -> usize {
-        self.file.lock().read(_buf, _offset)
+impl InodeTrait for FAT32Inode {
+    fn read<'a>(&'a self, offset: usize, buf: &'a mut [u8]) -> usize {
+        self.file.lock().read(buf, offset)
     }
 
     fn write<'a>(&'a self, _offset: usize, _buf: &'a [u8]) -> usize {
@@ -119,10 +119,10 @@ impl Inode for FAT32Inode {
 
     fn mknod(
         &self,
-        this: Arc<dyn Inode>,
+        this: Arc<dyn InodeTrait>,
         name: &str,
         mode: InodeMode,
-    ) -> SysResult<Arc<dyn Inode>> {
+    ) -> SysResult<Arc<dyn InodeTrait>> {
         if self.meta.mode != InodeMode::FileDIR {
             return Err(1);
         }
@@ -131,7 +131,7 @@ impl Inode for FAT32Inode {
         Ok(Arc::new(s_inode))
     }
 
-    fn find(&self, this: Arc<dyn Inode>, name: &str) -> SysResult<Arc<dyn Inode>> {
+    fn find(&self, this: Arc<dyn InodeTrait>, name: &str) -> SysResult<Arc<dyn InodeTrait>> {
         if self.meta.mode != InodeMode::FileDIR {
             return Err(1);
         }
@@ -142,7 +142,7 @@ impl Inode for FAT32Inode {
             })
     }
 
-    fn list(&self, this: Arc<dyn Inode>) -> SysResult<Vec<Arc<dyn Inode>>> {
+    fn list(&self, this: Arc<dyn InodeTrait>) -> SysResult<Vec<Arc<dyn InodeTrait>>> {
         if self.meta.mode != InodeMode::FileDIR {
             return Err(1);
         }
@@ -156,7 +156,7 @@ impl Inode for FAT32Inode {
     }
 
     /// as we call this method on `dyn Inode`, we need to use `Arc<dyn Inode>` as children's father inode
-    fn load_children_from_disk(&self, this: Arc<dyn Inode>) {
+    fn load_children_from_disk(&self, this: Arc<dyn InodeTrait>) {
         assert_eq!(self.meta.mode, InodeMode::FileDIR);
         let meta = self.meta.clone();
         let mut meta_inner = meta.inner.lock();
@@ -169,7 +169,7 @@ impl Inode for FAT32Inode {
                 continue;
             }
             let inode = FAT32Inode::from_dentry(Arc::clone(&fat), Arc::clone(&this), &dentry);
-            let inode_rc: Arc<dyn Inode> = Arc::new(inode);
+            let inode_rc: Arc<dyn InodeTrait> = Arc::new(inode);
             meta_inner
                 .children
                 .insert(dentry.fname(), Arc::clone(&inode_rc));

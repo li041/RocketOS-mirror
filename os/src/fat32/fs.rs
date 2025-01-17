@@ -3,7 +3,7 @@ use alloc::sync::Arc;
 use crate::{
     drivers::block::block_cache::get_block_cache,
     fat32::FAT32_SECTOR_SIZE,
-    fs::{inode::Inode, path::Path, FSMutex},
+    fs::{inode_trait::InodeTrait, path::Path, FSMutex},
 };
 
 use super::{
@@ -15,7 +15,7 @@ use super::{
 use crate::drivers::block::block_dev::BlockDevice;
 
 pub struct FAT32FileSystem {
-    pub root_inode: Arc<dyn Inode>,
+    pub root_inode: Arc<dyn InodeTrait>,
 }
 
 impl FAT32FileSystem {
@@ -66,7 +66,7 @@ impl FAT32FileSystem {
         Arc::new(FSMutex::new(Self { root_inode }))
     }
 
-    pub fn root_inode(&self) -> Arc<(dyn Inode + 'static)> {
+    pub fn root_inode(&self) -> Arc<(dyn InodeTrait + 'static)> {
         self.root_inode.clone()
     }
 }

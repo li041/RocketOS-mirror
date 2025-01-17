@@ -16,7 +16,7 @@ lazy_static! {
     pub static ref BLOCK_DEVICE: Arc<dyn BlockDevice> = Arc::new(BlockDeviceImpl::new());
 }
 
-const VIRTIO_BLOCK_SIZE: usize = 512;
+pub const VIRTIO_BLOCK_SIZE: usize = 512;
 const BLOCK_CACHE_SIZE: usize = 16;
 
 #[allow(unused)]

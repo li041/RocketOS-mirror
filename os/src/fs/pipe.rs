@@ -3,7 +3,7 @@ use log::debug;
 
 use crate::{mutex::SpinNoIrqLock, task::yield_current_task};
 
-use super::{File, FileMeta};
+use super::{FileMeta, FileOld};
 
 const PIPE_BUFFER_SIZE: usize = 4096;
 
@@ -63,7 +63,7 @@ impl Pipe {
     }
 }
 
-impl File for Pipe {
+impl FileOld for Pipe {
     fn readable(&self) -> bool {
         self.readable
     }

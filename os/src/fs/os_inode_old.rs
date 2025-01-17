@@ -4,9 +4,9 @@
 //!
 //! `UPSafeCell<OSInodeInner>` -> `OSInode`: for static `ROOT_INODE`,we
 //! need to wrap `OSInodeInner` into `UPSafeCell`
-use super::inode::{Inode, InodeMeta, InodeMode};
+use super::inode_trait::{InodeMeta, InodeMode, InodeTrait};
 use super::path::Path;
-use super::{File, FileMeta};
+use super::{FileMeta, FileOld};
 use crate::config::SysResult;
 use crate::drivers::BLOCK_DEVICE;
 use crate::ext4::fs::Ext4FileSystem;
@@ -20,7 +20,7 @@ use bitflags::*;
 use lazy_static::*;
 /// A wrapper around a filesystem inode
 /// to implement File trait atop
-pub struct OSInode {
+pub struct OSInodeOld {
     readable: bool,
     writable: bool,
     inner: SpinNoIrqLock<OSInodeInner>,
@@ -28,10 +28,10 @@ pub struct OSInode {
 /// The OS inode inner in 'UPSafeCell'
 pub struct OSInodeInner {
     offset: usize,
-    inode: Arc<dyn Inode>,
+    inode: Arc<dyn InodeTrait>,
 }
 
-impl OSInode {
+impl OSInodeOld {
     fn get_offset(&self) -> usize {
         self.inner.lock().offset
     }
@@ -49,9 +49,9 @@ impl OSInode {
     }
 }
 
-impl OSInode {
+impl OSInodeOld {
     /// Construct an OS inode from a inode
-    pub fn new(readable: bool, writable: bool, inode: Arc<dyn Inode>) -> Self {
+    pub fn new(readable: bool, writable: bool, inode: Arc<dyn InodeTrait>) -> Self {
         Self {
             readable,
             writable,
@@ -87,7 +87,7 @@ impl OSInode {
 
 struct FAKE_ROOT_INODE;
 
-impl Inode for FAKE_ROOT_INODE {
+impl InodeTrait for FAKE_ROOT_INODE {
     fn read<'a>(&'a self, _offset: usize, _buf: &'a mut [u8]) -> usize {
         todo!()
     }
@@ -96,22 +96,22 @@ impl Inode for FAKE_ROOT_INODE {
     }
     fn mknod(
         &self,
-        _this: Arc<dyn Inode>,
+        _this: Arc<dyn InodeTrait>,
         _name: &str,
         _mode: InodeMode,
-    ) -> SysResult<Arc<dyn Inode>> {
+    ) -> SysResult<Arc<dyn InodeTrait>> {
         todo!()
     }
-    fn find(&self, _this: Arc<dyn Inode>, _name: &str) -> SysResult<Arc<dyn Inode>> {
+    fn find(&self, _this: Arc<dyn InodeTrait>, _name: &str) -> SysResult<Arc<dyn InodeTrait>> {
         todo!()
     }
-    fn list(&self, _this: Arc<dyn Inode>) -> SysResult<Vec<Arc<dyn Inode>>> {
+    fn list(&self, _this: Arc<dyn InodeTrait>) -> SysResult<Vec<Arc<dyn InodeTrait>>> {
         todo!()
     }
     fn get_meta(&self) -> Arc<InodeMeta> {
         todo!()
     }
-    fn load_children_from_disk(&self, _this: Arc<dyn Inode>) {
+    fn load_children_from_disk(&self, _this: Arc<dyn InodeTrait>) {
         todo!()
     }
     fn clear(&self) {
@@ -121,7 +121,7 @@ impl Inode for FAKE_ROOT_INODE {
 
 // fake ROOT_INODE
 lazy_static! {
-    pub static ref ROOT_INODE: Arc<dyn Inode> = {
+    pub static ref ROOT_INODE: Arc<dyn InodeTrait> = {
         FAT32FileSystem::open(BLOCK_DEVICE.clone())
             .lock()
             .root_inode()
@@ -212,7 +212,7 @@ impl OpenFlags {
 // }
 
 // Todo:
-fn open_cwd(dirfd: isize, path: &Path) -> Arc<dyn Inode> {
+fn open_cwd(dirfd: isize, path: &Path) -> Arc<dyn InodeTrait> {
     if !path.is_relative() {
         // absolute path
         ROOT_INODE.clone()
@@ -234,7 +234,7 @@ fn open_cwd(dirfd: isize, path: &Path) -> Arc<dyn Inode> {
     }
 }
 
-pub fn open_inode(dirfd: isize, path: &Path, flags: OpenFlags) -> SysResult<Arc<dyn Inode>> {
+pub fn open_inode(dirfd: isize, path: &Path, flags: OpenFlags) -> SysResult<Arc<dyn InodeTrait>> {
     match open_cwd(dirfd, path).open_path(path, flags.contains(OpenFlags::CREATE), false) {
         Ok(inode) => {
             if flags.contains(OpenFlags::TRUNC) {
@@ -246,7 +246,7 @@ pub fn open_inode(dirfd: isize, path: &Path, flags: OpenFlags) -> SysResult<Arc<
     }
 }
 
-pub fn open_file(dirfd: isize, path: &Path, flags: OpenFlags) -> SysResult<Arc<OSInode>> {
+pub fn open_file(dirfd: isize, path: &Path, flags: OpenFlags) -> SysResult<Arc<OSInodeOld>> {
     let (readable, writable) = flags.read_write();
     // match open_cwd(dirfd, path).open_path(path, flags.contains(OpenFlags::CREATE), false) {
     //     Ok(inode) => {
@@ -258,7 +258,7 @@ pub fn open_file(dirfd: isize, path: &Path, flags: OpenFlags) -> SysResult<Arc<O
     //     Err(e) => Err(e),
     // }
     match open_inode(dirfd, path, flags) {
-        Ok(inode) => Ok(Arc::new(OSInode::new(readable, writable, inode))),
+        Ok(inode) => Ok(Arc::new(OSInodeOld::new(readable, writable, inode))),
         Err(e) => Err(e),
     }
 }
@@ -270,7 +270,7 @@ pub fn create_dir(dirfd: isize, path: &Path) -> usize {
     }
 }
 
-impl File for OSInode {
+impl FileOld for OSInodeOld {
     fn readable(&self) -> bool {
         self.readable
     }

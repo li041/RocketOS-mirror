@@ -23,6 +23,7 @@ TEST_bios = sbi-qemu
 
 # Configs
 MEM_SIZE = 128M
+LOG := error
 
 # Binutils
 OBJCOPY := rust-objcopy --binary-architecture=riscv64
@@ -32,7 +33,7 @@ ifeq ($(MODE), release)
 endif
 
 # File system
-FS_IMG := ../img/sdcard.img
+FS := ../img/sdcard-riscv.img
 
 
 # QEMU
@@ -43,7 +44,7 @@ QEMU_ARGS := 	-machine virt \
 				-nographic \
 				-smp 2\
 				-bios $(BOOTLOADER_ELF)\
-			    -drive file=$(FS_IMG),if=none,format=raw,id=x0 \
+			    -drive file=$(FS),if=none,format=raw,id=x0 \
 			 	-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0\
 				-device virtio-net-device,netdev=net -netdev user,id=net
 
@@ -53,7 +54,7 @@ TEST_QEMU_ARGS := 	-machine virt \
 				-nographic \
 				-smp 2\
 				-bios $(TEST_bios)\
-			    -drive file=$(FS_IMG),if=none,format=raw,id=x0 \
+			    -drive file=$(FS),if=none,format=raw,id=x0 \
 			 	-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0\
 				-device virtio-net-device,netdev=net -netdev user,id=net
 
@@ -103,7 +104,7 @@ build-offline:
 	@$(OBJCOPY) $(KERNEL_ELF) --strip-all -O binary $(KERNEL_BIN)
 
 build:
-	cargo build $(MODE_ARG) --features $(FEATURES)
+	LOG=$(LOG) cargo build $(MODE_ARG) --features $(FEATURES)
 	@$(OBJCOPY) $(KERNEL_ELF) --strip-all -O binary $(KERNEL_BIN)
 	
 run: build 

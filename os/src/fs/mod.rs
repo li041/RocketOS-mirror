@@ -1,33 +1,52 @@
 //! File system in os
 use alloc::sync::Arc;
-use inode::Inode;
+use inode_trait::InodeTrait;
 // use alloc::sync::Arc;
-pub use os_inode::{create_dir, list_apps, open_file, open_inode, OpenFlags};
+pub use os_inode_old::{create_dir, list_apps, open_file, open_inode, OpenFlags};
 pub use stdio::{Stdin, Stdout};
 
 use crate::mutex::SpinNoIrqLock;
+use lazy_static::lazy_static;
 
+pub mod address_space;
+pub mod file;
 pub mod inode;
-mod os_inode;
+pub mod inode_trait;
+mod os_inode_old;
 pub mod path;
 pub mod pipe;
 mod stdio;
 
 // 文件系统的锁先使用SpinNoIrqLock, Todo: 改成RwLock
 pub type FSMutex<T> = SpinNoIrqLock<T>;
+// Todo: 这里动态初始化一个FS_block_size
+lazy_static! {
+    pub static ref FS_BLOCK_SIZE: usize = 4096;
+}
+#[allow(unused)]
+use crate::drivers::block::VIRTIO_BLOCK_SIZE;
+
 pub struct FileMeta {
-    pub inode: Option<Arc<dyn Inode>>,
+    pub inode: Option<Arc<dyn InodeTrait>>,
     pub offset: usize,
 }
 
 impl FileMeta {
-    pub fn new(inode: Option<Arc<dyn Inode>>, offset: usize) -> Self {
+    pub fn new(inode: Option<Arc<dyn InodeTrait>>, offset: usize) -> Self {
         Self { inode, offset }
     }
 }
 
 /// File trait
-pub trait File: Send + Sync {
+pub trait FileOp: Send + Sync {
+    /// Read file to `UserBuffer`
+    fn read<'a>(&'a self, buf: &'a mut [u8]) -> Result<usize, &'static str>;
+    /// Write `UserBuffer` to file
+    fn write<'a>(&'a self, buf: &'a [u8]) -> usize;
+}
+
+/// File trait
+pub trait FileOld: Send + Sync {
     /// If readable
     fn readable(&self) -> bool;
     /// If writable
