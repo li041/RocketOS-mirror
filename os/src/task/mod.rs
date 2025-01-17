@@ -7,7 +7,7 @@ pub mod scheduler;
 pub mod switch;
 
 use crate::{
-    fs::{open_file, path::Path, File, OpenFlags, Stdin, Stdout, AT_FDCWD},
+    fs::{open_file, path::Path, FileOld, OpenFlags, Stdin, Stdout, AT_FDCWD},
     loader::get_app_data_by_name,
     mutex::SpinNoIrqLock,
     sbi::shutdown,
@@ -143,7 +143,7 @@ impl Task {
             (dst_trap_cx_ptr as usize - core::mem::size_of::<TaskContext>()) as *mut TaskContext;
 
         // 复制fd_table和cwd
-        let mut child_fd_table: Vec<Option<Arc<dyn File + Send + Sync>>> = Vec::new();
+        let mut child_fd_table: Vec<Option<Arc<dyn FileOld + Send + Sync>>> = Vec::new();
         for fd in parent_inner.fd_table.iter() {
             if let Some(file) = fd {
                 child_fd_table.push(Some(file.clone()));
@@ -281,7 +281,7 @@ pub struct TaskInner {
     pub parent: Option<Weak<Task>>,
     pub children: Vec<Arc<Task>>,
     pub exit_code: i32,
-    pub fd_table: Vec<Option<Arc<dyn File + Send + Sync>>>,
+    pub fd_table: Vec<Option<Arc<dyn FileOld + Send + Sync>>>,
     pub cwd: Path,
 }
 

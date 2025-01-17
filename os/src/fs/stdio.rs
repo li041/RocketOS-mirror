@@ -1,5 +1,5 @@
 //!Stdin & Stdout
-use super::{File, FileMeta};
+use super::{FileOld, FileMeta};
 // use crate::mm::UserBuffer;
 use crate::{sbi::console_getchar, task::yield_current_task};
 // use crate::task::yield_task;
@@ -8,7 +8,7 @@ pub struct Stdin;
 ///Standard output
 pub struct Stdout;
 
-impl File for Stdin {
+impl FileOld for Stdin {
     fn readable(&self) -> bool {
         true
     }
@@ -47,7 +47,7 @@ impl File for Stdin {
     }
 }
 
-impl File for Stdout {
+impl FileOld for Stdout {
     fn readable(&self) -> bool {
         false
     }

@@ -1,5 +1,7 @@
+//! 操作块的基本单位, 管理元数据(读写块组描述符, 超级块等文件系统原信息)
 use super::{BLOCK_CACHE_SIZE, VIRTIO_BLOCK_SIZE};
 use crate::drivers::block::block_dev::BlockDevice;
+use crate::fs::FS_BLOCK_SIZE;
 use crate::mutex::SpinNoIrqLock;
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
@@ -8,6 +10,7 @@ use alloc::vec::Vec;
 use lazy_static::*;
 
 /// Cached block inside memory
+/// 操作块的基本单位, 管理元数据(读写块组描述符, 超级块等文件系统原信息)
 pub struct BlockCache {
     /// cached block data
     cache: Vec<u8>,
@@ -23,17 +26,15 @@ pub struct BlockCache {
 impl BlockCache {
     /// Load a new BlockCache from disk.
     /// 从磁盘start_block_id开始连续读取cache_size大小的数据到内存中
-    pub fn new(
-        start_block_id: usize,
-        block_device: Arc<dyn BlockDevice>,
-        cache_size: usize,
-    ) -> Self {
+    pub fn new(fs_block_id: usize, block_device: Arc<dyn BlockDevice>, cache_size: usize) -> Self {
         assert!(
             cache_size & (VIRTIO_BLOCK_SIZE - 1) == 0,
             "Cache size must be a multiple of VIRTIO_BLOCK_SIZE, which is {}",
             cache_size
         );
         let mut cache = vec![0u8; cache_size];
+        // 将FS_block_id转换为VirtIOBlk的block_id
+        let start_block_id = fs_block_id * (*FS_BLOCK_SIZE / VIRTIO_BLOCK_SIZE);
         block_device.read_blocks(start_block_id, &mut cache);
         Self {
             cache,
@@ -103,18 +104,15 @@ impl BlockCacheManager {
             queue: VecDeque::new(),
         }
     }
-
     pub fn get_block_cache(
         &mut self,
-        block_id: usize,
+        fs_block_id: usize,
         block_device: Arc<dyn BlockDevice>,
         cache_size: usize,
     ) -> Arc<SpinNoIrqLock<BlockCache>> {
-        if let Some(pair) = self
-            .queue
-            .iter()
-            // .find(|pair| block_id <= pair.0 && block_id + cache_size > pair.0)
-            .find(|pair| block_id >= pair.0 && block_id < pair.0 + cache_size / VIRTIO_BLOCK_SIZE)
+        if let Some(pair) = self.queue.iter().find(|pair| fs_block_id == pair.0)
+        // 这里好像不用判断, 因为FS block_size是VirtIO的倍数, 上层文件系统访问给出的block_id是VirtIO的倍数
+        // .find(|pair| block_id >= pair.0 && block_id < pair.0 + cache_size / VIRTIO_BLOCK_SIZE)
         {
             // 找对应的块(大小不定, 512byts的倍数)
             Arc::clone(&pair.1)
@@ -132,11 +130,12 @@ impl BlockCacheManager {
                 }
             }
             let block_cache = Arc::new(SpinNoIrqLock::new(BlockCache::new(
-                block_id,
+                fs_block_id,
                 Arc::clone(&block_device),
                 cache_size,
             )));
-            self.queue.push_back((block_id, Arc::clone(&block_cache)));
+            self.queue
+                .push_back((fs_block_id, Arc::clone(&block_cache)));
             block_cache
         }
     }
@@ -150,13 +149,13 @@ lazy_static! {
 
 /// Get the block cache corresponding to the given block id and block device
 pub fn get_block_cache(
-    block_id: usize,
+    fs_block_id: usize,
     block_device: Arc<dyn BlockDevice>,
     cache_size: usize,
 ) -> Arc<SpinNoIrqLock<BlockCache>> {
     BLOCK_CACHE_MANAGER
         .lock()
-        .get_block_cache(block_id, block_device, cache_size)
+        .get_block_cache(fs_block_id, block_device, cache_size)
 }
 
 /// Sync all block cache to block device

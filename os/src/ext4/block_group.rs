@@ -1,3 +1,5 @@
+#[derive(Debug, Clone)]
+#[repr(C)]
 pub struct GroupDesc {
     pub block_bitmap_lo: u32,  // block位图的起始块号(低32位)
     pub inode_bitmap_lo: u32,  // inode位图的起始块号(低32位)
@@ -22,4 +24,13 @@ pub struct GroupDesc {
     block_bitmap_csum_hi: u16, // crc32c(s_uuid+grp_num+bitmap)的高16位
     inode_bitmap_csum_hi: u16, // crc32c(s_uuid+grp_num+bitmap)的高16位
     reserved: u32,             // 保留字段, 填充
+}
+
+impl GroupDesc {
+    pub fn is_inode_uninit(&self) -> bool {
+        self.flags & 0x1 == 0x1
+    }
+    pub fn inode_table(&self) -> u64 {
+        (self.inode_table_hi as u64) << 32 | self.inode_table_lo as u64
+    }
 }

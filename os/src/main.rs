@@ -104,9 +104,8 @@ pub fn rust_main(_hart_id: usize) -> ! {
     add_initproc();
     trap::enable_timer_interrupt();
     timer::set_next_trigger();
-    // let fs = Ext4FileSystem::open(BLOCK_DEVICE.clone());
-    // println!("fs: {:?}", fs.lock().ext4_meta);
-    // panic!("shutdown machine");
+    let fs = Ext4FileSystem::open(BLOCK_DEVICE.clone());
+    panic!("shutdown machine");
     fs::list_apps();
     loader::list_apps();
     // pass block_device_test, 注意实际运行时别调用这个函数, 会覆盖Block内容

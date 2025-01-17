@@ -47,9 +47,9 @@ pub struct FAT32BootSector {
 
 impl FAT32BootSector {
     pub fn is_valid(&self) -> bool {
-        self.BS_BootSig == 0x29
-            && self.BS_FileSysType == "FAT32   ".as_bytes()
-            && self.BPB_BytesPerSector == 512 // hardwired sector size for simplicity
+        // self.BS_BootSig == 0x29 &&
+        self.BS_FileSysType == "FAT32   ".as_bytes() && self.BPB_BytesPerSector == 512
+        // hardwired sector size for simplicity
     }
 }
 

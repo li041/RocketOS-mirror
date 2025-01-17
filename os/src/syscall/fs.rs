@@ -2,8 +2,8 @@ use alloc::string::ToString;
 
 use crate::{
     fs::{
-        create_dir, inode::InodeMode, open_file, open_inode, path::Path, pipe::Pipe, OpenFlags,
-        AT_FDCWD, AT_REMOVEDIR,
+        create_dir, inode_trait::InodeMode, open_file, open_inode, path::Path, pipe::Pipe,
+        OpenFlags, AT_FDCWD, AT_REMOVEDIR,
     },
     mm::copy_to_user,
     task::current_task,

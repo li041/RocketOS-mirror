@@ -184,11 +184,15 @@ impl FAT32File {
                 for i in cur_st..cur_ed {
                     tmp_data[i - sector_st] = data[i - st];
                 }
-                get_block_cache(sector_id + j, self.fat.block_device.clone(), FAT32_SECTOR_SIZE)
-                    .lock()
-                    .modify(0, |data: &mut [u8; FAT32_SECTOR_SIZE]| {
-                        data.copy_from_slice(&tmp_data)
-                    });
+                get_block_cache(
+                    sector_id + j,
+                    self.fat.block_device.clone(),
+                    FAT32_SECTOR_SIZE,
+                )
+                .lock()
+                .modify(0, |data: &mut [u8; FAT32_SECTOR_SIZE]| {
+                    data.copy_from_slice(&tmp_data)
+                });
             }
         }
         ret
