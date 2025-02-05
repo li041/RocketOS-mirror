@@ -380,6 +380,10 @@ impl MemorySet {
         self.mmap_start += aligned_size;
         VPNRange::new(start_vpn, end_vpn)
     }
+    // 获取当前地址空间token
+    pub fn token(&self) -> usize{
+        self.page_table.token()
+    }
 }
 
 impl MemorySet {

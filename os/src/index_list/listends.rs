@@ -5,8 +5,8 @@
  */
 //! The defenition of the ListEnds type
 //!
-use core::{default::Default, fmt, mem};
 use super::listindex::ListIndex;
+use core::{default::Default, fmt, mem};
 
 #[derive(Clone, Debug, Default)]
 pub struct ListEnds {

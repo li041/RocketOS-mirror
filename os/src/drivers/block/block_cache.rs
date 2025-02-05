@@ -10,8 +10,8 @@ use alloc::vec::Vec;
 use lazy_static::*;
 
 /// Cached block inside memory
-/// 操作块的基本单位, 管理元数据(读写块组描述符, 超级块等文件系统原信息)
 pub struct BlockCache {
+    /// 操作块的基本单位, 管理元数据(读写块组描述符, 超级块等文件系统原信息)
     /// cached block data
     cache: Vec<u8>,
     cache_size: usize,
@@ -55,7 +55,13 @@ impl BlockCache {
         T: Sized,
     {
         let type_size = core::mem::size_of::<T>();
-        assert!(offset + type_size <= self.cache_size);
+        assert!(
+            offset + type_size <= self.cache_size,
+            "offset: {}, type_size: {}, cache_size: {}",
+            offset,
+            type_size,
+            self.cache_size
+        );
         let addr = self.addr_of_offset(offset);
         unsafe { &*(addr as *const T) }
     }

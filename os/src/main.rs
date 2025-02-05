@@ -1,5 +1,6 @@
 #![no_std]
 #![no_main]
+#![feature(map_try_insert)]
 #![feature(alloc_error_handler)]
 #![feature(negative_impls)]
 #![feature(panic_info_message)]
@@ -29,12 +30,12 @@ mod trap;
 pub mod config;
 pub mod utils;
 
-use drivers::BLOCK_DEVICE;
-use ext4::fs::Ext4FileSystem;
+use config::KERNEL_BASE;
+use fs::mount::do_ext4_mount;
 use riscv::register::sstatus;
-use task::{add_initproc, processor::run_tasks};
+use task::{add_initproc, run_tasks, TaskContext};
+use trap::TrapContext;
 
-use crate::config::KERNEL_BASE;
 use core::{
     arch::{asm, global_asm},
     ffi::c_void,
@@ -53,14 +54,6 @@ fn clear_bss() {
     }
     unsafe {
         ptr::write_bytes(sbss as *mut c_void, 0, ebss as usize - sbss as usize);
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn jump_to_app() {
-    unsafe {
-        asm!("la t0, app_1_start");
-        asm!("jalr zero, 0(t0)");
     }
 }
 
@@ -95,18 +88,10 @@ pub fn rust_main(_hart_id: usize) -> ! {
         logging::test();
         trap::context::trap_cx_test();
     }
-    // Task::new(loader::get_app_data(0));
-    // trap_return();
-    // task::add_initproc();
-    // let elf_data = get_app_data_by_name("forktest_simple").unwrap();
-    // let init_proc = Arc::new(Task::new(elf_data));
     show_context_size();
-    add_initproc();
     trap::enable_timer_interrupt();
     timer::set_next_trigger();
-    let fs = Ext4FileSystem::open(BLOCK_DEVICE.clone());
-    panic!("shutdown machine");
-    fs::list_apps();
+    add_initproc();
     loader::list_apps();
     // pass block_device_test, 注意实际运行时别调用这个函数, 会覆盖Block内容
     DEBUG_FLAG.store(1, core::sync::atomic::Ordering::SeqCst);
@@ -117,10 +102,10 @@ pub fn rust_main(_hart_id: usize) -> ! {
 pub fn show_context_size() {
     log::info!(
         "size of trap context: {}",
-        core::mem::size_of::<trap::context::TrapContext>()
+        core::mem::size_of::<TrapContext>()
     );
     log::info!(
         "size of task context: {}",
-        core::mem::size_of::<task::context::TaskContext>()
+        core::mem::size_of::<TaskContext>()
     )
 }

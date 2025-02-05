@@ -12,7 +12,8 @@ use riscv::register::{
 };
 
 use crate::{
-    mm::page_table::PageTable, syscall::syscall, task::yield_current_task, timer::set_next_trigger,
+    mm::page_table::PageTable, syscall::syscall, timer::set_next_trigger,
+    task::yield_current_task,
 };
 
 pub mod context;
@@ -66,7 +67,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
 
             // page_table.dump_with_va(stval);
             let sepc = sepc::read();
-            log::error!("task {} page fault", current_task.tid,);
+            log::error!("task {} page fault", current_task.tid());
 
             panic!(
                 "page fault in application, bad addr = {:#x}, scause = {:?}, sepc = {:#x}",
@@ -81,7 +82,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
         }
         _ => {
             let current_task = crate::task::current_task();
-            log::error!("task {} trap", current_task.tid,);
+            log::error!("task {} trap", current_task.tid());
             panic!(
                 "Unsupported trap {:?}, stval = {:#x}, sepc = {:#x}!",
                 scause.cause(),

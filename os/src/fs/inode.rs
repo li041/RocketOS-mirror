@@ -1,114 +1,75 @@
 //! new
-use crate::config::{PAGE_SIZE, PAGE_SIZE_BITS};
-use crate::drivers::block::block_dev::BlockDevice;
-use crate::drivers::BLOCK_DEVICE;
-use crate::ext4::extent_tree::Extent;
-use crate::mm::page::Page;
+use crate::ext4::inode::Ext4Inode;
 use crate::mutex::SpinNoIrqLock;
+use crate::timer::TimeSpec;
 
-use super::address_space::{self, AddressSpace};
+use super::dentry::{Dentry, LinuxDirent64};
+use super::kstat::Kstat;
+use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-
-/// 通过inode是能够访问到文件系统的超级块的
-/// 在内存中的inode结构
-pub struct Inode {
-    /// 页缓存
-    pub address_space: SpinNoIrqLock<AddressSpace>,
-    pub inode: Arc<dyn InodeOp>,
-    pub block_device: Arc<dyn BlockDevice>,
-}
-
-impl Inode {
-    pub fn new(inode: Arc<dyn InodeOp>) -> Self {
-        Self {
-            address_space: SpinNoIrqLock::new(AddressSpace::new()),
-            inode,
-            block_device: BLOCK_DEVICE.clone(),
-        }
-    }
-    // 读取文件内容, offset是字节偏移
-    pub fn read(&self, offset: usize, buf: &mut [u8]) -> Result<usize, &'static str> {
-        // 需要读取的总长度
-        let rbuf_len = buf.len();
-        // 先读取页缓存
-        let mut current_read = 0;
-        let mut page_offset = offset >> PAGE_SIZE_BITS;
-        let mut page_offset_in_page = offset & (PAGE_SIZE_BITS - 1);
-
-        let mut current_physical_block_range: Option<PhysicalBlockRange> = None;
-        let mut page: Arc<SpinNoIrqLock<Page>>;
-        let mut fs_block_id: usize;
-        let mut address_space = self.address_space.lock();
-
-        while current_read < rbuf_len {
-            if let Some(page_cache) = address_space.get_page_cache(page_offset) {
-                // 页缓存命中
-                page = page_cache;
-            } else {
-                // 页缓存未命中, 看是否在查到的PhysicalBlockRange中
-                if let Some(physical_block_range) = &current_physical_block_range {
-                    if physical_block_range.logical_block_id + physical_block_range.len as usize
-                        > page_offset
-                    {
-                        // 命中extent读取, 知道对应的物理块号
-                        fs_block_id = physical_block_range.physical_block_id + page_offset
-                            - physical_block_range.logical_block_id;
-                    } else {
-                        // 未命中, 从inode中读取extent
-                        let physical_block_range =
-                            self.inode.read(page_offset, self.block_device.clone())?;
-                        fs_block_id = physical_block_range.physical_block_id + page_offset
-                            - physical_block_range.logical_block_id;
-                        current_physical_block_range = Some(physical_block_range);
-                    }
-                } else {
-                    // 未命中, 从inode中读取extent
-                    let physical_block_range =
-                        self.inode.read(page_offset, self.block_device.clone())?;
-                    fs_block_id = physical_block_range.physical_block_id + page_offset
-                        - physical_block_range.logical_block_id;
-                    current_physical_block_range = Some(physical_block_range);
-                }
-                page = address_space.new_page_cache(
-                    page_offset,
-                    fs_block_id,
-                    self.block_device.clone(),
-                );
-            }
-            let copy_len = (rbuf_len - current_read).min(PAGE_SIZE - page_offset_in_page);
-            page.lock().read(0, |data: &[u8; PAGE_SIZE]| {
-                buf[current_read..current_read + copy_len]
-                    .copy_from_slice(&data[page_offset_in_page..page_offset_in_page + copy_len]);
-            });
-            current_read += copy_len;
-            page_offset += 1;
-            page_offset_in_page = 0;
-        }
-        Ok(current_read)
-    }
-    //
-    pub fn write(&self, offset: usize, buf: &[u8]) -> usize {
-        unimplemented!();
-    }
-}
-
-// logical_block_id是文件中的逻辑偏移, phsical_block_id是ext4文件系统中的物理块号
-pub struct PhysicalBlockRange {
-    pub logical_block_id: usize,  // file中的逻辑块号
-    pub physical_block_id: usize, // ext4文件系统中的物理块号
-    pub len: u32,
-}
+use core::any::Any;
 
 /// 由页缓存直接和block device交互
 /// inode查extent_tree, 返回页号
 /// page_offset是页偏移, page_offset * PAGE_SIZE是字节偏移
-pub trait InodeOp: Send + Sync {
-    // 返回extent
-    fn read<'a>(
-        &'a self,
-        page_offset: usize,
-        block_device: Arc<dyn BlockDevice>,
-    ) -> Result<PhysicalBlockRange, &'static str>;
+pub trait InodeOp: Any + Send + Sync {
+    // 主要用来获得在disk上的结构
+    fn as_any(&self) -> &dyn Any;
+    // 用于文件读写
+    fn read<'a>(&'a self, offset: usize, buf: &'a mut [u8]) -> usize;
     fn write<'a>(&'a self, page_offset: usize, buf: &'a [u8]) -> usize;
+    // 返回目录项
+    // 先查找Denrty的children, 如果没有再查找目录
+    // 注意这里的返回值不是`Option<..>`, 对于没有查找的情况, 返回负目录项`dentry.inode = NULL`
+    // lookup需要加载Inode进入内存, 关联到Dentry(除非是负目录项), 建立dentry的父子关系
+    // 注意: 这里可能返回负目录项
+    // 上层调用者保证:
+    //      1. 先查找dentry cache, 如果没有再查找目录
+    //      3. 上层调用者保证将dentry放进dentry cache中
+    fn lookup<'a>(&'a self, name: &str, parent_dentry: Arc<Dentry>) -> Arc<Dentry>;
+    // self是目录inode, name是新建文件的名字, mode是新建文件的类型
+    // fn mknod<'a>(&'a self, name: &str, mode: u16) -> Arc<Dentry>;
+    // self是目录, Dentry是上层根据文件名新建的负目录项(已经建立了父子关系)
+    // 上层调用者保证:
+    //      1. 创建的文件名在目录中不存在
+    //      2. Dentry的inode字段为None(负目录项)
+    fn create<'a>(&'a self, negative_dentry: Arc<Dentry>, mode: u16);
+    // self是目录inode, old_dentry是旧的目录项, new_dentry是新的目录项, 他们指向同一个inode
+    fn link<'a>(&'a self, old_dentry: Arc<Dentry>, new_dentry: Arc<Dentry>);
+    // 上层调用者保证:
+    //     1. 在unlink调用后, inode的dentry cache中中对应的dentry无效化(变为负目录项)
+    //     2. 仅有已有`File`可以访问inode
+    fn unlink<'a>(&'a self, dentry: Arc<Dentry>);
+    // 创建临时文件, 用于临时文件系统, inode没有对应的路径, 不会分配目录项
+    // 临时文件没有对应的目录项, 只能通过fd进行访问
+    // 与create的唯一区别是: 1. 没有对应的目录项
+    fn tmpfile<'a>(&'a self, mode: u16) -> Arc<Ext4Inode>;
+    fn mkdir<'a>(&'a self, dentry: Arc<Dentry>, mode: u16);
+    // 检查是否是目录, 且有子目录项可以用于lookup
+    fn can_lookup(&self) -> bool;
+    // 上层readdir调用
+    fn getdents(&self) -> Vec<LinuxDirent64>;
+    fn getattr(&self) -> Kstat;
+    fn get_inode_num(&self) -> usize;
 }
+
+// pub struct InodeMeta {
+//     /// inode number
+//     pub inode_num: usize,
+//     /// name which doesn't have slash
+//     pub name: String,
+//     inner: SpinNoIrqLock<InodeMetaInner>,
+// }
+
+// pub struct InodeMetaInner {
+//     pub size: usize,
+//     // link count
+//     pub nlink: usize,
+//     // Last access time
+//     pub atime: TimeSpec,
+//     // Last modification time
+//     pub mtime: TimeSpec,
+//     // Last status change time
+//     pub ctime: TimeSpec,
+// }

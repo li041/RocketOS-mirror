@@ -1,11 +1,8 @@
 use core::ptr::NonNull;
 
 use super::BlockDevice;
-use crate::config::{KERNEL_BASE, PAGE_SIZE_BITS};
-use crate::mm::frame_allocator::{frame_alloc, frame_dealloc, FrameTracker};
-use crate::mm::memory_set::KERNEL_SATP;
-use crate::mm::page_table::PageTable;
-use crate::mm::{PhysAddr, PhysPageNum, StepByOne, VirtAddr};
+use crate::config::KERNEL_BASE;
+use crate::mm::frame_allocator::FrameTracker;
 use crate::mutex::SpinNoIrqLock;
 use alloc::alloc::alloc_zeroed;
 use alloc::boxed::Box;
@@ -13,9 +10,7 @@ use alloc::vec::Vec;
 use lazy_static::*;
 use virtio_drivers::device::blk::VirtIOBlk;
 use virtio_drivers::transport::mmio::{MmioTransport, VirtIOHeader};
-use virtio_drivers::transport::{self, Transport};
 use virtio_drivers::{BufferDirection, Hal};
-use xmas_elf::header;
 
 // FakeHal使用的crate
 use crate::config::PAGE_SIZE;
@@ -107,92 +102,6 @@ fn virt_to_phys(vaddr: usize) -> usize {
 fn phys_to_virt(paddr: usize) -> usize {
     paddr + KERNEL_BASE
 }
-
-pub struct VirtioHal;
-
-// unsafe impl Hal for VirtioHal {
-//     // 返回设备能够访问的物理地址和驱动程序使用的虚拟地址
-//     fn dma_alloc(pages: usize, _direction: BufferDirection) -> (usize, NonNull<u8>) {
-//         assert_ne!(pages, 0);
-//         let mut ppn_base = PhysPageNum(0);
-//         for i in 0..pages {
-//             let frame = frame_alloc().unwrap();
-//             if i == 0 {
-//                 ppn_base = frame.ppn;
-//             }
-
-//             // 这里需要分配的是连续的物理页
-//             assert_eq!(frame.ppn.0, ppn_base.0 + i);
-//             QUEUE_FRAMES.lock().push(frame);
-//         }
-//         let pa: PhysAddr = ppn_base.into();
-//     }
-
-//     unsafe fn dma_dealloc(pa: usize, _vaddr: NonNull<u8>, pages: usize) -> i32 {
-//         // let pa = PhysAddr::from(pa);
-//         // let mut ppn_base: PhysPageNum = pa.into();
-//         let mut ppn_base: PhysPageNum = PhysPageNum(pa >> PAGE_SIZE_BITS);
-//         for _ in 0..pages {
-//             frame_dealloc(ppn_base);
-//             ppn_base.step();
-//         }
-//         0
-//     }
-
-//     unsafe fn mmio_phys_to_virt(
-//         paddr: virtio_drivers::PhysAddr,
-//         size: usize,
-//     ) -> core::ptr::NonNull<u8> {
-//         core::ptr::NonNull::new_unchecked((paddr + KERNEL_BASE) as *mut u8)
-//     }
-//     unsafe fn share(buffer: NonNull<[u8]>, direction: BufferDirection) -> usize {
-//         assert_ne!(buffer.len(), 0);
-//         // To ensure that the driver is handling and unsharing buffers properly, allocate a new
-//         // buffer and copy to it if appropriate.
-//         let mut shared_buffer = u8::(buffer.len());
-//         if let BufferDirection::DriverToDevice | BufferDirection::Both = direction {
-//             unsafe {
-//                 buffer
-//                     .as_ptr()
-//                     .cast::<u8>()
-//                     .copy_to(shared_buffer.as_mut_ptr(), buffer.len());
-//             }
-//         }
-//         let vaddr = Box::into_raw(shared_buffer) as *mut u8 as usize;
-//         // Nothing to do, as the host already has access to all memory.
-//         virt_to_phys(vaddr)
-//     }
-
-//     unsafe fn unshare(paddr: usize, buffer: NonNull<[u8]>, direction: BufferDirection) {
-//         assert_ne!(buffer.len(), 0);
-//         assert_ne!(paddr, 0);
-//         let vaddr = phys_to_virt(paddr);
-//         let shared_buffer = unsafe {
-//             Box::from_raw(core::ptr::slice_from_raw_parts_mut(
-//                 vaddr as *mut u8,
-//                 buffer.len(),
-//             ))
-//         };
-//         if let BufferDirection::DeviceToDriver | BufferDirection::Both = direction {
-//             unsafe {
-//                 buffer
-//                     .as_ptr()
-//                     .cast::<u8>()
-//                     .copy_from(shared_buffer.as_ptr(), buffer.len());
-//             }
-//         }
-//     }
-// }
-
-// fn phys_to_virt(addr: usize) -> usize {
-//     addr + KERNEL_BASE
-// }
-
-// fn virt_to_phys(vaddr: usize) -> usize {
-//     PageTable::from_token(*KERNEL_SATP)
-//         .translate_va_to_pa(VirtAddr::from(vaddr))
-//         .unwrap()
-// }
 
 lazy_static! {
     static ref QUEUE_FRAMES: SpinNoIrqLock<Vec<FrameTracker>> = SpinNoIrqLock::new(Vec::new());

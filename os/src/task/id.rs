@@ -1,10 +1,27 @@
 //! id allocator
-
-use core::fmt::Display;
-
+use super::Tid;
 use crate::mutex::SpinNoIrqLock;
 use alloc::vec::Vec;
+use core::fmt::Display;
 use lazy_static::lazy_static;
+
+// 进程（线程）号分配器
+lazy_static! {
+    pub static ref TID_ALLOCATOR: SpinNoIrqLock<IdAllocator> =
+        SpinNoIrqLock::new(IdAllocator::new());
+    pub static ref KID_ALLOCATOR: SpinNoIrqLock<IdAllocator> =
+        SpinNoIrqLock::new(IdAllocator::new());
+}
+
+/// 申请内核栈号
+pub fn kid_alloc() -> usize {
+    KID_ALLOCATOR.lock().alloc()
+}
+
+/// 申请进程（线程）号
+pub fn tid_alloc() -> TidHandle {
+    TidHandle(TID_ALLOCATOR.lock().alloc())
+}
 
 /// Generic Allocator struct
 pub struct IdAllocator {
@@ -20,7 +37,7 @@ impl IdAllocator {
         }
     }
 
-    pub fn alloc(&mut self) -> usize {
+    pub fn alloc(&mut self) -> Tid {
         if let Some(id) = self.recycled.pop() {
             id
         } else {
@@ -32,13 +49,15 @@ impl IdAllocator {
 
     pub fn dealloc(&mut self, id: usize) {
         assert!(id < self.next);
-        assert!(!self.recycled.contains(&id), "id {} has been recycled", id);
-        self.recycled.push(id);
+        if !self.recycled.contains(&id){
+            self.recycled.push(id);
+        }
     }
 }
 
 #[derive(PartialEq, Debug)]
-pub struct TidHandle(pub usize);
+pub struct TidHandle(pub Tid);
+
 impl Drop for TidHandle {
     fn drop(&mut self) {
         TID_ALLOCATOR.lock().dealloc(self.0);
@@ -51,26 +70,18 @@ impl Display for TidHandle {
     }
 }
 
+impl TidHandle {
+    pub fn set(&mut self, tid: Tid) {
+        self.0 = tid;
+    }
+}
+
 #[derive(PartialEq, Debug)]
 pub struct KIdHandle(pub usize);
 impl Drop for KIdHandle {
     fn drop(&mut self) {
         KID_ALLOCATOR.lock().dealloc(self.0);
     }
-}
-
-lazy_static! {
-    /// kstack id allocator instance through lazy_static!
-    pub static ref KID_ALLOCATOR: SpinNoIrqLock<IdAllocator> = SpinNoIrqLock::new(IdAllocator::new());
-    pub static ref TID_ALLOCATOR: SpinNoIrqLock<IdAllocator> = SpinNoIrqLock::new(IdAllocator::new());
-}
-
-pub fn kid_alloc() -> usize {
-    KID_ALLOCATOR.lock().alloc()
-}
-
-pub fn tid_alloc() -> TidHandle {
-    TidHandle(TID_ALLOCATOR.lock().alloc())
 }
 
 #[cfg(test)]

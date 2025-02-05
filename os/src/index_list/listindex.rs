@@ -1,12 +1,12 @@
 //! Definition of the ListIndex type
-//! 
+//!
 use core::{convert::TryFrom, default::Default, fmt, num::NonZeroU32};
 
 /// Vector index for the elements in the list. They are typically not
 /// squential.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ListIndex {
-    ndx: Option<NonZeroU32>
+    ndx: Option<NonZeroU32>,
 }
 
 impl ListIndex {

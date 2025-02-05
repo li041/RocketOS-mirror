@@ -1,6 +1,5 @@
 use core::{
-    arch::asm,
-    slice::{from_raw_parts, from_raw_parts_mut},
+    arch::asm, mem, slice::{from_raw_parts, from_raw_parts_mut}
 };
 
 #[cfg(feature = "test")]
@@ -58,11 +57,9 @@ pub fn copy_to_user<T: Copy>(to: *mut T, from: *const T, n: usize) -> Result<usi
     let start_vpn = VirtAddr::from(to as usize).floor();
     let end_vpn = VirtAddr::from(to as usize + n * core::mem::size_of::<T>()).ceil();
     let vpn_range = VPNRange::new(start_vpn, end_vpn);
-    current_task()
-        .inner
-        .lock()
-        .memory_set
-        .check_valid_user_vpn_range(vpn_range, MapPermission::W)?;
+    current_task().op_memory_set_mut(|memory_set| {
+        memory_set.check_valid_user_vpn_range(vpn_range, MapPermission::W)
+    })?;
     // 执行复制
     unsafe {
         let from_slice = from_raw_parts(from, n);

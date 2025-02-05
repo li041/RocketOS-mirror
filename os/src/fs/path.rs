@@ -1,83 +1,26 @@
-use core::fmt::Display;
+use alloc::sync::Arc;
 
-use alloc::{
-    string::{String, ToString},
-    vec::Vec,
-};
+use super::{dentry::Dentry, mount::VfsMount};
 
-#[derive(Debug, Clone)]
 pub struct Path {
-    inner: Vec<String>,
-    is_relative: bool,
-}
-
-impl From<&str> for Path {
-    fn from(v: &str) -> Self {
-        let is_relative = !v.starts_with("/");
-        Self {
-            inner: v
-                .split("/")
-                .filter(|s| s.len() > 0)
-                .map(|s| s.to_string())
-                .collect(),
-            is_relative,
-        }
-    }
-}
-
-impl From<String> for Path {
-    fn from(v: String) -> Self {
-        Self::from(v.as_str())
-    }
-}
-
-// you can call to_string() or println!("{}", path) to get path concated by "/"
-impl Display for Path {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if self.is_relative {
-            write!(f, "{}", &self.inner.join("/"))
-        } else {
-            write!(f, "{}", "/".to_string() + &self.inner.join("/"))
-        }
-    }
+    pub mnt: Arc<VfsMount>,
+    pub dentry: Arc<Dentry>,
 }
 
 impl Path {
-    fn push(&mut self, s: &str) {
-        self.inner.push(s.to_string());
+    pub fn zero_init() -> Arc<Self> {
+        Arc::new(Path {
+            mnt: Arc::new(VfsMount::zero_init()),
+            dentry: Arc::new(Dentry::zero_init()),
+        })
     }
-
-    #[allow(unused)]
-    fn pop(&mut self) -> Option<String> {
-        self.inner.pop() /* .unwrap_or(String::new()) */
+    pub fn from_existed_user(old_path: &Arc<Path>) -> Arc<Self> {
+        Arc::new(Path {
+            mnt: old_path.mnt.clone(),
+            dentry: old_path.dentry.clone(),
+        })
     }
-
-    pub fn new_absolute() -> Self {
-        Self {
-            inner: Vec::new(),
-            is_relative: false,
-        }
-    }
-
-    pub fn get_name(&self) -> String {
-        self.inner.last().unwrap_or(&String::new()).to_string()
-    }
-
-    pub fn len(&self) -> usize {
-        self.inner.len()
-    }
-
-    pub fn is_relative(&self) -> bool {
-        self.is_relative
-    }
-
-    pub fn get_inner(&self) -> &Vec<String> {
-        &self.inner
-    }
-
-    pub fn clone_and_append(&self, s: &str) -> Self {
-        let mut ret = self.clone();
-        ret.push(s);
-        ret
+    pub fn new(mnt: Arc<VfsMount>, dentry: Arc<Dentry>) -> Arc<Self> {
+        Arc::new(Path { mnt, dentry })
     }
 }

@@ -10,21 +10,6 @@ panic = "abort"
 default = []
 test = []
 
-[source.crates-io]
-replace-with = "vendored-sources"
-
-[source."git+https://github.com/rcore-os/riscv"]
-git = "https://github.com/rcore-os/riscv"
-replace-with = "vendored-sources"
-
-[source."git+https://github.com/rcore-os/virtio-drivers?rev=4ee80e5"]
-git = "https://github.com/rcore-os/virtio-drivers"
-rev = "4ee80e5"
-replace-with = "vendored-sources"
-
-[source.vendored-sources]
-directory = "vendor"
-
 [dependencies]
 riscv = { git = "https://github.com/rcore-os/riscv", features = ["inline-asm"] }
 buddy_system_allocator = "0.10.0"
@@ -36,3 +21,4 @@ zerocopy = { version = "0.7.35", features = ["derive"] }
 
 virtio-drivers = { git = "https://github.com/li041/virtio-drivers", branch = 'lxh'}
 memoffset = "0.9.1"
+hashbrown = "0.15.2"

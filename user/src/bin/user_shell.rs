@@ -12,7 +12,6 @@ const CR: u8 = 0x0du8;
 const DL: u8 = 0x7fu8;
 const BS: u8 = 0x08u8;
 
-// Arona OS theme color
 const THEME_COLOR: &str = "\u{1B}[38;5;14m";
 const RESET_COLOR: &str = "\u{1B}[0m";
 

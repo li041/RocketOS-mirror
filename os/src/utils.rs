@@ -5,6 +5,10 @@ use crate::config::PAGE_SIZE;
 /// 由caller保证ptr的合法性
 /// Convert C-style string(end with '\0') to rust string
 pub fn c_str_to_string(ptr: *const u8) -> String {
+    assert!(
+        !ptr.is_null(),
+        "c_str_to_string: null pointer passed in, please check!"
+    );
     let mut ptr = ptr as usize;
     let mut ret = String::new();
     // trace!("[c_str_to_string] convert ptr at {:#x} to string", ptr);
