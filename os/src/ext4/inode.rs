@@ -1,9 +1,11 @@
 use core::ptr;
 
+use alloc::string::String;
 use alloc::sync::{Arc, Weak};
 use alloc::vec;
 use alloc::vec::Vec;
 
+use crate::config::EXT4_MAX_INLINE_DATA;
 use crate::fat32::inode;
 use crate::fs::kstat::{self, Kstat};
 use crate::timer::TimeSpec;
@@ -46,7 +48,7 @@ const S_ISUID: u16 = 0x800; // Set UID
 
 pub const S_IFDIR: u16 = 0x4000; // Directory
 pub const S_IFREG: u16 = 0x8000; // Regular file
-                                 // 表示所有权限位
+pub const S_IFLNK: u16 = 0xA000; // Symbolic link
 pub const S_IALLUGO: u16 = 0x1FF; // All permissions
 
 // inode flags
@@ -191,6 +193,10 @@ impl Ext4InodeDisk {
     fn is_dir(&self) -> bool {
         self.mode & S_IFDIR == S_IFDIR
     }
+    /// 是否是符号链接
+    fn is_symlink(&self) -> bool {
+        self.mode & S_IFLNK == S_IFLNK
+    }
     fn flags(&self) {
         log::info!(
             "\thash indexed directory: {}",
@@ -319,12 +325,12 @@ impl Ext4InodeDisk {
             let start_block = extent.logical_block;
             let end_block = start_block + extent.len as u32;
             if logical_start_block >= start_block && logical_start_block < end_block {
-                log::info!(
-                    "[Ext4InodeDisk::find_extent]: hit\nlogical_start_block: {}, start_block: {}, end_block: {}",
-                    logical_start_block,
-                    start_block,
-                    end_block
-                );
+                // log::info!(
+                //     "[Ext4InodeDisk::find_extent]: hit\nlogical_start_block: {}, start_block: {}, end_block: {}",
+                //     logical_start_block,
+                //     start_block,
+                //     end_block
+                // );
                 return Ok(*extent);
             }
         }
@@ -442,6 +448,7 @@ pub struct Ext4Inode {
     pub block_device: Arc<dyn BlockDevice>,
     pub address_space: AddressSpace,
     pub inode_num: usize,
+    pub link: SpinNoIrqLock<Option<String>>,
     pub inner: FSMutex<Ext4InodeInner>,
 }
 
@@ -500,6 +507,7 @@ impl Ext4Inode {
             block_device,
             address_space: AddressSpace::new(),
             inode_num: ino,
+            link: SpinNoIrqLock::new(None),
             inner: FSMutex::new(Ext4InodeInner::new(new_inode_disk)),
         })
     }
@@ -516,6 +524,7 @@ impl Ext4Inode {
             block_device,
             address_space: AddressSpace::new(),
             inode_num: 2,
+            link: SpinNoIrqLock::new(None),
             inner: FSMutex::new(Ext4InodeInner::new(root_inode_disk)),
         }
     }
@@ -529,12 +538,12 @@ impl Ext4Inode {
         if offset >= inode_size {
             return Ok(0);
         }
-        log::info!(
-            "[Ext4Inode::read]: offset: {}, inode_size: {}, rbuf_len: {}",
-            offset,
-            inode_size,
-            rbuf_len
-        );
+        // log::info!(
+        //     "[Ext4Inode::read]: offset: {}, inode_size: {}, rbuf_len: {}",
+        //     offset,
+        //     inode_size,
+        //     rbuf_len
+        // );
 
         // 先查看是否有inline data
         if self.inner.lock().inode_on_disk.has_inline_data() {
@@ -612,8 +621,48 @@ impl Ext4Inode {
             page_offset += 1;
             page_offset_in_page = 0;
         }
-        log::info!("[Ext4Inode::read]: current_read: {}", current_read);
         Ok(current_read)
+    }
+    /// 由上层调用者保证
+    ///     1. 确定是inline_data才调用
+    ///     2. 对于fast link, 实际inode->i_flags的EXT4_INLINE_DATA_FL位没有设置
+    pub fn read_inline_data(&self, offset: usize, buf: &mut [u8]) -> usize {
+        let inline_data_len = self.inner.lock().inode_on_disk.size_lo as usize;
+        assert!(inline_data_len <= 60, "inline data too large");
+        let copy_len = (buf.len()).min(inline_data_len - offset);
+        buf[..copy_len]
+            .copy_from_slice(&self.inner.lock().inode_on_disk.block[offset..offset + copy_len]);
+        copy_len
+    }
+    pub fn read_link(&self) -> Result<String, &'static str> {
+        if self.inner.lock().inode_on_disk.is_symlink() {
+            if let Some(link) = &*self.link.lock() {
+                return Ok(link.clone());
+            }
+            let mut link = String::new();
+            let inode_size = self.inner.lock().inode_on_disk.size_lo as usize;
+            let mut buf = vec![0u8; inode_size];
+            // self.read(0, &mut buf)?;
+            if inode_size <= EXT4_MAX_INLINE_DATA {
+                self.read_inline_data(0, &mut buf);
+                log::error!(
+                    "[Ext4Inode::read_link]: inline data: {:?}",
+                    String::from_utf8_lossy(&buf)
+                );
+            } else {
+                self.read(0, &mut buf)?;
+            }
+            for &c in buf.iter() {
+                if c == 0 {
+                    break;
+                }
+                link.push(c as char);
+            }
+            self.link.lock().replace(link.clone());
+            Ok(link)
+        } else {
+            Err("not a symlink")
+        }
     }
     /// 获得页缓存, 如果不存在则创建
     pub fn get_mut(&self, page_offset: usize) -> Result<Arc<SpinNoIrqLock<Page>>, &'static str> {
@@ -937,11 +986,9 @@ impl Ext4Inode {
     }
 }
 
-// set/get系列方法
+// set/get系列方法, 判断标志
 impl Ext4Inode {
-    fn set_mode(&self, mode: u16) {
-        self.inner.lock().inode_on_disk.mode = mode | 0o777;
-    }
+    fn set_mode(&self, mode: u16) {}
     fn set_flags(&self, flags: u32) {
         self.inner.lock().inode_on_disk.flags = flags;
     }
@@ -950,6 +997,12 @@ impl Ext4Inode {
     }
     pub fn has_inline_data(&self) -> bool {
         self.inner.lock().inode_on_disk.has_inline_data()
+    }
+    pub fn is_symlink(&self) -> bool {
+        self.inner.lock().inode_on_disk.is_symlink()
+    }
+    pub fn is_dir(&self) -> bool {
+        self.inner.lock().inode_on_disk.is_dir()
     }
 }
 
@@ -978,15 +1031,17 @@ pub fn load_inode(
     .lock()
     .read(inner_offset, |inode: &Ext4InodeDisk| inode.clone());
     log::warn!(
-        "[load_inode] inode_num: {}, size: {}",
+        "[load_inode] inode_num: {}, size: {}, mode: {}",
         inode_num,
-        inode_on_disk.get_size()
+        inode_on_disk.get_size(),
+        inode_on_disk.mode
     );
     Arc::new(Ext4Inode {
         ext4_fs: Arc::downgrade(&ext4_fs),
         block_device,
         address_space: AddressSpace::new(),
         inode_num,
+        link: SpinNoIrqLock::new(None),
         inner: FSMutex::new(Ext4InodeInner::new(inode_on_disk)),
     })
 }

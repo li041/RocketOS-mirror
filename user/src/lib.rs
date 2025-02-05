@@ -12,6 +12,9 @@ extern crate alloc;
 #[macro_use]
 extern crate bitflags;
 
+use core::ptr::null;
+
+use alloc::vec::Vec;
 use buddy_system_allocator::LockedHeap;
 use syscall::*;
 
@@ -80,9 +83,29 @@ pub fn getpid() -> isize {
 pub fn fork() -> isize {
     sys_fork()
 }
-pub fn exec(path: &str) -> isize {
-    sys_exec(path)
+// pub fn exec(path: &str) -> isize {
+//     sys_exec(path)
+// }
+
+/// Replaces the current process image with a new process image.
+///
+/// # Arguments
+///
+/// * `path` - A NULL-TERMINATED string slice that holds the path of the new program.
+/// * `argv` - An array of string slices that represent the argument list to the new program. TRAILING NULL IS NOT NEEDED.
+/// * `envp` - An array of string slices that represent the environment for the new program. TRAILING NULL IS NOT NEEDED.
+///
+/// # Errors
+///
+/// on error, return POSIX errno
+pub fn execve(path: &str, argv: &[&str], envp: &[&str]) -> isize {
+    let mut argv: Vec<*const u8> = argv.iter().map(|s| s.as_ptr() as *const u8).collect();
+    argv.push(null());
+    let mut envp: Vec<*const u8> = envp.iter().map(|s| s.as_ptr() as *const u8).collect();
+    envp.push(null());
+    sys_execve(path, &argv, &envp)
 }
+
 pub fn wait(exit_code: &mut i32) -> isize {
     loop {
         match sys_waitpid(-1, exit_code as *mut _) {

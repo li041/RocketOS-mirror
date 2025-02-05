@@ -27,6 +27,8 @@ pub struct FileInner {
     pub flags: usize,
 }
 
+// 不支持对文件执行ioctl操作
+const ENOTTY: isize = 25;
 /// File trait
 pub trait FileOp: Any + Send + Sync {
     fn as_any(&self) -> &dyn Any;
@@ -42,6 +44,9 @@ pub trait FileOp: Any + Send + Sync {
     fn readable(&self) -> bool;
     // writable
     fn writable(&self) -> bool;
+    fn ioctl(&self, op: usize, arg_ptr: usize) -> isize {
+        -ENOTTY
+    }
 }
 
 impl File {
@@ -138,3 +143,4 @@ pub const O_WRONLY: usize = 1;
 pub const O_RDWR: usize = 2;
 pub const O_CREAT: usize = 0x40;
 pub const O_DIRECTORY: usize = 0x10000;
+pub const O_NOFOLLOW: usize = 0x200000;

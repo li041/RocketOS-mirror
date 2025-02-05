@@ -19,8 +19,8 @@ pub fn kstack_alloc() -> usize {
     let kstack_id = kid_alloc();
     let kstack_top = KSTACK_TOP - kstack_id * (KSTACK_SIZE + PAGE_SIZE);
     let kstack_bottom = kstack_top - KSTACK_SIZE;
-    log::error!(
-        "kstack_top: {:#x}, kstack_bottom: {:#x}",
+    log::info!(
+        "[kstack_alloc] kstack_top: {:#x}, kstack_bottom: {:#x}",
         kstack_top,
         kstack_bottom
     );

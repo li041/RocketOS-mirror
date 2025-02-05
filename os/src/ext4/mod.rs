@@ -1,7 +1,7 @@
 use crate::{
     drivers::block::block_cache::get_block_cache,
     fs::{
-        dentry::{Dentry, LinuxDirent64},
+        dentry::{Dentry, LinuxDirent64, DCACHE_SYMLINK_TYPE},
         inode::InodeOp,
         kstat::Kstat,
     },
@@ -67,8 +67,18 @@ impl InodeOp for Ext4Inode {
                     self.block_device.clone(),
                     self.ext4_fs.upgrade().unwrap().clone(),
                 );
+                let dentry_flags = if inode.is_symlink() {
+                    DCACHE_SYMLINK_TYPE
+                } else {
+                    0
+                };
                 // 2. 关联到Dentry
-                dentry = Dentry::new(absolute_path, Some(parent_entry.clone()), inode);
+                dentry = Dentry::new(
+                    absolute_path,
+                    Some(parent_entry.clone()),
+                    dentry_flags,
+                    inode,
+                );
             }
             // } else {
             // 不存在, 返回负目录项
@@ -256,6 +266,16 @@ impl InodeOp for Ext4Inode {
     }
     fn getattr(&self) -> Kstat {
         self.getattr()
+    }
+    /// 获取符号链接的路径
+    /// inode->link直接存储符号链接目标路径, 如果存在, 则直接返回
+    /// 如果inode->link为空, 则从数据块中读取
+    fn get_link(&self) -> String {
+        if let Some(link) = self.link.lock().as_ref() {
+            return link.clone();
+        }
+        // 从inode中读取
+        self.read_link().unwrap()
     }
     fn can_lookup(&self) -> bool {
         self.can_lookup()

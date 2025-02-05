@@ -51,6 +51,7 @@ pub trait InodeOp: Any + Send + Sync {
     // 上层readdir调用
     fn getdents(&self) -> Vec<LinuxDirent64>;
     fn getattr(&self) -> Kstat;
+    fn get_link(&self) -> String;
     fn get_inode_num(&self) -> usize;
 }
 

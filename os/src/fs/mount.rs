@@ -126,7 +126,7 @@ pub fn do_ext4_mount(block_device: Arc<dyn BlockDevice>) -> Arc<Path> {
         &ext4_fs.block_groups[0],
     ));
     ext4_list_apps(root_inode.clone());
-    let root_dentry = Dentry::new("".to_string(), None, root_inode.clone());
+    let root_dentry = Dentry::new("".to_string(), None, 0, root_inode.clone());
     root_dentry.inner.lock().parent = Some(Arc::downgrade(&root_dentry));
     insert_dentry(root_dentry.clone());
     // 创建根目录的Mount, 并加入全局Mount表

@@ -74,7 +74,7 @@ static DEBUG_FLAG: AtomicU8 = AtomicU8::new(0);
 #[no_mangle]
 pub fn rust_main(_hart_id: usize) -> ! {
     clear_bss();
-    println!("hello world");
+    println!("hello world!");
     logging::init();
     mm::init();
     trap::init();

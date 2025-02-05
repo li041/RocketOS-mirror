@@ -34,7 +34,7 @@ endif
 
 # File system
 # FS := ../img/sdcard-riscv.img
-FS := ../img/ext4_pre.img
+FS := ../img/ext4_final.img
 
 
 # QEMU

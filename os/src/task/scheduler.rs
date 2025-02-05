@@ -75,7 +75,6 @@ pub fn switch_to_next_task() {
 #[no_mangle]
 pub fn yield_current_task() {
     let task = current_task();
-    log::debug!("[yield_current_task] current task {}", task.tid());
     if let Some(next_task) = fetch_task() {
         task.set_ready();
         // 将当前任务加入就绪队列
@@ -83,10 +82,6 @@ pub fn yield_current_task() {
         // 获得下一个任务的内核栈
         // 可以保证`Ready`的任务`Task`中的内核栈与实际运行的sp保持一致
         let next_task_kernel_stack = next_task.kstack();
-        log::debug!(
-            "[yield_current_task] next task {}, next task kstack {:#x}", 
-            next_task.tid(), next_task_kernel_stack
-        );
         // check_task_context_in_kernel_stack(next_task_kernel_stack);
         // 切换Processor的current
         crate::task::processor::PROCESSOR
@@ -97,7 +92,6 @@ pub fn yield_current_task() {
         }
     }
     // 如果没有下一个任务, 则继续执行当前任务
-    log::debug!("[yield_current_task] no next task");
 }
 
 // 目前支持由waitpid阻塞的进程
