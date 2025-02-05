@@ -3,7 +3,7 @@ use log::debug;
 
 use crate::{mutex::SpinNoIrqLock, task::yield_current_task};
 
-use super::{FileMeta, FileOld};
+use super::{file::FileOp, FileMeta, FileOld};
 
 const PIPE_BUFFER_SIZE: usize = 4096;
 
@@ -60,6 +60,49 @@ impl Pipe {
             write_size += 1;
         }
         write_size
+    }
+}
+
+impl FileOp for Pipe {
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
+    fn read<'a>(&'a self, buf: &'a mut [u8]) -> usize {
+        // if self.buffer.lock().eof() {
+        //     return Ok(0);
+        // }
+        loop {
+            let ret = self.read_inner(buf);
+            if ret != 0 {
+                return ret;
+            } else if self.buffer.lock().eof() {
+                // empty buffer and no writer, EOF
+                return 0;
+            } else {
+                // empty buffer but writer exists, wait
+                yield_current_task();
+                continue;
+            }
+            // yield_task().await;
+            // continue;
+        }
+    }
+    fn write<'a>(&'a self, buf: &'a [u8]) -> usize {
+        debug!("[Pipe::write] entered");
+        self.write_inner(buf)
+    }
+    fn readable(&self) -> bool {
+        self.readable
+    }
+
+    fn writable(&self) -> bool {
+        self.writeable
+    }
+    fn get_offset(&self) -> usize {
+        panic!("Pipe does not support get_offset")
+    }
+    fn seek(&self, _offset: usize) {
+        panic!("Pipe does not support seek")
     }
 }
 

@@ -14,7 +14,7 @@ __switch:
     # a0 -> next_task_kernel_stack
     # 硬编码, 这里在现任务的内核栈中分配一块空间大小为`TaskContext`的空间
     addi sp, sp, -16*8
-    # save ra,tp and s0~s11 of current execution
+    # 保存 ra, tp 与 s0~s11 
     sd ra, 0(sp)
     sd tp, 8(sp)
     .set n, 0
@@ -25,7 +25,7 @@ __switch:
     # 保存satp
     csrr t0, satp
     sd t0, 14*8(sp)
-    # 更新当前任务的内核栈指针, 通过tp指向的TaskControlBlock来更新, 注意此时tp指向的是当前任务的TCB
+    # 重新保存当前任务的内核栈指针
     sd sp, 0(tp)
 
     # a0指向的是下一个任务的内核栈

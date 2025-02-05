@@ -4,8 +4,8 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 //! The defintions of the ListIter type
-use core::iter::{DoubleEndedIterator, FusedIterator};
 use super::{listindex::ListIndex, IndexList};
+use core::iter::{DoubleEndedIterator, FusedIterator};
 
 /// A double-ended iterator over all the elements in the list. It is fused and
 /// can be reversed.

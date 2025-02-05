@@ -3,8 +3,8 @@ use alloc::{sync::Arc, vec::Vec};
 use crate::{
     config::SysResult,
     fs::{
-        inode_trait::{InodeMeta, InodeMode, InodeTrait},
-        path::Path,
+        old::inode_trait::{InodeMeta, InodeMode, InodeTrait},
+        old::path_old::PathOld,
         FSMutex,
     },
 };
@@ -25,7 +25,7 @@ impl FAT32Inode {
     pub fn new_root(
         fat: Arc<FAT32FileAllocTable>,
         fa_inode: Option<Arc<dyn InodeTrait>>,
-        path: &Path,
+        path: &PathOld,
         first_cluster: usize,
     ) -> Self {
         let file = FAT32File::new(Arc::clone(&fat), first_cluster, None);
@@ -100,7 +100,7 @@ impl FAT32Inode {
             file: Arc::new(FSMutex::new(file)),
             meta: Arc::new(InodeMeta::new(
                 Some(fa_inode),
-                Path::from(path.clone()),
+                PathOld::from(path.clone()),
                 mode,
                 0,
             )),

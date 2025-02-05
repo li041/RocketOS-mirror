@@ -71,7 +71,8 @@ impl Page {
     pub fn sync(&mut self) {
         if self.modified {
             self.modified = false;
-            // self.block_device.write_blocks(self.block_id, &self.cache);
+            self.block_device
+                .write_blocks(self.start_block_id, &self.cache);
         }
     }
 }

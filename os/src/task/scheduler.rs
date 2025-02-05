@@ -1,70 +1,48 @@
 use core::fmt::Debug;
-
 use alloc::{collections::vec_deque::VecDeque, sync::Arc};
-
-use crate::{mutex::SpinNoIrqLock, task::switch};
-
-use super::{Task, TaskStatus};
+use crate::mutex::SpinNoIrqLock;
+use super::{Task, current_task, kernel_exit, switch, Tid};
 use bitflags::bitflags;
 use lazy_static::lazy_static;
 
-// FIFO Task scheduler
-pub struct Scheduler {
-    ready_queue: VecDeque<Arc<Task>>,
-    blocked_queue: VecDeque<Arc<Task>>,
-}
-
-impl Scheduler {
-    ///Creat an empty TaskManager
-    pub fn new() -> Self {
-        Self {
-            ready_queue: VecDeque::new(),
-            blocked_queue: VecDeque::new(),
-        }
-    }
-    ///Add a task to `TaskManager`
-    pub fn add(&mut self, task: Arc<Task>) {
-        self.ready_queue.push_back(task);
-    }
-    ///Remove the first task and return it,or `None` if `TaskManager` is empty
-    pub fn fetch(&mut self) -> Option<Arc<Task>> {
-        self.ready_queue.pop_front()
-    }
-    pub fn block(&mut self, task: Arc<Task>) {
-        self.blocked_queue.push_back(task);
-    }
-    pub fn unblock_tasks_wait_on_tid(&mut self, waken_task: Arc<Task>) {
-        for task in self.blocked_queue.iter() {
-            if Arc::ptr_eq(task, &waken_task) {
-                task.inner.lock().task_status = TaskStatus::Ready;
-                self.ready_queue.push_back(task.clone());
-                log::warn!("unblock task: {:?}", task.tid);
-                break;
-            }
-        }
-    }
-}
-
-// every processor
+// 初始化调度器
 lazy_static! {
     pub static ref SCHEDULER: SpinNoIrqLock<Scheduler> = SpinNoIrqLock::new(Scheduler::new());
 }
 
+/// 添加新任务到就绪队列
 pub fn add_task(task: Arc<Task>) {
+    // log::debug!("[add_task] ready_queue len:{:?}, added task: {:?}", 
+    // SCHEDULER.lock().ready_queue.len(), task.tid());
+    //assert_eq!(2 , Arc::strong_count(&task));
+    assert!(task.is_ready());
     SCHEDULER.lock().add(task);
 }
-
+/// 从就绪队列中取出队首任务
 pub fn fetch_task() -> Option<Arc<Task>> {
     SCHEDULER.lock().fetch()
 }
 
+/// 阻塞任务
 pub fn block_task(task: Arc<Task>) {
+    assert!(task.is_blocked());
     SCHEDULER.lock().block(task);
 }
 
-pub fn unblock_task_wait_on_tid(waken_task: Arc<Task>) {
-    SCHEDULER.lock().unblock_tasks_wait_on_tid(waken_task);
+/// 从就绪队列中移除任务
+pub fn remove_task(tid: Tid) {
+    SCHEDULER.lock().remove(tid);
 }
+
+/// 从就绪队列中移除线程组
+pub fn remove_thread_group(tgid: Tid) {
+    SCHEDULER.lock().remove_thread_group(tgid);
+}
+
+/// 解除任务阻塞
+// pub fn unblock_task_wait_on_tid(waken_task: Arc<Task>) {
+//     SCHEDULER.lock().unblock_tasks_wait_on_tid(waken_task);
+// }
 
 // 由caller保证原任务的状态切换
 // 不能从自己切换到自己, 否则会死Idle循环
@@ -78,62 +56,123 @@ pub fn switch_to_next_task() {
 
     // 获得下一个任务的内核栈
     // 可以保证`Ready`的任务`Task`中的内核栈与实际运行的sp保持一致
-    let next_task = fetch_task().unwrap();
-    let next_task_kernel_stack = next_task.kstack.0;
-    log::info!("next_task_kernel_stack: {:#x}", next_task_kernel_stack);
-    // check_task_context_in_kernel_stack(next_task_kernel_stack);
-    // 切换Processor的current
-    crate::task::processor::PROCESSOR
-        .lock()
-        .switch_to(next_task);
-
-    unsafe {
-        switch::__switch(next_task_kernel_stack);
+    if let Some(next_task) = fetch_task() {
+        let next_task_kernel_stack = next_task.kstack();
+        log::info!("next_task_kernel_stack: {:#x}", next_task_kernel_stack);
+        // check_task_context_in_kernel_stack(next_task_kernel_stack);
+        // 切换Processor的current
+        crate::task::processor::PROCESSOR
+            .lock()
+            .switch_to(next_task);
+        unsafe {
+            switch::__switch(next_task_kernel_stack);
+        }
     }
-    log::info!("return from switch");
 }
 
-bitflags! {
-    /// Open file flags
-    pub struct CloneFlags: u32 {
-        // SIGCHLD 是一个信号，在UNIX和类UNIX操作系统中，当一个子进程改变了它的状态时，内核会向其父进程发送这个信号。这个信号可以用来通知父进程子进程已经终止或者停止了。父进程可以采取适当的行动，比如清理资源或者等待子进程的状态。
-        // 以下是SIGCHLD信号的一些常见用途：
-        // 子进程终止：当子进程结束运行时，无论是正常退出还是因为接收到信号而终止，操作系统都会向其父进程发送SIGCHLD信号。
-        // 资源清理：父进程可以处理SIGCHLD信号来执行清理工作，例如释放子进程可能已经使用的资源。
-        // 状态收集：父进程可以通过调用wait()或waitpid()系统调用来获取子进程的终止状态，了解子进程是如何结束的。
-        // 孤儿进程处理：在某些情况下，如果父进程没有适当地处理SIGCHLD信号，子进程可能会变成孤儿进程。孤儿进程最终会被init进程（PID为1的进程）收养，并由init进程来处理其终止。
-        // 避免僵尸进程：通过正确响应SIGCHLD信号，父进程可以避免产生僵尸进程（zombie process）。僵尸进程是已经终止但父进程尚未收集其终止状态的进程。
-        // 默认情况下，SIGCHLD信号的处理方式是忽略，但是开发者可以根据需要设置自定义的信号处理函数来响应这个信号。在多线程程序中，如果需要，也可以将SIGCHLD信号的传递方式设置为线程安全。
-        const SIGCHLD = (1 << 4) | (1 << 0);
-        // 如果设置此标志，调用进程和子进程将共享同一内存空间。
-        // 在一个进程中的内存写入在另一个进程中可见。
-        const CLONE_VM = 1 << 8;
-        // 如果设置此标志，子进程将与父进程共享文件系统信息（如当前工作目录）
-        const CLONE_FS = 1 << 9;
-        // 如果设置此标志，子进程将与父进程共享文件描述符表。
-        const CLONE_FILES = 1 << 10;
-        const CLONE_SIGHAND = 1 << 11;
-        const CLONE_PIDFD = 1 << 12;
-        const CLONE_PTRACE = 1 << 13;
-        const CLONE_VFORK = 1 << 14;
-        const CLONE_PARENT = 1 << 15;
-        const CLONE_THREAD = 1 << 16;
-        const CLONE_NEWNS = 1 << 17;
-        const CLONE_SYSVSEM = 1 << 18;
-        const CLONE_SETTLS = 1 << 19;
-        const CLONE_PARENT_SETTID = 1 << 20;
-        const CLONE_CHILD_CLEARTID = 1 << 21;
-        const CLONE_DETACHED = 1 << 22;
-        const CLONE_UNTRACED = 1 << 23;
-        const CLONE_CHILD_SETTID = 1 << 24;
-        const CLONE_NEWCGROUP = 1 << 25;
-        const CLONE_NEWUTS = 1 << 26;
-        const CLONE_NEWIPC = 1 << 27;
-        const CLONE_NEWUSER = 1 << 28;
-        const CLONE_NEWPID = 1 << 29;
-        const CLONE_NEWNET = 1 << 30;
-        const CLONE_IO = 1 << 31;
+// 不能从自己切换到自己
+// 注意调用者要释放原任务的锁, 否则会死锁
+#[no_mangle]
+pub fn yield_current_task() {
+    let task = current_task();
+    log::debug!("[yield_current_task] current task {}", task.tid());
+    if let Some(next_task) = fetch_task() {
+        task.set_ready();
+        // 将当前任务加入就绪队列
+        add_task(task);
+        // 获得下一个任务的内核栈
+        // 可以保证`Ready`的任务`Task`中的内核栈与实际运行的sp保持一致
+        let next_task_kernel_stack = next_task.kstack();
+        log::debug!(
+            "[yield_current_task] next task {}, next task kstack {:#x}", 
+            next_task.tid(), next_task_kernel_stack
+        );
+        // check_task_context_in_kernel_stack(next_task_kernel_stack);
+        // 切换Processor的current
+        crate::task::processor::PROCESSOR
+            .lock()
+            .switch_to(next_task);
+        unsafe {
+            switch::__switch(next_task_kernel_stack);
+        }
     }
+    // 如果没有下一个任务, 则继续执行当前任务
+    log::debug!("[yield_current_task] no next task");
+}
+
+// 目前支持由waitpid阻塞的进程
+#[no_mangle]
+pub fn blocking_and_run_next() {
+    let task = current_task();
+    if let Some(next_task) = fetch_task() {
+        task.set_blocked();
+        log::warn!("task {} is blocked", task.tid());
+        // 将当前任务加入阻塞队列
+        block_task(task);
+        // 获得下一个任务的内核栈
+        // 可以保证`Ready`的任务`Task`中的内核栈与实际运行的sp保持一致
+        let next_task_kernel_stack = next_task.kstack();
+        // check_task_context_in_kernel_stack(next_task_kernel_stack);
+        // 切换Processor的current
+        crate::task::processor::PROCESSOR
+            .lock()
+            .switch_to(next_task);
+
+        unsafe {
+            switch::__switch(next_task_kernel_stack);
+        }
+    }
+}
+
+
+
+
+
+// FIFO Task scheduler
+pub struct Scheduler {
+    ready_queue: VecDeque<Arc<Task>>,
+    // Todo:阻塞操作
+    blocked_queue: VecDeque<Arc<Task>>,
+}
+
+impl Scheduler {
+    /// 创建一个空调度器
+    pub fn new() -> Self {
+        Self {
+            ready_queue: VecDeque::new(),
+            blocked_queue: VecDeque::new(),
+        }
+    }
+    /// 添加任务到调度器就绪队列
+    pub fn add(&mut self, task: Arc<Task>) {
+        self.ready_queue.push_back(task);
+    }
+    /// 取出调度器就绪队列队首任务
+    pub fn fetch(&mut self) -> Option<Arc<Task>> {
+        self.ready_queue.pop_front()
+    }
+    /// 从调度器就绪队列中移除任务
+    pub fn remove(&mut self, tid: Tid) {
+        self.ready_queue.retain(|task| task.tid() != tid);
+    }
+    /// 从调度器就绪队列中移除线程组
+    pub fn remove_thread_group(&mut self, tgid: Tid) {
+        self.ready_queue.retain(|task| task.tgid() != tgid);
+    }
+    /// 阻塞任务(暂且没用)
+    pub fn block(&mut self, task: Arc<Task>) {
+        self.blocked_queue.push_back(task);
+    }
+    // pub fn unblock_tasks_wait_on_tid(&mut self, waken_task: Arc<Task>) {
+    //     for task in self.blocked_queue.iter() {
+    //         if Arc::ptr_eq(task, &waken_task) {
+    //             task.inner.lock().status = TaskStatus::Ready;
+    //             self.ready_queue.push_back(task.clone());
+    //             log::warn!("unblock task: {:?}", task.tid);
+    //             break;
+    //         }
+    //     }
+    // }
 }
 
 bitflags! {

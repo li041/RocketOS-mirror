@@ -1,12 +1,59 @@
 use alloc::sync::Arc;
 use lazy_static::lazy_static;
-
+use core::arch::asm;
 use crate::mutex::SpinNoIrqLock;
 
 use super::{
-    switch::{self, IDLE_TASK},
-    Task, TaskStatus,
+    Task, switch
 };
+
+// 创建空闲任务
+lazy_static! {
+    pub static ref IDLE_TASK: Arc<Task> = {
+        let idle_task = Arc::new(Task::zero_init());
+        // 将tp寄存器指向idle_task
+        unsafe {
+            // 注意这里需要对Arc指针先解引用再取`IDLE_TASK`地址
+            // 两种方法都可以, Arc::as_ptr或者直接解引用然后引用
+            asm!("mv tp, {}", in(reg) &(*idle_task) as *const _ as usize);
+
+        }
+        idle_task
+    };
+}
+
+// 创建任务管理器
+lazy_static! {
+    ///Processor management structure
+    pub static ref PROCESSOR: SpinNoIrqLock<Processor> = SpinNoIrqLock::new(Processor::new());
+}
+
+/// 运行初始任务
+/// 功能：用于激活任务管理器
+pub fn run_tasks() {
+    loop {
+        if let Some(next_task) = crate::task::scheduler::fetch_task() {
+            let idle_task = IDLE_TASK.clone();
+            let next_task_kstack = next_task.kstack();
+            idle_task.set_ready();
+            next_task.set_running();
+            let mut processor = PROCESSOR.lock();
+            processor.current = next_task.clone();
+            drop(processor);
+            drop(next_task);
+            unsafe {
+                switch::__switch(next_task_kstack);
+            }
+            unreachable!("Unreachable in run_tasks");
+        }
+    }
+}
+
+/// 获取当前任务
+pub fn current_task() -> Arc<Task>{
+   PROCESSOR.lock().current_task()
+}
+
 
 ///Processor management structure
 pub struct Processor {
@@ -26,37 +73,5 @@ impl Processor {
     }
     pub fn switch_to(&mut self, task: Arc<Task>) {
         self.current = task;
-    }
-}
-
-lazy_static! {
-    ///Processor management structure
-    pub static ref PROCESSOR: SpinNoIrqLock<Processor> = SpinNoIrqLock::new(Processor::new());
-}
-
-pub fn run_tasks() {
-    loop {
-        if let Some(next_task) = crate::task::scheduler::fetch_task() {
-            let mut next_task_inner = next_task.inner.lock();
-            let idle_task = IDLE_TASK.clone();
-            let mut current_task_inner = idle_task.inner.lock();
-
-            current_task_inner.task_status = TaskStatus::Ready;
-            next_task_inner.task_status = TaskStatus::Running;
-            let next_task_kernel_stack = next_task.kstack.0;
-            // 注意这里要主动drop, 否则会造成死锁
-            drop(current_task_inner);
-            drop(next_task_inner);
-
-            let mut processor = PROCESSOR.lock();
-            processor.current = next_task.clone();
-            drop(processor);
-            drop(next_task);
-
-            unsafe {
-                switch::__switch(next_task_kernel_stack);
-            }
-            unreachable!("Unreachable in run_tasks");
-        }
     }
 }

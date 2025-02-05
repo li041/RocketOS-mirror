@@ -33,7 +33,8 @@ ifeq ($(MODE), release)
 endif
 
 # File system
-FS := ../img/sdcard-riscv.img
+# FS := ../img/sdcard-riscv.img
+FS := ../img/ext4_pre.img
 
 
 # QEMU
@@ -64,19 +65,6 @@ GDB_CLIENT := riscv64-unknown-elf-gdb
 GDB_ARGS := -ex 'file target/riscv64gc-unknown-none-elf/debug/os' \
     		-ex 'set arch riscv:rv64' \
 			-ex 'target remote localhost:1234'
-
-gdbserver: env build
-	qemu-system-riscv64 $(QEMU_ARGS) -s -S 
-
-gdbclient: 
-	@echo "Using GDB: $(GDB_CLIENT)"
-	$(GDB_CLIENT) $(GDB_ARGS)
-
-env:
-	(rustup target list | grep "riscv64gc-unknown-none-elf (installed)") || rustup target add $(TARGET)
-	cargo install cargo-binutils
-	rustup component add rust-src
-	rustup component add llvm-tools-preview
 
 gdbserver: env build
 	qemu-system-riscv64 $(QEMU_ARGS) -s -S 

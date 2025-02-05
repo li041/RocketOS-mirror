@@ -53,6 +53,7 @@ __trap_from_user:
 
 # 在trap_handler返回时, 将内核栈上的上下文恢复到用户态, 然后返回到用户态
 # 注意这个`__return_to_user`与TrapContext结构体强相关, 且是硬编码的
+# 预期：进入该函数时sp指向该内核栈的TrapContext的位置
 __return_to_user:
     # 设置stvec为Mode(0~1 bits) Direct, 基地址为__trap_from_user
     # 注意要在恢复上下文之前设置, 因为恢复上下文时会用到stvec

@@ -1,5 +1,3 @@
-use crate::mutex::SpinNoIrqLock;
-
 /* 内存布局 */
 pub const KERNEL_HEAP_SIZE: usize = 0x300_0000; // 48MB
 pub const PAGE_SIZE: usize = 0x1000; // 4KB
