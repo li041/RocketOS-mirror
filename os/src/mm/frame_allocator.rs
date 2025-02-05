@@ -103,8 +103,8 @@ pub fn init_frame_allocator() {
         PhysAddr::from((ekernel as usize - KERNEL_BASE) as usize).ceil(),
         PhysAddr::from(MEMORY_END).floor(),
     );
-    log::error!(
-        "frame allocator: {:#x?} - {:#x?}",
+    log::info!(
+        "[init_frame_allocator] frame allocator: [{:#x?}, {:#x?})",
         ekernel as usize,
         MEMORY_END
     );

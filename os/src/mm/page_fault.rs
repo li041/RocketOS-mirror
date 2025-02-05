@@ -15,9 +15,8 @@ pub const EFAULT: isize = -14;
 /// 1. fork COW area
 /// 2. lazy allocation
 pub fn handle_recoverable_page_fault(page_table: &PageTable, va: VirtAddr) -> Result<(), isize> {
-    log::error!("handle_recoverable_page_fault: va {:#x}", va.0);
+    // log::error!("handle_recoverable_page_fault: va {:#x}", va.0);
     let vpn = va.floor();
-    log::error!("vpn: {:#x}", vpn.0);
     if let Some(pte) = page_table.find_pte(vpn) {
         if vpn == VirtPageNum::from(0) {
             // // alloc for thread local variable

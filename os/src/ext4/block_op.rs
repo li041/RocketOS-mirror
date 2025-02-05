@@ -34,7 +34,6 @@ impl<'a> Ext4DirContentRO<'a> {
         let mut entries = Vec::new();
         let mut rec_len_total = 0;
         let content_len = self.content.len();
-        log::info!("[Ext4DirContent::list] content_len: {}", content_len);
         while rec_len_total < content_len {
             // rec_len是u16, 2字节
             let rec_len = u16::from_le_bytes([
@@ -45,7 +44,6 @@ impl<'a> Ext4DirContentRO<'a> {
                 &self.content[rec_len_total..rec_len_total + rec_len as usize],
             )
             .expect("DirEntry::try_from failed");
-            log::info!("dentry: {:?}", dentry);
             entries.push(dentry);
             rec_len_total += rec_len as usize;
         }

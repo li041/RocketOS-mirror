@@ -5,6 +5,7 @@ use alloc::{
     sync::{Arc, Weak},
     vec::Vec,
 };
+use bitflags::Flag;
 use hashbrown::HashMap;
 use lazy_static::lazy_static;
 use log::set_logger;
@@ -13,10 +14,13 @@ use crate::{ext4::dentry::Ext4DirEntry, mutex::SpinNoIrqLock};
 
 use super::inode::InodeOp;
 
+pub const DCACHE_SYMLINK_TYPE: u32 = 0x00100000;
 // VFS层的统一目录项结构
 #[repr(C)]
+
 pub struct Dentry {
     pub absolute_path: String,
+    pub flags: u32,
     pub inner: SpinNoIrqLock<DentryInner>,
 }
 
@@ -51,22 +55,26 @@ impl Dentry {
     pub fn zero_init() -> Self {
         Self {
             absolute_path: String::new(),
+            flags: 0,
             inner: SpinNoIrqLock::new(DentryInner::negative(None)),
         }
     }
     pub fn new(
         absolute_path: String,
         parent: Option<Arc<Dentry>>,
+        flags: u32,
         inode: Arc<dyn InodeOp>,
     ) -> Arc<Self> {
         Arc::new(Self {
             absolute_path,
+            flags,
             inner: SpinNoIrqLock::new(DentryInner::new(parent, inode)),
         })
     }
     pub fn negative(absolute_path: String, parent: Option<Arc<Dentry>>) -> Arc<Self> {
         Arc::new(Self {
             absolute_path,
+            flags: 0,
             inner: SpinNoIrqLock::new(DentryInner::negative(parent)),
         })
     }
@@ -77,6 +85,9 @@ impl Dentry {
     // }
     pub fn is_negative(&self) -> bool {
         self.inner.lock().inode.is_none()
+    }
+    pub fn is_symlink(&self) -> bool {
+        self.flags & DCACHE_SYMLINK_TYPE != 0
     }
     pub fn get_last_name(&self) -> &str {
         self.absolute_path

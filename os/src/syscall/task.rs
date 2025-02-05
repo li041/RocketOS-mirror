@@ -54,7 +54,6 @@ pub fn sys_clone(
 
 pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> isize {
     let path = c_str_to_string(path);
-    log::error!("path: {}", path);
     // argv[0]是应用程序的名字
     // 后续元素是用户在命令行中输入的参数
     let mut args_vec = extract_cstrings(args);
@@ -62,7 +61,6 @@ pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> is
     let task = current_task();
     // flags = RDONLY = 0, 以只读方式打开文件
     if let Ok(file) = path_openat(&path, 0, AT_FDCWD, 0) {
-        args_vec.insert(0, path);
         let all_data = file.read_all();
         task.kernel_execve(all_data.as_slice(), args_vec, envs_vec);
         0

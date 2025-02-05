@@ -3,12 +3,12 @@
 
 extern crate user_lib;
 
-use user_lib::{exec, fork, println, wait, yield_};
+use user_lib::{execve, fork, println, wait, yield_};
 
 #[no_mangle]
 fn main() -> i32 {
     if fork() == 0 {
-        exec("user_shell\0");
+        execve("user_shell\0", &["user_shell\0"], &["\0"]);
     } else {
         loop {
             let mut exit_code: i32 = 0;

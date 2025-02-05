@@ -1,6 +1,7 @@
-use alloc::vec;
+use alloc::{string::String, vec};
 
 use alloc::string::ToString;
+use xmas_elf::header::parse_header;
 
 use crate::{
     ext4::{self, inode::S_IFDIR},
@@ -12,6 +13,7 @@ use crate::{
         namei::{filename_create, filename_lookup, path_openat, Nameidata},
         path::Path,
         pipe::Pipe,
+        uio::IoVec,
         AT_FDCWD,
     },
     mm::copy_to_user,
@@ -28,7 +30,9 @@ pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
             return -1;
         }
         let ret = file.read(unsafe { core::slice::from_raw_parts_mut(buf, len) });
-        log::info!("sys_read: fd: {}, len: {}, ret: {}", fd, len, ret);
+        if fd >= 3 {
+            log::info!("sys_read: fd: {}, len: {}, ret: {}", fd, len, ret);
+        }
         ret as isize
     } else {
         -1
@@ -51,6 +55,37 @@ pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
     } else {
         -1
     }
+}
+
+pub fn sys_writev(fd: usize, iov: *const IoVec, iovcnt: usize) -> isize {
+    if fd > 3 {
+        log::info!("sys_writev: fd: {}, iovcnt: {}", fd, iovcnt);
+    }
+    let task = current_task();
+    let file = task.fd_table().get_file(fd);
+    if file.is_none() {
+        return -1;
+    }
+    let file = file.unwrap();
+    if !file.writable() {
+        return -1;
+    }
+    let mut total_written = 0isize;
+    for i in 0..iovcnt {
+        let iovec = unsafe { &*iov.add(i) };
+        let buf = unsafe { core::slice::from_raw_parts(iovec.base as *const u8, iovec.len) };
+        let written = file.write(buf);
+        // 如果写入失败, 则返回已经写入的字节数, 或错误码
+        if written == 0 {
+            return if total_written > 0 {
+                total_written
+            } else {
+                written as isize
+            };
+        }
+        total_written += written as isize;
+    }
+    total_written
 }
 
 pub fn sys_dup(oldfd: usize) -> isize {
@@ -84,36 +119,6 @@ pub fn sys_dup2(oldfd: usize, newfd: usize) -> isize {
     } else {
         -1
     }
-}
-
-// Todo: fake
-pub fn sys_mount(
-    source: *const u8,
-    target: *const u8,
-    fs_type: *const u8,
-    flags: usize,
-    _data: *const u8,
-) -> isize {
-    let source = c_str_to_string(source);
-    let target = c_str_to_string(target);
-    let fs_type = c_str_to_string(fs_type);
-    log::info!(
-        "[sys_mount] source: {:?}, target: {:?}, fs: {:?}, flags: {}",
-        source,
-        target,
-        fs_type,
-        flags
-    );
-    do_mount(source, target, fs_type, flags, _data)
-}
-
-// Todo: fake
-// 用户程序target传的参数是0?
-pub fn sys_umount2(target: *const u8, flags: i32) -> isize {
-    // let target = c_str_to_string(target);
-    // log::info!("[sys_unmount] target: {:?}, flags: {}", target, flags);
-    log::info!("[sys_unmount] target: {:?}, flags: {}", target, flags);
-    0
 }
 
 pub fn sys_unlinkat(dirfd: i32, pathname: *const u8, flag: i32) -> isize {
@@ -286,6 +291,44 @@ pub fn sys_fstat(dirfd: i32, statbuf: *mut Stat) -> isize {
     return -1;
 }
 
+pub const AT_EMPTY_PATH: i32 = 0x1000;
+
+pub fn sys_fstatat(dirfd: i32, pathname: *const u8, statbuf: *mut Stat, flags: i32) -> isize {
+    if flags & AT_EMPTY_PATH != 0 {
+        return sys_fstat(dirfd, statbuf);
+    }
+    let path = c_str_to_string(pathname);
+    if path.is_empty() {
+        log::error!("[sys_fstatat] pathname is empty");
+        let slice = unsafe { core::slice::from_raw_parts(pathname, 100) };
+        log::error!("{:?}", String::from_utf8_lossy(slice));
+        return -1;
+    }
+    log::info!(
+        "[sys_fstatat] dirfd: {}, pathname: {:?}, flags: {}",
+        dirfd,
+        path,
+        flags
+    );
+    let mut nd = Nameidata::new(&path, dirfd);
+    let fake_lookup_flags = 0;
+    match filename_lookup(&mut nd, fake_lookup_flags) {
+        Ok(dentry) => {
+            let inode = dentry.get_inode();
+            let stat = Stat::from(inode.getattr());
+            if let Err(e) = copy_to_user(statbuf, &stat as *const Stat, 1) {
+                log::error!("fstatat: copy_to_user failed: {}", e);
+                return -1;
+            }
+            return 0;
+        }
+        Err(e) => {
+            log::info!("[sys_fstatat] fail to fstatat: {}, {}", path, e);
+            return -1;
+        }
+    }
+}
+
 pub fn sys_getdents64(fd: usize, dirp: *mut u8, count: usize) -> isize {
     log::info!(
         "[sys_getdents64] fd: {}, dirp: {:?}, count: {}",
@@ -373,4 +416,46 @@ pub fn sys_close(fd: usize) -> isize {
     } else {
         -1
     }
+}
+
+/* Todo: fake  */
+pub fn sys_mount(
+    source: *const u8,
+    target: *const u8,
+    fs_type: *const u8,
+    flags: usize,
+    _data: *const u8,
+) -> isize {
+    let source = c_str_to_string(source);
+    let target = c_str_to_string(target);
+    let fs_type = c_str_to_string(fs_type);
+    log::info!(
+        "[sys_mount] source: {:?}, target: {:?}, fs: {:?}, flags: {}",
+        source,
+        target,
+        fs_type,
+        flags
+    );
+    do_mount(source, target, fs_type, flags, _data)
+}
+
+// 用户程序target传的参数是0?
+pub fn sys_umount2(target: *const u8, flags: i32) -> isize {
+    // let target = c_str_to_string(target);
+    // log::info!("[sys_unmount] target: {:?}, flags: {}", target, flags);
+    log::info!("[sys_unmount] target: {:?}, flags: {}", target, flags);
+    0
+}
+
+// 表示无效的文件描述符, Bad file descriptor
+const EBADF: isize = 9;
+/// op是与设备相关的操作码, arg_ptr是指向参数的指针(untyped pointer, 由设备决定)
+pub fn sys_ioctl(fd: usize, op: usize, arg_ptr: usize) -> isize {
+    log::error!("[sys_ioctl] fd: {}, op: {}, arg_ptr: {}", fd, op, arg_ptr);
+    let task = current_task();
+    let file = task.fd_table().get_file(fd);
+    if let Some(file) = file {
+        return file.ioctl(op, arg_ptr);
+    }
+    return -EBADF;
 }

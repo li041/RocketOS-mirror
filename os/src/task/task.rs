@@ -12,9 +12,7 @@ use crate::{
     mutex::SpinNoIrqLock,
     syscall::CloneFlags,
     task::{
-        kstack,
-        scheduler::{add_task, remove_thread_group, SCHEDULER},
-        INITPROC,
+        aux, kstack, scheduler::{add_task, remove_thread_group, SCHEDULER}, INITPROC
     },
     trap::TrapContext,
 };
@@ -251,6 +249,8 @@ impl Task {
         let (memory_set, _satp, ustack_top, entry_point, aux_vec) = MemorySet::from_elf(elf_data);
         // 更新页表
         memory_set.activate();
+        // let pos = 0x30_0000_0000 as usize;
+        // unsafe { if need_dl {log::error!("[sys_mmap] pos : {:?}", core::slice::from_raw_parts_mut(pos as *mut u8, 64));} }
         // 初始化用户栈, 压入args和envs
         // ToDo：待完善
         let argc = args_vec.len();
@@ -521,8 +521,8 @@ fn init_user_stack(
     fn push_strings_to_stack(strings: &[String], stack_ptr: &mut usize) -> Vec<usize> {
         let mut addresses = vec![0; strings.len()];
         for (i, string) in strings.iter().enumerate() {
-            *stack_ptr -= string.len() + 1; // Leave space for '\0'
-            *stack_ptr -= *stack_ptr % core::mem::size_of::<usize>(); // Align to usize boundary
+            *stack_ptr -= string.len() + 1; // '\0'
+            *stack_ptr -= *stack_ptr % core::mem::size_of::<usize>(); // 按照usize对齐
             let ptr = *stack_ptr as *mut u8;
             unsafe {
                 ptr.copy_from(string.as_ptr(), string.len());
@@ -560,6 +560,7 @@ fn init_user_stack(
         }
         base
     }
+    log::info!("[init_user_stack] args: {:?}, envs: {:?}", args_vec, envs_vec);
 
     // Push environment variables to the stack
     let envp = push_strings_to_stack(envs_vec, &mut user_sp);

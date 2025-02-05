@@ -38,14 +38,14 @@ static APP_LIST: &[&str] = &[
     "/yield\0",
 ];
 
-use user_lib::{exec, fork, waitpid};
+use user_lib::{execve, fork, waitpid};
 
 #[no_mangle]
 pub fn main() -> i32 {
     for app_name in APP_LIST {
         let pid = fork();
         if pid == 0 {
-            exec(app_name);
+            execve(&app_name, &[&app_name, "\0"], &["\0"]);
             panic!("unreachable!");
         } else {
             let mut exit_code = 0;

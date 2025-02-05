@@ -13,7 +13,12 @@ pub const USER_STACK_SIZE: usize = PAGE_SIZE << 4;
 pub const MMAP_MIN_ADDR: usize = 0x0000_0020_0000_0000;
 pub const MMAP_MAX_ADDR: usize = 0x0000_002f_ffff_ffff;
 pub const MMAP_AREA_SIZE: usize = MMAP_MAX_ADDR - MMAP_MIN_ADDR;
+// 动态连接器加载偏移量
+pub const DL_INTERP_OFFSET: usize = 0x30_0000_0000;
 
 /* 系统调用 */
 pub type SysResult<T> = Result<T, usize>;
 pub const USER_MAX_VA: usize = 0x0000_003f_ffff_ffff; // 256GB
+
+/* Ext4文件系统 */
+pub const EXT4_MAX_INLINE_DATA: usize = 60;

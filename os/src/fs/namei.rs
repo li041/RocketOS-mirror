@@ -4,13 +4,20 @@ use super::{
     inode::InodeOp,
     mount::VfsMount,
     path::Path,
-    FS_BLOCK_SIZE,
+    Stdin, FS_BLOCK_SIZE,
 };
-use crate::{fs::AT_FDCWD, task::current_task};
-use alloc::{sync::Arc, vec::Vec};
+use crate::{
+    fs::{file::O_NOFOLLOW, AT_FDCWD},
+    task::current_task,
+};
+use alloc::{
+    string::{String, ToString},
+    sync::Arc,
+    vec::Vec,
+};
 
-pub struct Nameidata<'a> {
-    path_segments: Vec<&'a str>,
+pub struct Nameidata {
+    path_segments: Vec<String>,
     // 以下字段在路径解析过程中需要更新
     // 通过dentry可以找到inode
     // 注意Dentry和InodeOp的锁粒度都在他们自己的结构体内部
@@ -21,12 +28,22 @@ pub struct Nameidata<'a> {
     depth: usize,
 }
 
-impl<'a> Nameidata<'a> {
-    // 如果是绝对路径, 则dfd不会被使用
-    // 绝对路径dentry初始化为root, 相对路径则是cwd
-    // 相当于linux中的`path_init`
-    pub fn new(filename: &'a str, dfd: i32) -> Self {
-        let path_segments: Vec<&'a str> = filename.split('/').filter(|s| !s.is_empty()).collect();
+pub fn parse_path(path: &str) -> Vec<String> {
+    let mut path_segments: Vec<String> = Vec::new();
+    for segment in path.split("/") {
+        if !segment.is_empty() {
+            path_segments.push(segment.to_string());
+        }
+    }
+    path_segments
+}
+
+impl Nameidata {
+    /// 如果是绝对路径, 则dfd不会被使用
+    /// 绝对路径dentry初始化为root, 相对路径则是cwd
+    /// 相当于linux中的`path_init`
+    pub fn new(filename: &str, dfd: i32) -> Self {
+        let path_segments: Vec<String> = parse_path(filename);
         let path: Arc<Path>;
         let cur_task = current_task();
         if filename.starts_with("/") {
@@ -60,36 +77,147 @@ impl<'a> Nameidata<'a> {
             depth: 0,
         }
     }
+    pub fn resolve_symlink(&mut self, symlink_target: &str) {
+        if symlink_target.starts_with("/") {
+            // 绝对路径符号链接，重新解析
+            self.dentry = current_task().root().dentry.clone();
+            self.path_segments = parse_path(&symlink_target);
+            self.depth = 0; // 重新从头解析
+        } else {
+            // 相对路径符号链接，插入到当前解析路径
+            let mut new_segments = Vec::new();
+            new_segments.extend_from_slice(&self.path_segments[0..self.depth]); // 保持已解析部分
+            new_segments.extend(parse_path(&symlink_target)); // 解析符号链接目标
+            new_segments.extend_from_slice(&self.path_segments[self.depth + 1..]); // 追加剩余部分
+            self.path_segments = new_segments;
+            log::error!("path_segments: {:?}", self.path_segments);
+        }
+    }
 }
 
-/// 处理路径的最后一个组件
-/// 如果open_flag包含O_CREAT, 则创建文件
+// /// 处理路径的最后一个组件
+// /// 如果open_flag包含O_CREAT, 则创建文件(注意这里不是创建符号链接)
+// pub fn open_last_lookups(
+//     nd: &mut Nameidata,
+//     flags: usize,
+//     mode: usize,
+// ) -> Result<Arc<File>, isize> {
+//     let absolute_current_dir = nd.dentry.absolute_path.clone();
+//     // 处理`.`和`..`
+//     if nd.path_segments[nd.depth] == "." {
+//         return Ok(Arc::new(File::new(
+//             Path::new(nd.mnt.clone(), nd.dentry.clone()),
+//             nd.dentry.get_inode(),
+//             flags,
+//         )));
+//     } else if nd.path_segments[nd.depth] == ".." {
+//         let parent_dentry = nd.dentry.get_parent();
+//         return Ok(Arc::new(File::new(
+//             Path::new(nd.mnt.clone(), parent_dentry.clone()),
+//             parent_dentry.get_inode(),
+//             flags,
+//         )));
+//     } else {
+//         // name是String
+//         // 先查找文件, 如果文件不存在, 看是否设置了O_CREAT
+//         // 先查找dentry cache
+//         let dentry = lookup_dentry(nd);
+//         if !dentry.is_negative() {
+//             return Ok(Arc::new(File::new(
+//                 Path::new(nd.mnt.clone(), dentry.clone()),
+//                 dentry.get_inode(),
+//                 flags,
+//             )));
+//         }
+
+//         if flags & O_CREAT != 0 {
+//             // Todo: 最后打开的是目录还是文件要区分
+//             // 创建文件
+//             let dir_inode = nd.dentry.get_inode();
+//             // Todo: 设置mode
+//             let new_dentry = Dentry::negative(
+//                 absolute_current_dir + "/" + &nd.path_segments[nd.depth],
+//                 Some(nd.dentry.clone()),
+//             );
+//             dir_inode.create(new_dentry.clone(), mode as u16);
+//             insert_dentry(new_dentry.clone());
+//             assert!(!new_dentry.is_negative());
+//             return Ok(Arc::new(File::new(
+//                 Path::new(nd.mnt.clone(), new_dentry.clone()),
+//                 new_dentry.get_inode(),
+//                 flags,
+//             )));
+//         }
+//         // 文件不存在, 且没有设置O_CREAT
+//         return Err(-ENOENT);
+//     }
+// }
+
+/// 认为符号链接的目标路径不含dot和dot-dot
 pub fn open_last_lookups(
     nd: &mut Nameidata,
     flags: usize,
     mode: usize,
 ) -> Result<Arc<File>, isize> {
+    const MAX_SYMLINK_DEPTH: usize = 40;
+    let mut follow_symlink = 0;
+
     let absolute_current_dir = nd.dentry.absolute_path.clone();
-    // 处理`.`和`..`
-    if nd.path_segments[nd.depth] == "." {
-        return Ok(Arc::new(File::new(
-            Path::new(nd.mnt.clone(), nd.dentry.clone()),
-            nd.dentry.get_inode(),
-            flags,
-        )));
-    } else if nd.path_segments[nd.depth] == ".." {
-        let parent_dentry = nd.dentry.get_parent();
-        return Ok(Arc::new(File::new(
-            Path::new(nd.mnt.clone(), parent_dentry.clone()),
-            parent_dentry.get_inode(),
-            flags,
-        )));
-    } else {
-        // name是String
-        // 先查找文件, 如果文件不存在, 看是否设置了O_CREAT
-        // 先查找dentry cache
+
+    loop {
+        if follow_symlink > MAX_SYMLINK_DEPTH {
+            return Err(-ELOOP); // 避免符号链接循环
+        }
+
+        log::error!(
+            "open_last_lookups: depth: {}, path_segments: {:?}",
+            nd.depth,
+            nd.path_segments
+        );
+        let segment = nd.path_segments[nd.depth].as_str();
+
+        if segment == "." {
+            assert!(nd.depth == nd.path_segments.len() - 1);
+            return Ok(Arc::new(File::new(
+                Path::new(nd.mnt.clone(), nd.dentry.clone()),
+                nd.dentry.get_inode(),
+                flags,
+            )));
+        } else if segment == ".." {
+            assert!(nd.depth == nd.path_segments.len() - 1);
+            let parent_dentry = nd.dentry.get_parent();
+            // parent即使是符号链接也不需要解析
+            assert!(!parent_dentry.is_symlink());
+            return Ok(Arc::new(File::new(
+                Path::new(nd.mnt.clone(), parent_dentry.clone()),
+                parent_dentry.get_inode(),
+                flags,
+            )));
+        }
+
+        // 查找路径分量的 `dentry`
         let dentry = lookup_dentry(nd);
         if !dentry.is_negative() {
+            if dentry.is_symlink() {
+                if flags & O_NOFOLLOW != 0 {
+                    return Err(-ELOOP);
+                }
+                // 解析符号链接
+                let symlink_target = dentry.get_inode().get_link();
+                log::warn!(
+                    "Resolving symlink: {:?} -> {:?}",
+                    nd.path_segments[nd.depth],
+                    symlink_target
+                );
+                nd.resolve_symlink(&symlink_target);
+                follow_symlink += 1;
+                // nd.depth += 1;
+                continue;
+            }
+            if nd.depth != nd.path_segments.len() - 1 {
+                nd.depth += 1;
+                continue; // 继续解析下一个路径分量
+            }
             return Ok(Arc::new(File::new(
                 Path::new(nd.mnt.clone(), dentry.clone()),
                 dentry.get_inode(),
@@ -97,13 +225,12 @@ pub fn open_last_lookups(
             )));
         }
 
+        // 文件不存在，若 `O_CREAT` 设置，则创建文件
         if flags & O_CREAT != 0 {
-            // Todo: 最后打开的是目录还是文件要区分
-            // 创建文件
+            assert!(nd.depth == nd.path_segments.len() - 1);
             let dir_inode = nd.dentry.get_inode();
-            // Todo: 设置mode
             let new_dentry = Dentry::negative(
-                absolute_current_dir + "/" + nd.path_segments[nd.depth],
+                absolute_current_dir + "/" + &nd.path_segments[nd.depth],
                 Some(nd.dentry.clone()),
             );
             dir_inode.create(new_dentry.clone(), mode as u16);
@@ -115,7 +242,6 @@ pub fn open_last_lookups(
                 flags,
             )));
         }
-        // 文件不存在, 且没有设置O_CREAT
         return Err(-ENOENT);
     }
 }
@@ -125,21 +251,26 @@ pub fn open_last_lookups(
 /// path可以是绝对路径或相对路径
 /// Todo: 符号链接
 pub fn path_openat(path: &str, flags: usize, dfd: i32, mode: usize) -> Result<Arc<File>, isize> {
-    let mut nd = Nameidata::new(path, dfd);
     // 解析路径的目录部分，遇到最后一个组件时停止
     // Todo: 正常有符号链接的情况下, 这里应该是一个循环
-    // loop {
-    link_path_walk(&mut nd)?;
-    // 到达最后一个组件
-    match open_last_lookups(&mut nd, flags, mode) {
-        Ok(file) => {
-            return Ok(file);
+    let mut nd = Nameidata::new(path, dfd);
+    loop {
+        let symlink_target = link_path_walk(&mut nd)?;
+        if !symlink_target.is_empty() {
+            // 符号链接
+            nd.path_segments = parse_path(&symlink_target);
+            continue;
         }
-        Err(e) => {
-            return Err(e);
+        // 到达最后一个组件
+        match open_last_lookups(&mut nd, flags, mode) {
+            Ok(file) => {
+                return Ok(file);
+            }
+            Err(e) => {
+                return Err(e);
+            }
         }
     }
-    // }
 }
 
 // 先查找dentry cache, 如果没有, 则调用InodeOp::lookup
@@ -149,7 +280,7 @@ pub fn path_openat(path: &str, flags: usize, dfd: i32, mode: usize) -> Result<Ar
 //     1. nd.dentry即为父目录
 pub fn lookup_dentry(nd: &mut Nameidata) -> Arc<Dentry> {
     let mut absolute_current_dir = nd.dentry.absolute_path.clone();
-    absolute_current_dir = absolute_current_dir + "/" + nd.path_segments[nd.depth];
+    absolute_current_dir = absolute_current_dir + "/" + &nd.path_segments[nd.depth];
     let mut dentry = lookup_dcache_with_absolute_path(&absolute_current_dir);
     if dentry.is_none() {
         let current_dir_inode = nd.dentry.get_inode();
@@ -234,13 +365,13 @@ const ENOENT: isize = 2;
 /// 由上层调用者保真nd.dentry是positive
 /// basic name resolution function: path -> dentry
 /// 解析路径的父目录部分，找到 dentry。
-/// Todo: 处理符号链接
-pub fn link_path_walk(nd: &mut Nameidata) -> Result<(), isize> {
+/// 如果是符号链接, 则返回解析后的链接目标
+pub fn link_path_walk(nd: &mut Nameidata) -> Result<String, isize> {
     assert!(!nd.dentry.is_negative());
     log::info!("[link_path_walk] path: {:?}", nd.path_segments);
-    let mut absolute_current_dir = nd.dentry.absolute_path.clone();
     // 解析路径的目录部分，遇到最后一个组件时停止检查最后一个路径分量
-    let len = nd.path_segments.len() - 1;
+    let mut len = nd.path_segments.len() - 1;
+    let mut symlink_count = 0;
     while nd.depth < len {
         if nd.path_segments[nd.depth] == "." {
             nd.depth += 1;
@@ -251,12 +382,33 @@ pub fn link_path_walk(nd: &mut Nameidata) -> Result<(), isize> {
             nd.dentry = parent_dentry;
         } else {
             // name是String
-            let dentry = lookup_dentry(nd);
+            let mut dentry = lookup_dentry(nd);
             // 路径组件不存在
             if dentry.is_negative() {
                 return Err(-ENOENT);
             }
-            // 不是目录
+            while dentry.is_symlink() {
+                if symlink_count > SYMLINK_MAX {
+                    return Err(-ELOOP); // 防止无限循环解析符号链接
+                }
+                symlink_count += 1;
+                let symlink_target = dentry.get_inode().get_link(); // 读取符号链接目标
+                log::info!(
+                    "Resolving symlink: {:?} -> {:?}",
+                    nd.path_segments[nd.depth],
+                    symlink_target
+                );
+                // 根据符号链接目标, 更新nd
+                nd.resolve_symlink(&symlink_target);
+                // 更新len
+                len = nd.path_segments.len() - 1;
+                // 重新查找
+                dentry = lookup_dentry(nd);
+                if dentry.is_negative() {
+                    return Err(-ENOENT);
+                }
+            }
+            // 确保最终路径是目录
             if !dentry.get_inode().can_lookup() {
                 return Err(-ENOTDIR);
             }
@@ -264,5 +416,82 @@ pub fn link_path_walk(nd: &mut Nameidata) -> Result<(), isize> {
             nd.dentry = dentry;
         }
     }
-    Ok(())
+    Ok(String::new())
 }
+
+pub const SYMLINK_MAX: usize = 10;
+// 符号链接解析过程中出现循环
+pub const ELOOP: isize = 40;
+
+// // 注意: name可能为"."或"..", 在DentryCache中绝对路径不包括这两个特殊目录
+// /// 若找不到, 则返回负目录项, nd中的dentry和inode为父目录的
+// /// 由上层调用者保真nd.dentry是positive
+// /// basic name resolution function: path -> dentry
+// /// 解析路径的父目录部分，找到 dentry。
+// /// 如果是符号链接, 则返回解析后的链接目标
+// pub fn link_path_walk(nd: &mut Nameidata) -> Result<String, isize> {
+//     assert!(!nd.dentry.is_negative());
+//     log::info!("[link_path_walk] path: {:?}", nd.path_segments);
+//     let mut absolute_current_dir = nd.dentry.absolute_path.clone();
+//     let mut symlink_count = 0;
+
+//     // 解析路径的目录部分，遇到最后一个组件时停止
+//     let len = nd.path_segments.len() - 1;
+//     while nd.depth < len {
+//         let component = &nd.path_segments[nd.depth];
+
+//         if component == "." {
+//             nd.depth += 1;
+//             continue;
+//         } else if component == ".." {
+//             let parent_dentry = nd.dentry.get_parent();
+//             nd.depth += 1;
+//             nd.dentry = parent_dentry;
+//         } else {
+//             let mut dentry = lookup_dentry(nd);
+
+//             if dentry.is_negative() {
+//                 return Err(-ENOENT);
+//             }
+
+//             while dentry.is_symlink() {
+//                 if symlink_count > SYMLINK_MAX {
+//                     return Err(-ELOOP); // 防止无限循环解析符号链接
+//                 }
+//                 symlink_count += 1;
+
+//                 let symlink_target = dentry.get_inode().get_link(); // 读取符号链接目标
+//                 log::info!("Resolving symlink: {:?} -> {:?}", component, symlink_target);
+
+//                 if symlink_target.starts_with("/") {
+//                     // 绝对路径符号链接，重新解析
+//                     nd.dentry = current_task().root().dentry.clone();
+//                     nd.path_segments = parse_path(&symlink_target);
+//                     nd.depth = 0; // 重新从头解析
+//                 } else {
+//                     // 相对路径符号链接，插入到当前解析路径
+//                     let mut new_segments = Vec::new();
+//                     new_segments.extend_from_slice(&nd.path_segments[0..nd.depth]); // 保持已解析部分
+//                     new_segments.extend(parse_path(&symlink_target)); // 解析符号链接目标
+//                     new_segments.extend_from_slice(&nd.path_segments[nd.depth + 1..]); // 追加剩余部分
+//                     nd.path_segments = new_segments;
+//                 }
+
+//                 // 重新查找
+//                 dentry = lookup_dentry(nd);
+//                 if dentry.is_negative() {
+//                     return Err(-ENOENT);
+//                 }
+//             }
+
+//             // 确保最终路径是目录
+//             if !dentry.get_inode().can_lookup() {
+//                 return Err(-ENOTDIR);
+//             }
+
+//             nd.depth += 1;
+//             nd.dentry = dentry;
+//         }
+//     }
+//     Ok(String::new())
+// }
