@@ -2,12 +2,12 @@
 //! MapArea
 //! MapType
 //! MapPermision
-use core::arch::asm;
+use core::{arch::asm, panic};
 
 use super::VirtAddr;
 use crate::{
     config::{MMAP_MIN_ADDR, PAGE_SIZE_BITS, USER_STACK_SIZE},
-    task::aux::*,
+    task::{aux::*, current_task},
     utils::ceil_to_page_size,
 };
 use alloc::{collections::btree_map::BTreeMap, vec::Vec};
@@ -75,7 +75,7 @@ pub struct MemorySet {
     /// 仅在`get_unmapped_area`中使用, 可以保证页对齐, 且不会冲突
     pub mmap_start: usize,
     pub page_table: PageTable,
-    areas: IndexList<MapArea>,
+    pub areas: IndexList<MapArea>,
 }
 
 // 返回MemroySet的方法
@@ -130,7 +130,19 @@ impl MemorySet {
                     .copy_from_slice(src_ppn.get_bytes_array());
             }
         }
+        user_memory_set.page_table.dump_all_user_mapping();
         memory_set
+    }
+    pub fn from_existed_user_lazily(user_memory_set: &MemorySet) -> Self {
+        let page_table = PageTable::from_existed_user(&user_memory_set.page_table);
+        MemorySet {
+            brk: user_memory_set.brk,
+            heap_bottom: user_memory_set.heap_bottom,
+            mmap_start: MMAP_MIN_ADDR,
+            page_table,
+            // areas需要clone, 拿到Arc<FrameTracker>
+            areas: user_memory_set.areas.clone(),
+        }
     }
     /// return (user_memory_set, satp, ustack_top, entry_point, aux_vec)
     /// Todo: 动态链接
@@ -381,7 +393,7 @@ impl MemorySet {
         VPNRange::new(start_vpn, end_vpn)
     }
     // 获取当前地址空间token
-    pub fn token(&self) -> usize{
+    pub fn token(&self) -> usize {
         self.page_table.token()
     }
 }
@@ -495,12 +507,90 @@ impl MemorySet {
         }
         return Err("invalid virtual address");
     }
+    // 检查是否是COW或者lazy_allocation的区域
+    // 逐页处理
+    // used by `copy_to_user`, 不仅会检查, 还会提前处理, 避免实际写的时候发生page fault
+    // 由调用者保证pte存在
+    pub fn pre_handle_page_fault(&mut self, vpn_range: VPNRange) -> Result<(), &'static str> {
+        let mut vpn = vpn_range.get_start();
+        while vpn < vpn_range.get_end() {
+            if let Some(pte) = self.page_table.find_pte(vpn) {
+                if vpn == VirtPageNum::from(0) {
+                    return Err("[copy_to_user] write to va 0");
+                }
+                if pte.is_cow() {
+                    log::warn!(
+                        "[copy_to_user] pre handle cow page fault, vpn {:#x}, pte: {:#x?}",
+                        vpn.0,
+                        pte
+                    );
+                    let areas = &mut self.areas;
+                    let mut index = areas.last_index();
+                    while index.is_some() {
+                        let area = areas.get_mut(index).unwrap();
+                        if area.vpn_range.contains_vpn(vpn) {
+                            let data_frame = area.data_frames.get(&vpn).unwrap();
+                            if Arc::strong_count(data_frame) == 1 {
+                                let mut flags = pte.flags();
+                                flags.remove(PTEFlags::COW);
+                                flags.insert(PTEFlags::W);
+                                *pte = PageTableEntry::new(pte.ppn(), flags);
+                            } else {
+                                let frame = frame_alloc().unwrap();
+                                let src_frame = pte.ppn().get_bytes_array();
+                                let dst_frame = frame.ppn.get_bytes_array();
+                                dst_frame.copy_from_slice(src_frame);
+                                let mut flags = pte.flags();
+                                flags.remove(PTEFlags::COW);
+                                flags.insert(PTEFlags::W);
+                                *pte = PageTableEntry::new(frame.ppn, flags);
+                                area.data_frames.insert(vpn, Arc::new(frame));
+                            }
+                            unsafe {
+                                core::arch::asm!(
+                                    "sfence.vma x0, x0",
+                                    options(nomem, nostack, preserves_flags)
+                                );
+                            }
+                            break;
+                        }
+                        index = areas.prev_index(index);
+                    }
+                } else if pte.ppn() == PhysPageNum::from(0) {
+                    let areas = &mut self.areas;
+                    let mut index = areas.last_index();
+                    while index.is_some() {
+                        let area = areas.get_mut(index).unwrap();
+                        if area.vpn_range.contains_vpn(vpn) {
+                            let frame = frame_alloc().unwrap();
+                            let ppn = frame.ppn;
+                            *pte = PageTableEntry::new(ppn, pte.flags());
+                            area.data_frames.insert(vpn, Arc::new(frame));
+                            unsafe {
+                                core::arch::asm!(
+                                    "sfence.vma x0, x0",
+                                    options(nomem, nostack, preserves_flags)
+                                );
+                            }
+                            break;
+                        }
+                        index = areas.prev_index(index);
+                    }
+                }
+            } else {
+                return Err("[copy_to_user] can't find valid pte for vpn");
+            }
+            // 继续处理下一页
+            vpn.step();
+        }
+        return Ok(());
+    }
 }
 
 #[derive(Clone)]
 pub struct MapArea {
-    vpn_range: VPNRange,
-    data_frames: BTreeMap<VirtPageNum, Arc<FrameTracker>>,
+    pub vpn_range: VPNRange,
+    pub data_frames: BTreeMap<VirtPageNum, Arc<FrameTracker>>,
     map_type: MapType,
     map_perm: MapPermission,
 }
@@ -548,6 +638,7 @@ impl MapArea {
 }
 
 impl MapArea {
+    // map the area: [start_va, end_va), 左闭右开
     pub fn map(&mut self, page_table: &mut PageTable) {
         for vpn in self.vpn_range {
             self.map_one(page_table, vpn);

@@ -5,10 +5,7 @@ use crate::{
     mutex::SpinNoIrqLock,
 };
 
-use super::{
-    block_op::Ext4Bitmap,
-    inode::{self, Ext4InodeDisk},
-};
+use super::{block_op::Ext4Bitmap, inode::Ext4InodeDisk};
 
 #[derive(Debug, Clone)]
 #[repr(C)]

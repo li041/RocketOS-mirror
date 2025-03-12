@@ -7,7 +7,7 @@ use core::{
 };
 
 use super::address::{PhysAddr, PhysPageNum, VirtPageNum};
-use crate::config::{KERNEL_DIRECT_OFFSET, PAGE_SIZE_BITS};
+use crate::config::{KERNEL_DIRECT_OFFSET, PAGE_SIZE_BITS, USER_MAX_VA};
 use bitflags::bitflags;
 
 use super::{
@@ -180,6 +180,69 @@ impl PageTable {
         PageTable {
             root_ppn: frame.ppn,
             frames: vec![frame],
+        }
+    }
+    pub fn from_existed_user(parent_pagetbl: &PageTable) -> Self {
+        let cld_root_frame = frame_alloc().unwrap();
+        let cld_root_ppn = cld_root_frame.ppn;
+        let mut frames: Vec<FrameTracker> = Vec::new();
+        let prt_root_ppn = parent_pagetbl.root_ppn;
+        // parent and child root page table
+        let cld_1_table = cld_root_frame.ppn.get_pte_array();
+        let prt_1_table = prt_root_ppn.get_pte_array();
+
+        // 1. Copy only kernel mapping from parent root page table
+        let kernel_start_vpn = VirtPageNum::from(KERNEL_DIRECT_OFFSET);
+        let kernel_start_idx1 = kernel_start_vpn.indexes()[0];
+        cld_1_table[kernel_start_idx1..].copy_from_slice(&prt_1_table[kernel_start_idx1..]);
+
+        // 2. copy user mapping from parent root page table and 2nd level page table
+        // todo: 考虑优化, 将level_1_idx作为常量
+        let user_end_vpn = VirtAddr::from(USER_MAX_VA).ceil();
+        let user_end_idx1 = user_end_vpn.indexes()[0];
+        let prt_1_table_user = &prt_1_table[..user_end_idx1];
+        for (idx1, prt_1_entry) in prt_1_table_user.iter().enumerate() {
+            if prt_1_entry.is_valid() {
+                let cld_1_pte = &mut cld_1_table[idx1];
+                let frame = frame_alloc().unwrap();
+                // Copy parent's 2nd level page table
+                let prt_2_table = prt_1_entry.ppn().get_pte_array();
+                let cld_2_table = frame.ppn.get_pte_array();
+                cld_2_table.copy_from_slice(&prt_2_table);
+                // add mapping to child 1st level page table
+                *cld_1_pte = PageTableEntry::new(frame.ppn, PTEFlags::V);
+                // add frame to child pagetable(是子进程独有的)
+                frames.push(frame);
+
+                for (idx2, prt_2_entry) in prt_2_table.iter_mut().enumerate() {
+                    if prt_2_entry.is_valid() {
+                        let cld_2_pte = &mut cld_2_table[idx2];
+                        let prt_3_table = prt_2_entry.ppn().get_pte_array();
+                        // 3. clear PTE_W and set PTE_COW in parent 3rd level pagetable
+                        for ptr_3_entry in prt_3_table.iter_mut() {
+                            if ptr_3_entry.writable() {
+                                // todo: 优化 modify in place
+                                *ptr_3_entry = PageTableEntry::from_pte_cow(*ptr_3_entry);
+                            }
+                        }
+                        // 4. copy parent's 3rd level page table
+                        let frame = frame_alloc().unwrap();
+                        let cld_3_table = frame.ppn.get_pte_array();
+                        cld_3_table.copy_from_slice(&prt_3_table);
+                        // add mapping to child 2nd level page table
+                        *cld_2_pte = PageTableEntry::new(frame.ppn, PTEFlags::V);
+                        // add frame to child pagetable(是子进程独有的)
+                        frames.push(frame);
+                    }
+                }
+            }
+        }
+
+        frames.push(cld_root_frame);
+        // 子进程的页表拥有自己的所有三级页表
+        PageTable {
+            root_ppn: cld_root_ppn,
+            frames,
         }
     }
 }

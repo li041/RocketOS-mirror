@@ -1,7 +1,11 @@
 use crate::{
     fs::{namei::path_openat, AT_FDCWD},
     loader::get_app_data_by_name,
-    task::{add_task, current_task, kernel_exit, remove_task, switch_to_next_task, yield_current_task, TaskContext, WaitOption},
+    mm::copy_to_user,
+    task::{
+        add_task, current_task, kernel_exit, remove_task, switch_to_next_task, yield_current_task,
+        TaskContext, WaitOption,
+    },
     timer::get_time_ms,
     trap::TrapContext,
     utils::{c_str_to_string, extract_cstrings},
@@ -33,7 +37,9 @@ pub fn sys_clone(
     unsafe {
         // 设定子任务返回值为0，令tp指向该任务结构
         // ToDo: 检验用户栈指针
-        if stack_ptr != 0 {(*new_trap_cx_ptr).x[2] = stack_ptr;}
+        if stack_ptr != 0 {
+            (*new_trap_cx_ptr).x[2] = stack_ptr;
+        }
         (*new_trap_cx_ptr).x[4] = Arc::as_ptr(&new_task) as usize;
         (*new_trap_cx_ptr).x[10] = 0;
     }
@@ -138,17 +144,20 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: usize, option: i32) -> isize {
                     let found_tid = child.tid() as i32;
                     // 写入exit_code
                     // Todo: 需要对地址检查
-                    unsafe {
-                        log::warn!(
-                            "[sys_waitpid] child {} exit with code {}, exit_code_ptr: {:x}",
-                            found_tid,
-                            child.exit_code(),
-                            exit_code_ptr
-                        );
-                        let exit_code_ptr = exit_code_ptr as *mut i32;
-                        if exit_code_ptr != core::ptr::null_mut() {
-                            exit_code_ptr.write_volatile((child.exit_code() & 0xff) << 8);
-                        }
+                    log::warn!(
+                        "[sys_waitpid] child {} exit with code {}, exit_code_ptr: {:x}",
+                        found_tid,
+                        child.exit_code(),
+                        exit_code_ptr
+                    );
+                    if exit_code_ptr != 0 {
+                        // exit_code_ptr为空, 表示不关心子进程的退出状态
+                        copy_to_user(
+                            exit_code_ptr as *mut i32,
+                            &child.exit_code() as *const i32,
+                            1,
+                        )
+                        .unwrap();
                     }
                     return found_tid as isize;
                 } else {

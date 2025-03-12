@@ -1,5 +1,7 @@
 use core::{
-    arch::asm, mem, slice::{from_raw_parts, from_raw_parts_mut}
+    arch::asm,
+    mem,
+    slice::{from_raw_parts, from_raw_parts_mut},
 };
 
 #[cfg(feature = "test")]
@@ -10,6 +12,7 @@ pub mod frame_allocator;
 pub mod heap_allocator;
 pub mod memory_set;
 pub mod page;
+pub mod page_fault;
 pub mod page_table;
 
 pub use address::*;
@@ -40,7 +43,6 @@ pub fn check_va_mapping(va: usize) {
     page_table.dump_with_va(va);
 }
 
-/// Todo: 之后还要实现对缺页的处理
 /// Toread: linux/lib/usercopy.c
 /// 逐字节复制数据到用户空间, n为元素个数, 注意不是字节数
 /// 一般T是u8, 但是也可以是其他类型,
@@ -58,7 +60,8 @@ pub fn copy_to_user<T: Copy>(to: *mut T, from: *const T, n: usize) -> Result<usi
     let end_vpn = VirtAddr::from(to as usize + n * core::mem::size_of::<T>()).ceil();
     let vpn_range = VPNRange::new(start_vpn, end_vpn);
     current_task().op_memory_set_mut(|memory_set| {
-        memory_set.check_valid_user_vpn_range(vpn_range, MapPermission::W)
+        memory_set.check_valid_user_vpn_range(vpn_range, MapPermission::W)?;
+        memory_set.pre_handle_page_fault(vpn_range)
     })?;
     // 执行复制
     unsafe {
