@@ -352,9 +352,15 @@ pub fn sys_pipe2(fdset: *const u8) -> isize {
     let fd2 = fd_table.alloc_fd(pipe_pair.1.clone());
     let pipe = [fd1 as i32, fd2 as i32];
     let fdset_ptr = fdset as *mut [i32; 2];
-    unsafe {
-        core::ptr::write(fdset_ptr, pipe);
-    }
+    // unsafe {
+    //     core::ptr::write(fdset_ptr, pipe);
+    // }
+    copy_to_user(
+        fdset_ptr as *mut u8,
+        pipe.as_ptr() as *const u8,
+        2 * core::mem::size_of::<i32>(),
+    )
+    .unwrap();
     0
 }
 

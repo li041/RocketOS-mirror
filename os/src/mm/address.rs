@@ -224,6 +224,7 @@ where
         self.l <= other.l && self.r >= other.r
     }
 }
+
 impl<T> IntoIterator for SimpleRange<T>
 where
     T: StepByOne + Copy + PartialEq + PartialOrd + Debug,
@@ -265,3 +266,9 @@ where
     }
 }
 pub type VPNRange = SimpleRange<VirtPageNum>;
+
+impl VPNRange {
+    pub fn contains_vpn(self, other: VirtPageNum) -> bool {
+        self.get_start() <= other && other < self.get_end()
+    }
+}

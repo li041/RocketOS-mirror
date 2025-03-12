@@ -11,7 +11,11 @@ use crate::{
     mm::MemorySet,
     mutex::SpinNoIrqLock,
     syscall::CloneFlags,
-    task::{kstack, scheduler::{add_task, remove_thread_group, SCHEDULER}, INITPROC},
+    task::{
+        kstack,
+        scheduler::{add_task, remove_thread_group, SCHEDULER},
+        INITPROC,
+    },
     trap::TrapContext,
 };
 use alloc::{
@@ -133,7 +137,7 @@ impl Task {
         unsafe {
             trap_cx_ptr.write(trap_context);
             task_cx_ptr.write(task_context);
-        }  
+        }
         log::info!("Task: {:p}", &task);
         log::info!("Task kstack: {:p}", &task.kstack);
         log::info!("[Initproc] kstack: {:#x}", kstack);
@@ -186,7 +190,8 @@ impl Task {
             // Todo: execve可能有问题
             memory_set = self.memory_set.clone()
         } else {
-            memory_set = Arc::new(SpinNoIrqLock::new(MemorySet::from_existed_user(
+            memory_set = Arc::new(SpinNoIrqLock::new(MemorySet::from_existed_user_lazily(
+                // memory_set = Arc::new(SpinNoIrqLock::new(MemorySet::from_existed_user(
                 &self.memory_set.lock(),
             )));
         }
@@ -220,8 +225,16 @@ impl Task {
         task.op_thread_group_mut(|tg| tg.add(task.clone()));
         // 在内核栈中加入task_cx
         write_task_cx(task.clone());
-        log::info!("[kernel_clone] task{}, kstack: {:#x}", task.tid(), task.kstack());
-        log::info!("[kernel_clone] task{}, strong_count {}", task.tid(), Arc::strong_count(&task)); // 未加入调度器理论为 2
+        log::info!(
+            "[kernel_clone] task{}, kstack: {:#x}",
+            task.tid(),
+            task.kstack()
+        );
+        log::info!(
+            "[kernel_clone] task{}, strong_count {}",
+            task.tid(),
+            Arc::strong_count(&task)
+        ); // 未加入调度器理论为 2
         log::info!("[kernel_clone] task{} create sucessfully!", task.tid());
 
         task
@@ -295,7 +308,10 @@ impl Task {
         );
         log::info!(
             "[kernel_execve] current_task tid:{}, tgid:{}, kstack:{:#x}, strong_count:{}",
-            self.tid(), self.tgid(), self.kstack(), Arc::strong_count(&self)
+            self.tid(),
+            self.tgid(),
+            self.kstack(),
+            Arc::strong_count(&self)
         ); // 理论为3(sys_exec一个，children一个， processor一个)
         log::info!("[kernel_execve] execve complete!");
     }
@@ -360,6 +376,9 @@ impl Task {
     }
     pub fn exit_code(&self) -> i32 {
         self.exit_code.load(core::sync::atomic::Ordering::SeqCst)
+    }
+    pub fn memory_set(&self) -> Arc<SpinNoIrqLock<MemorySet>> {
+        self.memory_set.clone()
     }
     pub fn fd_table(&self) -> Arc<FdTable> {
         self.fd_table.clone()
@@ -436,9 +455,15 @@ impl Task {
 /// 3. 修改exit_code
 /// 4. 托孤给initproc
 /// 5. 将当前进程的fd_table清空, memory_set回收, children清空
-pub fn kernel_exit(task: Arc<Task>, exit_code: i32){
+pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
+    log::error!(
+        "[kernel_exit] Task {} exit with exit_code {:?} ...",
+        task.tid(),
+        exit_code
+    );
     assert_ne!(
-        task.tid(), INIT_PROC_PID,
+        task.tid(),
+        INIT_PROC_PID,
         "[kernel_exit] Initproc process exit with exit_code {:?} ...",
         task.exit_code()
     );

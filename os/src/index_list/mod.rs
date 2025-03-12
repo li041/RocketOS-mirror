@@ -31,7 +31,7 @@ use core::{cmp::Ordering, default::Default, fmt};
 pub type Index = ListIndex; // for backwards compatibility with 0.2.7
 
 /// Doubly-linked list implemented in safe Rust.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct IndexList<T> {
     elems: Vec<Option<T>>,
     nodes: Vec<ListNode>,

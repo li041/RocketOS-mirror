@@ -3,8 +3,7 @@ use core::arch::global_asm;
 pub use context::TrapContext;
 use riscv::register::{
     satp,
-    scause::Interrupt,
-    scause::{self, Exception, Trap},
+    scause::{self, Exception, Interrupt, Trap},
     sepc, sie,
     sstatus::{self, SPP},
     stval, stvec,
@@ -12,8 +11,10 @@ use riscv::register::{
 };
 
 use crate::{
-    mm::page_table::PageTable, syscall::syscall, timer::set_next_trigger,
+    mm::{page_fault::handle_recoverable_page_fault, page_table::PageTable, VirtAddr},
+    syscall::syscall,
     task::yield_current_task,
+    timer::set_next_trigger,
 };
 
 pub mod context;
@@ -56,25 +57,42 @@ pub fn trap_handler(cx: &mut TrapContext) {
                 cx.x[10], cx.x[11], cx.x[12], cx.x[13], cx.x[14], cx.x[15], cx.x[16], cx.x[17],
             ) as usize;
         }
+        Trap::Exception(Exception::InstructionFault)
+        | Trap::Exception(Exception::InstructionPageFault) => {
+            let satp = satp::read().bits();
+            let page_table = PageTable::from_token(satp);
+            //page_table.dump_all();
+            let pte = page_table.find_pte(VirtAddr::from(stval).floor()).unwrap();
+            log::error!("pte: {:?}", pte);
+            // page fault exit code
+            panic!(
+                "Instruction fault in application, bad addr = {:#x}, scause = {:?}, sepc = {:#x}",
+                stval,
+                scause.cause(),
+                sepc::read()
+            );
+        }
         Trap::Exception(Exception::LoadPageFault)
         | Trap::Exception(Exception::LoadFault)
         | Trap::Exception(Exception::StorePageFault)
         | Trap::Exception(Exception::StoreFault) => {
+            // stval is the faulting virtual address
+            // recoverable page fault:
+            // 1. fork COW area
+            // 2. lazy allocation
+            let va = VirtAddr::from(stval);
             let satp = satp::read().bits();
             let page_table = PageTable::from_token(satp);
-            let current_task = crate::task::current_task();
-            page_table.dump_all_user_mapping();
-
-            // page_table.dump_with_va(stval);
-            let sepc = sepc::read();
-            log::error!("task {} page fault", current_task.tid());
-
-            panic!(
-                "page fault in application, bad addr = {:#x}, scause = {:?}, sepc = {:#x}",
-                stval,
-                scause.cause(),
-                sepc
-            );
+            if handle_recoverable_page_fault(&page_table, va).is_err() {
+                page_table.dump_all_user_mapping();
+                panic!(
+                    "Unrecoverble page fault in application, bad addr = {:#x}, scause = {:?}, sepc = {:#x}",
+                    stval,
+                    scause.cause(),
+                    sepc::read()
+                );
+            }
+            // we should jump back to the faulting instruction after handling the page fault
         }
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
             set_next_trigger();
