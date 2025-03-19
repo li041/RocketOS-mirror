@@ -1,4 +1,4 @@
-use crate::timer::TimeSpec;
+use crate::arch::timer::TimeSpec;
 
 #[repr(C)]
 #[derive(Default)]

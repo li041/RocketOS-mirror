@@ -16,10 +16,11 @@ use crate::{
         uio::IoVec,
         AT_FDCWD,
     },
-    mm::copy_to_user,
     task::current_task,
     utils::c_str_to_string,
 };
+
+use crate::arch::mm::copy_to_user;
 
 pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
     let task = current_task();

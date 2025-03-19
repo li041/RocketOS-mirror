@@ -1,0 +1,11 @@
+[build]
+target = "loongarch64-unknown-none"
+
+ [target.loongarch64-unknown-none]
+ rustflags = [
+     "-Clink-arg=-Tsrc/linker_loongarch.ld", 
+     "-Clink-arg=-nostdlib",
+     "-Clink-arg=-static",
+ ]
+
+linker = "loongarch64-linux-musl-gcc"

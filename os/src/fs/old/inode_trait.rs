@@ -6,7 +6,7 @@ use alloc::{
 };
 use log::debug;
 
-use crate::{config::SysResult, fs::FSMutex, timer::TimeSpec};
+use crate::{arch::timer::TimeSpec, config::SysResult, fs::FSMutex};
 
 use super::path_old::PathOld;
 

@@ -5,10 +5,9 @@ use alloc::sync::{Arc, Weak};
 use alloc::vec;
 use alloc::vec::Vec;
 
+use crate::arch::timer::TimeSpec;
 use crate::config::EXT4_MAX_INLINE_DATA;
-use crate::fat32::inode;
-use crate::fs::kstat::{self, Kstat};
-use crate::timer::TimeSpec;
+use crate::fs::kstat::Kstat;
 // use crate::fs::inode::InodeMeta;
 use crate::{
     config::{PAGE_SIZE, PAGE_SIZE_BITS},

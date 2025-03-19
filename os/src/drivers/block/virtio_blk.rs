@@ -2,11 +2,11 @@ use core::ptr::NonNull;
 
 use super::BlockDevice;
 use crate::config::KERNEL_BASE;
-use crate::mm::frame_allocator::FrameTracker;
 use crate::mutex::SpinNoIrqLock;
 use alloc::alloc::alloc_zeroed;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use buddy_system_allocator::FrameAllocator;
 use lazy_static::*;
 use virtio_drivers::device::blk::VirtIOBlk;
 use virtio_drivers::transport::mmio::{MmioTransport, VirtIOHeader};
@@ -104,7 +104,7 @@ fn phys_to_virt(paddr: usize) -> usize {
 }
 
 lazy_static! {
-    static ref QUEUE_FRAMES: SpinNoIrqLock<Vec<FrameTracker>> = SpinNoIrqLock::new(Vec::new());
+    static ref QUEUE_FRAMES: SpinNoIrqLock<Vec<FrameAllocator>> = SpinNoIrqLock::new(Vec::new());
 }
 
 impl BlockDevice for VirtIOBlock {

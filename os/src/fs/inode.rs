@@ -1,7 +1,6 @@
 //! new
 use crate::ext4::inode::Ext4Inode;
 use crate::mutex::SpinNoIrqLock;
-use crate::timer::TimeSpec;
 
 use super::dentry::{Dentry, LinuxDirent64};
 use super::kstat::Kstat;

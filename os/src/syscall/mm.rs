@@ -1,6 +1,6 @@
 use crate::{
+    arch::mm::{MapPermission, VPNRange, VirtAddr, VirtPageNum},
     config::{MMAP_MIN_ADDR, PAGE_SIZE, PAGE_SIZE_BITS},
-    mm::{MapPermission, VPNRange, VirtAddr, VirtPageNum},
     task::current_task,
     utils::{ceil_to_page_size, floor_to_page_size},
 };
@@ -147,7 +147,11 @@ pub fn sys_mmap(
             // start可以保证是页对齐的
             let start = memory_set.mmap_start;
             let vpn_range = memory_set.get_unmapped_area(start, len);
-            log::error!("[sys_mmap]start: {:#x}, end: {:#x}", start, vpn_range.get_end().0 << PAGE_SIZE_BITS);
+            log::error!(
+                "[sys_mmap]start: {:#x}, end: {:#x}",
+                start,
+                vpn_range.get_end().0 << PAGE_SIZE_BITS
+            );
             memory_set.insert_framed_area_vpn_range(vpn_range, permission);
             return start as isize;
         })

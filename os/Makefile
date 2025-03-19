@@ -3,103 +3,103 @@
 #  		By default, rros will run in debug mode.
 # - `FEATURES`: Features to enable when build
 #		["test", ] 
+# - `ARCH`: Architecture to build
+#		["riscv64", "loongarch64"]
+# - `FS`: disk image to use
 
 # Building
-TARGET := riscv64gc-unknown-none-elf
+ARCH ?= riscv64
 MODE := debug
+FEATURES := default
+FS := ../img/ext4_final.img
+
+# Target, Binutils(Objcopy)
+ifeq ($(ARCH), riscv64)
+	TARGET := riscv64gc-unknown-none-elf
+	OBJCOPY := rust-objcopy --binary-architecture=riscv64
+else ifeq ($(ARCH), loongarch64)
+	TARGET := loongarch64-unknown-none
+	OBJCOPY := loongarch64-linux-gnu-objcopy 
+else
+	$(error "Unsupported architecture: $(ARCH), Use riscv64 or loongarch64")
+endif
+
 KERNEL_ELF := target/$(TARGET)/$(MODE)/os
 KERNEL_BIN := $(KERNEL_ELF).bin
-FEATURES := default
 
 # BOARD
 BOARD := qemu
-SBI ?= opensbi
-BOOTLOADER := ../bootloader/$(SBI)-$(BOARD).bin
-BOOTLOADER_ELF := ../bootloader/$(SBI)-$(BOARD)
-
-# TEST
-TEST_KERNEL_BIN = kernel-qemu
-TEST_bios = sbi-qemu
+# riscv64使用opensbi, loongarch64目前没有
+ifeq ($(ARCH), riscv64)
+    SBI ?= opensbi
+    BOOTLOADER := ../bootloader/$(SBI)-$(BOARD).bin
+    BOOTLOADER_ELF := ../bootloader/$(SBI)-$(BOARD)
+endif
 
 # Configs
-MEM_SIZE = 128M
+MEM_SIZE = 1024M
 LOG := error
-
-# Binutils
-OBJCOPY := rust-objcopy --binary-architecture=riscv64
+QEMU_NET_PORT ?= 5555
 
 ifeq ($(MODE), release)
 	MODE_ARG := --release
 endif
 
-# File system
-# FS := ../img/sdcard-riscv.img
-FS := ../img/ext4_final.img
-
-
 # QEMU
 # 添加一块虚拟硬盘, 命名为`x0`, 将`sdcard.img`挂载到这块硬盘上, VirtIO总线通过MMIO进行控制, 且该块设备在总线中的编号为0
-QEMU_ARGS := 	-machine virt \
-				-m $(MEM_SIZE) \
-				-kernel $(KERNEL_BIN) \
-				-nographic \
-				-smp 2\
-				-bios $(BOOTLOADER_ELF)\
-			    -drive file=$(FS),if=none,format=raw,id=x0 \
-			 	-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0\
-				-device virtio-net-device,netdev=net -netdev user,id=net
-
-TEST_QEMU_ARGS := 	-machine virt \
-				-m $(MEM_SIZE) \
-				-kernel $(TEST_KERNEL_BIN) \
-				-nographic \
-				-smp 2\
-				-bios $(TEST_bios)\
-			    -drive file=$(FS),if=none,format=raw,id=x0 \
-			 	-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0\
-				-device virtio-net-device,netdev=net -netdev user,id=net
-
+ifeq ($(ARCH), riscv64)
+    QEMU_CMD := qemu-system-riscv64
+    QEMU_ARGS := 	-machine virt \
+                    -m $(MEM_SIZE) \
+                    -kernel $(KERNEL_BIN) \
+                    -nographic \
+                    -smp 2\
+                    -bios $(BOOTLOADER_ELF)\
+                    -drive file=$(FS),if=none,format=raw,id=x0 \
+                    -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0\
+                    -device virtio-net-device,netdev=net -netdev user,id=net
+else ifeq ($(ARCH), loongarch64)
+    QEMU_CMD := qemu-system-loongarch64
+    QEMU_ARGS = 	-kernel $(KERNEL_ELF) -m $(MEM_SIZE) -nographic \
+                    -smp 1\
+                    -machine virt \
+                    -no-reboot \
+                    -nographic 
+else
+	$(error "Unsupported architecture: $(ARCH), Use riscv64 or loongarch64")
+endif
 
 # gdb
-GDB_CLIENT := riscv64-unknown-elf-gdb
-GDB_ARGS := -ex 'file target/riscv64gc-unknown-none-elf/debug/os' \
-    		-ex 'set arch riscv:rv64' \
-			-ex 'target remote localhost:1234'
+ifeq ($(ARCH), riscv64)
+    GDB_CLIENT := riscv64-unknown-elf-gdb
+    GDB_ARGS := -ex 'file target/riscv64gc-unknown-none-elf/debug/os' \
+        		-ex 'set arch riscv:rv64' \
+			    -ex 'target remote localhost:1234'
+else ifeq ($(ARCH), loongarch64)
+    GDB_CLIENT := loongarch64-linux-gnu-gdb
+    GDB_ARGS := -ex 'file target/loongarch64-unknown-none/debug/os' \
+                -ex 'target remote localhost:1234'
+else
+    $(error "Unsupported architecture: $(ARCH), Use riscv64 or loongarch64")
+endif
 
-gdbserver: env build
-	qemu-system-riscv64 $(QEMU_ARGS) -s -S 
+gdbserver: build
+	$(QEMU_CMD) $(QEMU_ARGS) -s -S 
 
 gdbclient: 
 	@echo "Using GDB: $(GDB_CLIENT)"
 	$(GDB_CLIENT) $(GDB_ARGS)
 
-env:
-	(rustup target list | grep "riscv64gc-unknown-none-elf (installed)") || rustup target add $(TARGET)
-	cargo install cargo-binutils
-	rustup component add rust-src
-	rustup component add llvm-tools-preview
+# build-offline: 
+# 	cargo build $(MODE_ARG) --features $(FEATURES) --offline 
+# 	@$(OBJCOPY) $(KERNEL_ELF) --strip-all -O binary $(KERNEL_BIN)
 
-# # 检查是否存在 riscv64-unknown-elf-gdb
-# ifeq ("$(shell command -v $(GDB_CLIENT))", "")
-#     GDB_CLIENT := gdb-multiarch
-# # 检查是否存在 gdb-multiarch
-# else ifeq ("$(shell command -v $(GDB_CLIENT))", "")
-#     $(error "No suitable GDB client found. Please install riscv64-unknown-elf-gdb or gdb-multiarch.")
-# endif
-
-build-offline: 
-	cargo build $(MODE_ARG) --features $(FEATURES) --offline 
-	@$(OBJCOPY) $(KERNEL_ELF) --strip-all -O binary $(KERNEL_BIN)
-
-build:
-	LOG=$(LOG) cargo build $(MODE_ARG) --features $(FEATURES)
+build: move-cargo
+	LOG=$(LOG) cargo build $(MODE_ARG) --features $(FEATURES) --target $(TARGET)
 	@$(OBJCOPY) $(KERNEL_ELF) --strip-all -O binary $(KERNEL_BIN)
 	
-run: build 
-	qemu-system-riscv64 $(QEMU_ARGS)
-
-run-test: make-user move-cargo build-offline move-bin
-	qemu-system-riscv64 $(TEST_QEMU_ARGS)
+run: build
+	$(QEMU_CMD) $(QEMU_ARGS)
 
 clean:
 	@cargo clean
@@ -107,11 +107,7 @@ clean:
 move-cargo:
 	@rm -rf .cargo
 	@mkdir .cargo
-	@cp cargo/* .cargo/
-
-move-bin:
-	@cp $(KERNEL_BIN) ../kernel-qemu
-	@cp $(BOOTLOADER_ELF) ../sbi-qemu
+	cp cargo/config_$(ARCH).toml .cargo/config.toml
 
 make-user:
 	@cd ../user && make

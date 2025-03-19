@@ -7,14 +7,16 @@ use super::{
     String, Tid,
 };
 use crate::{
+    arch::mm::MemorySet,
+    arch::trap::TrapContext,
     fs::{fdtable::FdTable, file::FileOp, path::Path, FileOld, Stdin, Stdout},
-    mm::MemorySet,
     mutex::SpinNoIrqLock,
     syscall::CloneFlags,
     task::{
-        aux, kstack, scheduler::{add_task, remove_thread_group, SCHEDULER}, INITPROC
+        aux, kstack,
+        scheduler::{add_task, remove_thread_group, SCHEDULER},
+        INITPROC,
     },
-    trap::TrapContext,
 };
 use alloc::{
     collections::btree_map::BTreeMap,
@@ -560,7 +562,11 @@ fn init_user_stack(
         }
         base
     }
-    log::info!("[init_user_stack] args: {:?}, envs: {:?}", args_vec, envs_vec);
+    log::info!(
+        "[init_user_stack] args: {:?}, envs: {:?}",
+        args_vec,
+        envs_vec
+    );
 
     // Push environment variables to the stack
     let envp = push_strings_to_stack(envs_vec, &mut user_sp);

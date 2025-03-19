@@ -1,4 +1,4 @@
-use crate::trap::__return_to_user;
+use crate::arch::trap::__return_to_user;
 
 //要压入内核栈, 对齐到16字节
 #[derive(Copy, Clone)]
