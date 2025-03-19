@@ -1,11 +1,10 @@
-use alloc::sync::Arc;
-use lazy_static::lazy_static;
-use core::arch::asm;
 use crate::mutex::SpinNoIrqLock;
+use alloc::sync::Arc;
+use core::arch::asm;
+use lazy_static::lazy_static;
 
-use super::{
-    Task, switch
-};
+use super::Task;
+use crate::arch::switch;
 
 // 创建空闲任务
 lazy_static! {
@@ -50,10 +49,9 @@ pub fn run_tasks() {
 }
 
 /// 获取当前任务
-pub fn current_task() -> Arc<Task>{
-   PROCESSOR.lock().current_task()
+pub fn current_task() -> Arc<Task> {
+    PROCESSOR.lock().current_task()
 }
-
 
 ///Processor management structure
 pub struct Processor {

@@ -1,13 +1,13 @@
 use crate::{
+    arch::mm::copy_to_user,
+    arch::timer::get_time_ms,
+    arch::trap::TrapContext,
     fs::{namei::path_openat, AT_FDCWD},
     loader::get_app_data_by_name,
-    mm::copy_to_user,
     task::{
         add_task, current_task, kernel_exit, remove_task, switch_to_next_task, yield_current_task,
         TaskContext, WaitOption,
     },
-    timer::get_time_ms,
-    trap::TrapContext,
     utils::{c_str_to_string, extract_cstrings},
 };
 use alloc::sync::Arc;

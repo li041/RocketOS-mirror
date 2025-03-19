@@ -7,8 +7,6 @@ use core::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
-// use riscv::register::sstatus;
-
 use super::MutexSupport;
 
 /*========================= Spin Mutex ====================================*/

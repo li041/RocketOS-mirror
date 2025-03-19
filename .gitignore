@@ -16,3 +16,6 @@ img/*
 kernel-qemu
 sbi-qemu
 sdcard.img
+
+os/venodr/
+testsuits-for-oskernel/

@@ -15,12 +15,6 @@
 //!
 #![forbid(unsafe_code)]
 
-pub mod listdrainiter;
-mod listends;
-pub mod listindex;
-pub mod listiter;
-mod listnode;
-
 pub use self::listdrainiter::ListDrainIter;
 pub use self::listindex::ListIndex;
 pub use self::listiter::ListIter;
@@ -29,6 +23,11 @@ use alloc::{format, string::String, vec::Vec};
 use core::iter::{Extend, FromIterator};
 use core::{cmp::Ordering, default::Default, fmt};
 pub type Index = ListIndex; // for backwards compatibility with 0.2.7
+pub mod listdrainiter;
+mod listends;
+pub mod listindex;
+pub mod listiter;
+mod listnode;
 
 /// Doubly-linked list implemented in safe Rust.
 #[derive(Debug, Clone)]

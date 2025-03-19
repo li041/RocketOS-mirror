@@ -1,7 +1,7 @@
 //!Stdin & Stdout
 use super::{file::FileOp, FileMeta, FileOld};
 // use crate::mm::UserBuffer;
-use crate::{sbi::console_getchar, task::yield_current_task};
+use crate::{arch::sbi::console_getchar, task::yield_current_task};
 // use crate::task::yield_task;
 ///Standard input
 pub struct Stdin;

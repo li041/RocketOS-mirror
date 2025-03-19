@@ -4,7 +4,6 @@ mod id;
 mod kstack;
 mod processor;
 mod scheduler;
-mod switch;
 mod task;
 
 use crate::{
@@ -15,9 +14,7 @@ use crate::{
     },
     loader::get_app_data_by_name,
     mutex::SpinNoIrqLock,
-    sbi::shutdown,
-    timer::get_time_ms,
-    trap::TrapContext,
+    arch::trap::TrapContext,
     utils::{c_str_to_string, extract_cstrings},
 };
 use alloc::sync::Arc;
@@ -28,9 +25,9 @@ use lazy_static::lazy_static;
 use task::{Task, TaskStatus};
 
 pub use context::TaskContext;
-pub use task::kernel_exit;
 pub use processor::{current_task, run_tasks};
-pub use scheduler::{add_task, yield_current_task, switch_to_next_task, WaitOption, remove_task};
+pub use scheduler::{add_task, remove_task, switch_to_next_task, yield_current_task, WaitOption};
+pub use task::kernel_exit;
 
 pub type Tid = usize;
 

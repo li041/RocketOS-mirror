@@ -1,8 +1,8 @@
-use core::fmt::Debug;
+use super::{current_task, kernel_exit, Task, Tid};
+use crate::{arch::switch, mutex::SpinNoIrqLock};
 use alloc::{collections::vec_deque::VecDeque, sync::Arc};
-use crate::mutex::SpinNoIrqLock;
-use super::{Task, current_task, kernel_exit, switch, Tid};
 use bitflags::bitflags;
+use core::fmt::Debug;
 use lazy_static::lazy_static;
 
 // 初始化调度器
@@ -12,7 +12,7 @@ lazy_static! {
 
 /// 添加新任务到就绪队列
 pub fn add_task(task: Arc<Task>) {
-    // log::debug!("[add_task] ready_queue len:{:?}, added task: {:?}", 
+    // log::debug!("[add_task] ready_queue len:{:?}, added task: {:?}",
     // SCHEDULER.lock().ready_queue.len(), task.tid());
     //assert_eq!(2 , Arc::strong_count(&task));
     assert!(task.is_ready());
@@ -82,6 +82,11 @@ pub fn yield_current_task() {
         // 获得下一个任务的内核栈
         // 可以保证`Ready`的任务`Task`中的内核栈与实际运行的sp保持一致
         let next_task_kernel_stack = next_task.kstack();
+        log::debug!(
+            "[yield_current_task] next task {}, next task kstack {:#x}",
+            next_task.tid(),
+            next_task_kernel_stack
+        );
         // check_task_context_in_kernel_stack(next_task_kernel_stack);
         // 切换Processor的current
         crate::task::processor::PROCESSOR
@@ -117,10 +122,6 @@ pub fn blocking_and_run_next() {
         }
     }
 }
-
-
-
-
 
 // FIFO Task scheduler
 pub struct Scheduler {
