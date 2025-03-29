@@ -5,12 +5,12 @@ use alloc::sync::{Arc, Weak};
 use alloc::vec;
 use alloc::vec::Vec;
 
+use crate::arch::config::EXT4_MAX_INLINE_DATA;
 use crate::arch::timer::TimeSpec;
-use crate::config::EXT4_MAX_INLINE_DATA;
 use crate::fs::kstat::Kstat;
 // use crate::fs::inode::InodeMeta;
 use crate::{
-    config::{PAGE_SIZE, PAGE_SIZE_BITS},
+    arch::config::{PAGE_SIZE, PAGE_SIZE_BITS},
     drivers::block::{block_cache::get_block_cache, block_dev::BlockDevice},
     ext4::{
         block_op::{Ext4DirContentRO, Ext4DirContentWE},
@@ -853,8 +853,9 @@ impl Ext4Inode {
         let dir_content = Ext4DirContentRO::new(&buf);
         dir_content.getdents()
     }
+    // Todo: result mask要设置
     pub fn getattr(&self) -> Kstat {
-        let mut kstat = Kstat::default();
+        let mut kstat = Kstat::new();
         let inner_guard = self.inner.lock();
         let inode_on_disk = &inner_guard.inode_on_disk;
         kstat.ino = self.inode_num as u64;

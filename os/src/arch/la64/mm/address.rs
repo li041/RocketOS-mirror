@@ -2,6 +2,8 @@
 use crate::arch::config::{PAGE_SIZE, PAGE_SIZE_BITS};
 use core::fmt::{self, Debug, Formatter};
 
+use super::PageTableEntry;
+
 /// Definitions
 #[repr(C)]
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
@@ -153,6 +155,7 @@ impl VirtPageNum {
     pub fn offset(&self, offset: usize) -> VirtAddr {
         VirtAddr::from((self.0 << PAGE_SIZE_BITS) + offset)
     }
+    // 每一级的索引为9位
     pub fn indexes<const T: usize>(&self) -> [usize; T] {
         let mut vpn = self.0;
         let mut idx = [0usize; T];
@@ -185,9 +188,9 @@ impl PhysPageNum {
     pub fn offset(&self, offset: usize) -> PhysAddr {
         PhysAddr::from((self.0 << PAGE_SIZE_BITS) + offset)
     }
-    pub fn get_pte_array<T>(&self) -> &'static mut [T] {
+    pub fn get_pte_array(&self) -> &'static mut [PageTableEntry] {
         let pa: PhysAddr = self.clone().into();
-        unsafe { core::slice::from_raw_parts_mut((pa.0) as *mut T, 512) }
+        unsafe { core::slice::from_raw_parts_mut((pa.0) as *mut PageTableEntry, 512) }
     }
     pub fn get_bytes_array(&self) -> &'static mut [u8] {
         let pa: PhysAddr = self.clone().into();
@@ -238,6 +241,18 @@ where
     }
     pub fn get_end(&self) -> T {
         self.r
+    }
+    pub fn set_start(&mut self, start: T) {
+        self.l = start;
+    }
+    pub fn set_end(&mut self, end: T) {
+        self.r = end;
+    }
+    pub fn is_intersect_with(&self, other: &Self) -> bool {
+        self.l < other.r && self.r > other.l
+    }
+    pub fn is_contain(&self, other: &Self) -> bool {
+        self.l <= other.l && self.r >= other.r
     }
 }
 impl<T> IntoIterator for SimpleRange<T>

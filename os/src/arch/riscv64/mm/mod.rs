@@ -67,3 +67,28 @@ pub fn copy_to_user<T: Copy>(to: *mut T, from: *const T, n: usize) -> Result<usi
     }
     Ok(n)
 }
+
+/// 逐字节复制数据到内核空间, n为元素个数, 注意不是字节数
+/// 由调用者保证地址合法性
+pub fn copy_from_user<'a, T: Copy>(from: *const T, n: usize) -> Result<&'a [T], &'static str> {
+    if from.is_null() {
+        return Err("null pointer");
+    }
+    if n == 0 {
+        return Err("no data to copy");
+    }
+    return Ok(unsafe { core::slice::from_raw_parts(from, n) });
+}
+
+pub fn copy_from_user_mut<'a, T: Copy>(
+    from: *const T,
+    n: usize,
+) -> Result<&'a mut [T], &'static str> {
+    if from.is_null() {
+        return Err("null pointer");
+    }
+    if n == 0 {
+        return Err("no data to copy");
+    }
+    return Ok(unsafe { core::slice::from_raw_parts_mut(from as *mut T, n) });
+}

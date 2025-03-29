@@ -1,4 +1,4 @@
-use crate::{arch::sbi::set_timer, boards::qemu::CLOCK_FREQ};
+use crate::{arch::boards::qemu::CLOCK_FREQ, arch::sbi::set_timer};
 use riscv::register::time;
 
 const TICKS_PER_SEC: usize = 100;
@@ -20,6 +20,35 @@ impl TimeSpec {
         Self {
             sec: current_time / 1000,
             nsec: (current_time % 1000) * 1000000,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+#[repr(C)]
+pub struct StatxTimeStamp {
+    /// 自UNIX time以来的秒数
+    pub sec: i64,
+    /// 纳秒数, 表示秒数后剩余的部分
+    pub nsec: u32,
+}
+
+impl StatxTimeStamp {
+    pub fn new() -> Self {
+        // new a time spec with machine time
+        let current_time = get_time_ms();
+        Self {
+            sec: (current_time / 1000) as i64,
+            nsec: ((current_time % 1000) * 1000000) as u32,
+        }
+    }
+}
+
+impl From<TimeSpec> for StatxTimeStamp {
+    fn from(ts: TimeSpec) -> Self {
+        Self {
+            sec: ts.sec as i64,
+            nsec: ts.nsec as u32,
         }
     }
 }

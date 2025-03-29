@@ -9,6 +9,7 @@ use user_lib::{execve, fork, println, wait, yield_};
 fn main() -> i32 {
     if fork() == 0 {
         execve("user_shell\0", &["user_shell\0"], &["\0"]);
+        // execve("submit_script\0", &["submit_script\0"], &["\0"]);
     } else {
         loop {
             let mut exit_code: i32 = 0;

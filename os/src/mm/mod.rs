@@ -9,5 +9,5 @@ use heap_allocator::heap_test;
 
 pub mod heap_allocator;
 
-#[cfg(target_arch = "riscv64")]
+// #[cfg(target_arch = "riscv64")]
 pub mod page;

@@ -8,7 +8,7 @@ use core::{arch::asm, panic};
 use super::{PageTable, PageTableEntry, PhysPageNum, StepByOne, VPNRange, VirtAddr, VirtPageNum};
 
 use crate::{
-    config::{MMAP_MIN_ADDR, PAGE_SIZE_BITS, USER_STACK_SIZE},
+    arch::config::{MMAP_MIN_ADDR, PAGE_SIZE_BITS, USER_STACK_SIZE},
     fs::namei::path_openat,
     task::{aux::*, current_task},
     utils::ceil_to_page_size,
@@ -30,8 +30,8 @@ use super::{
     page_table::PTEFlags,
 };
 use crate::{
-    boards::qemu::{MEMORY_END, MMIO},
-    config::{DL_INTERP_OFFSET, KERNEL_BASE, PAGE_SIZE},
+    arch::boards::qemu::{MEMORY_END, MMIO},
+    arch::config::{DL_INTERP_OFFSET, KERNEL_BASE, PAGE_SIZE},
     fs::AT_FDCWD,
     index_list::IndexList,
     mutex::SpinNoIrqLock,
@@ -139,7 +139,6 @@ impl MemorySet {
                     .copy_from_slice(src_ppn.get_bytes_array());
             }
         }
-        user_memory_set.page_table.dump_all_user_mapping();
         memory_set
     }
     pub fn from_existed_user_lazily(user_memory_set: &MemorySet) -> Self {
@@ -247,12 +246,12 @@ impl MemorySet {
             value: entry_point,
         });
 
-        log::error!("[from_elf] AT_PHDR: {:#x}", ph_va);
-        log::error!("[from_elf] AT_PAGESZ: {}", PAGE_SIZE);
-        log::error!("[from_elf] AT_PHENT: {}", ph_entsize);
-        log::error!("[from_elf] AT_PHNUM: {}", ph_count);
-        log::error!("[from_elf] AT_ENTRY: {:#x}", entry_point);
-        log::error!("[from_elf] AT_BASE: {:#x}", DL_INTERP_OFFSET);
+        log::info!("[from_elf] AT_PHDR: {:#x}", ph_va);
+        log::info!("[from_elf] AT_PAGESZ: {}", PAGE_SIZE);
+        log::info!("[from_elf] AT_PHENT: {}", ph_entsize);
+        log::info!("[from_elf] AT_PHNUM: {}", ph_count);
+        log::info!("[from_elf] AT_ENTRY: {:#x}", entry_point);
+        log::info!("[from_elf] AT_BASE: {:#x}", DL_INTERP_OFFSET);
 
         // 需要动态链接
         if need_dl {
@@ -525,6 +524,9 @@ impl MemorySet {
         let end_vpn = VirtPageNum::from((self.mmap_start + aligned_size) >> PAGE_SIZE_BITS);
         self.mmap_start += aligned_size;
         VPNRange::new(start_vpn, end_vpn)
+    }
+    pub fn translate_va_to_pa(&self, va: VirtAddr) -> Option<usize> {
+        self.page_table.translate_va_to_pa(va)
     }
     // 获取当前地址空间token
     pub fn token(&self) -> usize {

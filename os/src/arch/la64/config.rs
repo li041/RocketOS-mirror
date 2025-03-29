@@ -1,6 +1,5 @@
 // Sizes
 pub const MEMORY_SIZE: usize = 0x1000_0000;
-pub const USER_STACK_SIZE: usize = PAGE_SIZE * 40;
 pub const USER_HEAP_SIZE: usize = PAGE_SIZE * 20;
 pub const SYSTEM_TASK_LIMIT: usize = 128;
 pub const DEFAULT_FD_LIMIT: usize = 128;
@@ -16,11 +15,29 @@ pub const KSTACK_PG_NUM_SHIFT: usize = 16usize.trailing_zeros() as usize;
 #[cfg(not(debug_assertions))]
 pub const KSTACK_PG_NUM_SHIFT: usize = 2usize.trailing_zeros() as usize;
 
+/// mm
 pub const KERNEL_STACK_SIZE: usize = PAGE_SIZE << KSTACK_PG_NUM_SHIFT;
 pub const KERNEL_HEAP_SIZE: usize = PAGE_SIZE * 0x3000;
+/// 用户栈大小: 两页
+pub const USER_STACK_SIZE: usize = PAGE_SIZE << 4;
 
-/// I/O
-pub const UART_BASE: usize = 0x1fe0_01e0;
+// 文件映射和匿名映射区域, 大小为1GB
+pub const MMAP_MIN_ADDR: usize = 0x0000_0020_0000_0000;
+pub const MMAP_MAX_ADDR: usize = 0x0000_002f_ffff_ffff;
+pub const MMAP_AREA_SIZE: usize = MMAP_MAX_ADDR - MMAP_MIN_ADDR;
+
+// 动态连接器加载偏移量
+pub const DL_INTERP_OFFSET: usize = 0x30_0000_0000;
+
+// 设备树地址
+// 设备树地址并没有通过a1传递, 查看hw/loongarch64/virt.h, 硬编码
+pub const DEVICE_TREE_ADDR: usize = 0x100000;
+
+// 系统调用
+pub type SysResult<T> = Result<T, usize>;
+
+// Ext4文件系统
+pub const EXT4_MAX_INLINE_DATA: usize = 60;
 
 // Addresses
 /// Maximum length of a physical address

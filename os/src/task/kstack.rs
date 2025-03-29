@@ -1,7 +1,7 @@
 //! 用户的内核栈分配
 use crate::{
+    arch::config::PAGE_SIZE,
     arch::mm::{MapPermission, KERNEL_SPACE},
-    config::PAGE_SIZE,
 };
 
 use super::id::kid_alloc;

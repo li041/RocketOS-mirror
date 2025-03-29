@@ -1,7 +1,7 @@
 use alloc::{sync::Arc, vec::Vec};
 
 use crate::{
-    config::SysResult,
+    arch::config::SysResult,
     fs::{
         old::inode_trait::{InodeMeta, InodeMode, InodeTrait},
         old::path_old::PathOld,

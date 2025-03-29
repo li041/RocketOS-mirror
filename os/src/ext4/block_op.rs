@@ -6,7 +6,7 @@ use crate::ext4::dentry::Ext4DirEntry;
 
 use super::{dentry::EXT4_DT_DIR, fs::EXT4_BLOCK_SIZE};
 
-use crate::config::PAGE_SIZE;
+use crate::arch::config::PAGE_SIZE;
 /*
  * 默认情况下，每个目录都以“几乎是线性”数组列出条目。我写“几乎”，因为它不是内存意义上的线性阵列，因为目录条目是跨文件系统块分开。
  * 因此，说目录是一系列数据块，并且每个块包含目录条目的线性阵列。每个块阵列的末端通过到达块的末端来表示；该块中的最后一个条目具有记录长度，将其一直延伸到块的末端。

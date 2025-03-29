@@ -12,8 +12,8 @@
 
 use fs::{
     sys_chdir, sys_close, sys_dup, sys_dup2, sys_fstat, sys_fstatat, sys_getcwd, sys_getdents64,
-    sys_ioctl, sys_linkat, sys_mkdirat, sys_mount, sys_openat, sys_pipe2, sys_read, sys_umount2,
-    sys_unlinkat, sys_write, sys_writev,
+    sys_ioctl, sys_linkat, sys_mkdirat, sys_mount, sys_openat, sys_pipe2, sys_read, sys_statx,
+    sys_umount2, sys_unlinkat, sys_write, sys_writev,
 };
 use mm::{sys_brk, sys_mmap, sys_munmap};
 use task::{
@@ -22,8 +22,11 @@ use task::{
 };
 use util::{sys_times, sys_uname};
 
-use crate::fs::{kstat::Stat, uio::IoVec};
-pub use task::{sys_exit, CloneFlags};
+use crate::fs::{
+    kstat::{Stat, Statx},
+    uio::IoVec,
+};
+pub use task::sys_exit;
 mod fs;
 mod mm;
 mod task;
@@ -66,6 +69,7 @@ const SYSCALL_FORK: usize = 220;
 const SYSCALL_EXEC: usize = 221;
 const SYSCALL_MMAP: usize = 222;
 const SYSCALL_WAIT4: usize = 260;
+const SYSCALL_STATX: usize = 291;
 
 const CARELESS_SYSCALLS: [usize; 4] = [63, 64, 124, 260];
 
@@ -132,6 +136,13 @@ pub fn syscall(
         SYSCALL_EXEC => sys_execve(a0 as *mut u8, a1 as *const usize, a2 as *const usize),
         SYSCALL_MMAP => sys_mmap(a0, a1, a2, a3, a4 as i32, a5),
         SYSCALL_WAIT4 => sys_waitpid(a0 as isize, a1, a2 as i32),
+        SYSCALL_STATX => sys_statx(
+            a0 as i32,
+            a1 as *const u8,
+            a2 as i32,
+            a3 as u32,
+            a4 as *mut Statx,
+        ),
         _ => {
             log::error!("Unsupported syscall_id: {}", syscall_id);
             0

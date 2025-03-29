@@ -9,6 +9,9 @@
 # 	-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
 # 	-device virtio-net-device,netdev=net -netdev user,id=net
 
+# ARCH ?= loongarch64
+ARCH ?= riscv64
+
 all: clean run
 
 # 需要在./img文件夹下准备初赛测例，并将其命名为pre.img
@@ -25,8 +28,8 @@ test:
 	make run
 
 run:
-	@cd ./user && make build
-	@cd ./os && make run
+	@cd ./user && make build ARCH=$(ARCH)
+	@cd ./os && make run ARCH=$(ARCH)
 
 clean:
 	@cd ./os && make clean

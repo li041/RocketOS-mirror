@@ -19,3 +19,5 @@ sdcard.img
 
 os/venodr/
 testsuits-for-oskernel/
+os/.cargo/
+user/.cargo/

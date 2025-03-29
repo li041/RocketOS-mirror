@@ -3,6 +3,7 @@ use alloc::{string::String, vec};
 use alloc::string::ToString;
 use xmas_elf::header::parse_header;
 
+use crate::fs::kstat::Statx;
 use crate::{
     ext4::{self, inode::S_IFDIR},
     fs::{
@@ -20,8 +21,9 @@ use crate::{
     utils::c_str_to_string,
 };
 
-use crate::arch::mm::copy_to_user;
+use crate::arch::mm::{copy_from_user, copy_from_user_mut, copy_to_user, VirtAddr};
 
+#[cfg(target_arch = "riscv64")]
 pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
     let task = current_task();
     let file = task.fd_table().get_file(fd);
@@ -34,15 +36,50 @@ pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
         if fd >= 3 {
             log::info!("sys_read: fd: {}, len: {}, ret: {}", fd, len, ret);
         }
+        // new
+        // let buf = current_task().op_memory_set(|memory_set| {
+        //     memory_set
+        //         .translate_va_to_pa(VirtAddr::from(buf as usize))
+        //         .unwrap()
+        // });
+        // let ret = file.read(unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, len) });
+        // // if fd >= 3 {
+        // log::info!("sys_read: fd: {}, len: {}, ret: {}", fd, len, ret);
+        // // }
+        ret as isize
+    } else {
+        -1
+    }
+}
+#[cfg(target_arch = "loongarch64")]
+pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
+    let task = current_task();
+    let file = task.fd_table().get_file(fd);
+    if let Some(file) = file {
+        let file = file.clone();
+        if !file.readable() {
+            return -1;
+        }
+        let buf = current_task().op_memory_set(|memory_set| {
+            memory_set
+                .translate_va_to_pa(VirtAddr::from(buf as usize))
+                .unwrap()
+        });
+        let ret = file.read(unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, len) });
+        // ToOptimize:
+        if fd >= 3 {
+            log::info!("sys_read: fd: {}, len: {}, ret: {}", fd, len, ret);
+        }
         ret as isize
     } else {
         -1
     }
 }
 
+#[no_mangle]
 pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
-    if fd > 3 {
-        log::info!("sys_write: fd: {}, len: {}", fd, len);
+    if len == 0 {
+        return 0;
     }
     let task = current_task();
     let file = task.fd_table().get_file(fd);
@@ -51,7 +88,8 @@ pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
             return -1;
         }
         let file = file.clone();
-        let ret = file.write(unsafe { core::slice::from_raw_parts(buf as *const u8, len) });
+        let buf = copy_from_user(buf, len).unwrap();
+        let ret = file.write(buf);
         ret as isize
     } else {
         -1
@@ -72,9 +110,12 @@ pub fn sys_writev(fd: usize, iov: *const IoVec, iovcnt: usize) -> isize {
         return -1;
     }
     let mut total_written = 0isize;
-    for i in 0..iovcnt {
-        let iovec = unsafe { &*iov.add(i) };
-        let buf = unsafe { core::slice::from_raw_parts(iovec.base as *const u8, iovec.len) };
+    let iov = copy_from_user(iov, iovcnt).unwrap();
+    for iovec in iov.iter() {
+        if iovec.len == 0 {
+            continue;
+        }
+        let buf = copy_from_user(iovec.base as *const u8, iovec.len).unwrap();
         let written = file.write(buf);
         // 如果写入失败, 则返回已经写入的字节数, 或错误码
         if written == 0 {
@@ -330,6 +371,49 @@ pub fn sys_fstatat(dirfd: i32, pathname: *const u8, statbuf: *mut Stat, flags: i
     }
 }
 
+// Todo: 使用mask指示内核需要返回哪些信息
+pub fn sys_statx(
+    dirfd: i32,
+    pathname: *const u8,
+    flags: i32,
+    _mask: u32,
+    statxbuf: *mut Statx,
+    // statbuf: *mut Stat,
+) -> isize {
+    log::info!(
+        "[sys_statx] dirfd: {}, pathname: {:?}, flags: {}, mask: {}",
+        dirfd,
+        pathname,
+        flags,
+        _mask
+    );
+    let path = c_str_to_string(pathname);
+    if path.is_empty() {
+        log::error!("[sys_statx] pathname is empty");
+        return -1;
+    }
+    let mut nd = Nameidata::new(&path, dirfd);
+    let fake_lookup_flags = 0;
+    match filename_lookup(&mut nd, fake_lookup_flags) {
+        Ok(dentry) => {
+            let inode = dentry.get_inode();
+            let statx = Statx::from(inode.getattr());
+            log::error!("statx: statx: {:?}", statx);
+            if let Err(e) = copy_to_user(statxbuf, &statx as *const Statx, 1) {
+                // let stat = Stat::from(inode.getattr());
+                // if let Err(e) = copy_to_user(statbuf, &stat as *const Stat, 1) {
+                log::error!("statx: copy_to_user failed: {}", e);
+                return -1;
+            }
+            return 0;
+        }
+        Err(e) => {
+            log::info!("[sys_statx] fail to statx: {}, {}", path, e);
+            return -1;
+        }
+    }
+}
+
 pub fn sys_getdents64(fd: usize, dirp: *mut u8, count: usize) -> isize {
     log::info!(
         "[sys_getdents64] fd: {}, dirp: {:?}, count: {}",
@@ -451,12 +535,13 @@ pub fn sys_umount2(target: *const u8, flags: i32) -> isize {
 // 表示无效的文件描述符, Bad file descriptor
 const EBADF: isize = 9;
 /// op是与设备相关的操作码, arg_ptr是指向参数的指针(untyped pointer, 由设备决定)
-pub fn sys_ioctl(fd: usize, op: usize, arg_ptr: usize) -> isize {
-    log::error!("[sys_ioctl] fd: {}, op: {}, arg_ptr: {}", fd, op, arg_ptr);
+pub fn sys_ioctl(fd: usize, op: usize, _arg_ptr: usize) -> isize {
+    log::error!("[sys_ioctl] fd: {}, op: {}, arg_ptr: {}", fd, op, _arg_ptr);
+    log::warn!("sys_ioctl Unimplemented");
     let task = current_task();
     let file = task.fd_table().get_file(fd);
     if let Some(file) = file {
-        return file.ioctl(op, arg_ptr);
+        return file.ioctl(op, _arg_ptr);
     }
     return -EBADF;
 }

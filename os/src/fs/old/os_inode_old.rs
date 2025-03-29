@@ -7,7 +7,7 @@
 use super::inode_trait::{InodeMeta, InodeMode, InodeTrait};
 use super::path_old::PathOld;
 use super::{FileMeta, FileOld};
-use crate::config::SysResult;
+use crate::arch::config::SysResult;
 use crate::drivers::BLOCK_DEVICE;
 use crate::ext4::fs::Ext4FileSystem;
 use crate::fat32::fs::FAT32FileSystem;

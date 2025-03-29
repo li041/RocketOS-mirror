@@ -8,10 +8,7 @@ extern crate alloc;
 
 #[macro_use]
 mod console;
-#[cfg(target_arch = "riscv64")]
-mod boards;
 pub mod index_list;
-#[cfg(target_arch = "riscv64")]
 mod loader;
 mod logging;
 mod mm;
@@ -19,26 +16,19 @@ pub mod mutex;
 // mod sched;
 mod arch;
 
-#[cfg(target_arch = "riscv64")]
 mod drivers;
 
-#[cfg(target_arch = "riscv64")]
 mod ext4;
 
-#[cfg(target_arch = "riscv64")]
 mod fat32;
 
-#[cfg(target_arch = "riscv64")]
 mod fs;
 
-#[cfg(target_arch = "riscv64")]
 // 目前只支持riscv64
 mod syscall;
 
-#[cfg(target_arch = "riscv64")]
 mod task;
 
-pub mod config;
 pub mod utils;
 
 use core::{
@@ -48,7 +38,6 @@ use core::{
     sync::atomic::AtomicU8,
 };
 
-#[cfg(target_arch = "riscv64")]
 global_asm!(include_str!("link_app.S"));
 
 /// clear BSS segment
@@ -64,13 +53,14 @@ fn clear_bss() {
 
 #[no_mangle]
 #[cfg(target_arch = "riscv64")]
-pub fn fake_main(hart_id: usize) {
-    use config::KERNEL_BASE;
+pub fn fake_main(hart_id: usize, dtb_address: usize) {
+    use arch::config::KERNEL_BASE;
     unsafe {
         asm!("add sp, sp, {}", in(reg) KERNEL_BASE);
         asm!("la t0, rust_main");
         asm!("add t0, t0, {}", in(reg) KERNEL_BASE);
         asm!("mv a0, {}", in(reg) hart_id);
+        asm!("mv a1, {}", in(reg) dtb_address);
         asm!("jalr zero, 0(t0)");
     }
 }
@@ -80,10 +70,12 @@ static DEBUG_FLAG: AtomicU8 = AtomicU8::new(0);
 
 #[no_mangle]
 #[cfg(target_arch = "riscv64")]
-pub fn rust_main(_hart_id: usize) -> ! {
+pub fn rust_main(_hart_id: usize, dtb_address: usize) -> ! {
+    use arch::config::KERNEL_BASE;
     use arch::trap::{self, TrapContext};
     use riscv::register::sstatus;
     use task::{add_initproc, run_tasks, TaskContext};
+    use virtio_drivers::device;
     pub fn show_context_size() {
         log::info!(
             "size of trap context: {}",
@@ -124,12 +116,27 @@ pub fn rust_main(_hart_id: usize) -> ! {
 #[cfg(target_arch = "loongarch64")]
 #[no_mangle]
 pub fn rust_main() -> ! {
-    use arch::{sbi::shutdown, CrMd};
+    use arch::{
+        bootstrap_init,
+        drivers::pci,
+        trap::{
+            self,
+            timer::{enable_timer_interrupt, set_next_trigger},
+        },
+    };
+    use task::{add_initproc, run_tasks};
+
     clear_bss();
-    println!("Hello, world!");
     logging::init();
+    bootstrap_init();
     arch::mm::init();
-    // 默认是直接地址映射模式
-    log::error!("CRMD: {:?}", CrMd::read());
-    shutdown();
+    pci::init();
+    trap::init();
+    add_initproc();
+    loader::list_apps();
+    enable_timer_interrupt();
+    set_next_trigger();
+    run_tasks();
+    panic!("shutdown machine");
+    // shutdown();
 }

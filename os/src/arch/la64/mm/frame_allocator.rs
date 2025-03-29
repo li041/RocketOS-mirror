@@ -4,8 +4,6 @@
 use super::{PhysAddr, PhysPageNum};
 use crate::arch::config::MEMORY_END;
 use crate::mutex::SpinNoIrqLock;
-// Todo: 需要把内核映射到高地址
-// use crate::arch::config::KERNEL_BASE;
 use alloc::vec::Vec;
 use core::fmt::{self, Debug, Formatter};
 use lazy_static::*;
@@ -102,8 +100,6 @@ pub fn init_frame_allocator() {
     // Qemu物理内存: 0x8000_0000 - 0x8800_0000
     // 在entry.asm中设置了映射: 0xffff_ffc0_8000_0000 -> 0x8000_0000, 分配了1G的内存(超出实际)
     FRAME_ALLOCATOR.lock().init(
-        // PhysAddr::from((ekernel as usize - KERNEL_BASE) as usize).ceil(),
-        // Todo: 需要把内核映射到高地址
         PhysAddr::from(ekernel as usize).ceil(),
         PhysAddr::from(MEMORY_END).floor(),
     );

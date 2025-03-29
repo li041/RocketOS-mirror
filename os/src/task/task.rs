@@ -7,13 +7,14 @@ use super::{
     String, Tid,
 };
 use crate::{
-    arch::mm::MemorySet,
-    arch::trap::TrapContext,
+    arch::{mm::MemorySet, trap::TrapContext},
     fs::{fdtable::FdTable, file::FileOp, path::Path, FileOld, Stdin, Stdout},
     mutex::SpinNoIrqLock,
-    syscall::CloneFlags,
+    // syscall::CloneFlags,
     task::{
-        aux, kstack,
+        aux,
+        context::write_task_cx,
+        kstack,
         scheduler::{add_task, remove_thread_group, SCHEDULER},
         INITPROC,
     },
@@ -24,6 +25,7 @@ use alloc::{
     vec,
     vec::Vec,
 };
+use bitflags::bitflags;
 use core::{assert_ne, sync::atomic::AtomicI32};
 
 const INIT_PROC_PID: usize = 0;
@@ -97,7 +99,7 @@ impl Task {
 
     /// 初始化地址空间, 将 `TrapContext` 与 `TaskContext` 压入内核栈中
     pub fn initproc(elf_data: &[u8], root_path: Arc<Path>) -> Arc<Self> {
-        let (memory_set, satp, user_sp, entry_point, _aux_vec) = MemorySet::from_elf(elf_data);
+        let (memory_set, pgdl_ppn, user_sp, entry_point, _aux_vec) = MemorySet::from_elf(elf_data);
         let tid = tid_alloc();
         let tgid = SpinNoIrqLock::new(TidHandle(tid.0));
         // 申请内核栈
@@ -131,7 +133,7 @@ impl Task {
         add_task(task.clone());
         // 令tp寄存器指向主线程内核栈顶
         let task_ptr = Arc::as_ptr(&task) as usize;
-        let task_context = TaskContext::app_init_task_context(task_ptr, satp);
+        let task_context = TaskContext::app_init_task_context(task_ptr, pgdl_ppn);
         // 将TrapContext和TaskContext压入内核栈
         trap_context.set_tp(task_ptr);
         unsafe {
@@ -190,8 +192,8 @@ impl Task {
             // Todo: execve可能有问题
             memory_set = self.memory_set.clone()
         } else {
-            memory_set = Arc::new(SpinNoIrqLock::new(MemorySet::from_existed_user_lazily(
-                // memory_set = Arc::new(SpinNoIrqLock::new(MemorySet::from_existed_user(
+            // memory_set = Arc::new(SpinNoIrqLock::new(MemorySet::from_existed_user_lazily(
+            memory_set = Arc::new(SpinNoIrqLock::new(MemorySet::from_existed_user(
                 &self.memory_set.lock(),
             )));
         }
@@ -492,17 +494,6 @@ pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
     drop(task);
 }
 
-// 向指定任务内核栈中保存当前task_cx
-fn write_task_cx(task: Arc<Task>) {
-    let task_tp = Arc::as_ptr(&task) as usize;
-    let task_satp = task.op_memory_set(|m| m.token());
-    let task_cx = TaskContext::app_init_task_context(task_tp, task_satp);
-    let task_cx_ptr = task.kstack() as *mut TaskContext;
-    unsafe {
-        task_cx_ptr.write(task_cx);
-    }
-}
-
 // 在clone时没有设置`CLONE_THREAD`标志, 为新任务创建新的`Path`结构
 // 需要深拷贝`Path`, 但共享底层的`Dentry`和`VfsMount`
 fn clone_path(old_path: &Arc<SpinNoIrqLock<Arc<Path>>>) -> Arc<SpinNoIrqLock<Arc<Path>>> {
@@ -658,4 +649,47 @@ pub enum TaskStatus {
     // 目前用来支持waitpid的阻塞, usize是等待进程的pid
     Blocked,
     Zombie,
+}
+
+bitflags! {
+    /// Open file flags
+    pub struct CloneFlags: u32 {
+        // SIGCHLD 是一个信号，在UNIX和类UNIX操作系统中，当一个子进程改变了它的状态时，内核会向其父进程发送这个信号。这个信号可以用来通知父进程子进程已经终止或者停止了。父进程可以采取适当的行动，比如清理资源或者等待子进程的状态。
+        // 以下是SIGCHLD信号的一些常见用途：
+        // 子进程终止：当子进程结束运行时，无论是正常退出还是因为接收到信号而终止，操作系统都会向其父进程发送SIGCHLD信号。
+        // 资源清理：父进程可以处理SIGCHLD信号来执行清理工作，例如释放子进程可能已经使用的资源。
+        // 状态收集：父进程可以通过调用wait()或waitpid()系统调用来获取子进程的终止状态，了解子进程是如何结束的。
+        // 孤儿进程处理：在某些情况下，如果父进程没有适当地处理SIGCHLD信号，子进程可能会变成孤儿进程。孤儿进程最终会被init进程（PID为1的进程）收养，并由init进程来处理其终止。
+        // 避免僵尸进程：通过正确响应SIGCHLD信号，父进程可以避免产生僵尸进程（zombie process）。僵尸进程是已经终止但父进程尚未收集其终止状态的进程。
+        // 默认情况下，SIGCHLD信号的处理方式是忽略，但是开发者可以根据需要设置自定义的信号处理函数来响应这个信号。在多线程程序中，如果需要，也可以将SIGCHLD信号的传递方式设置为线程安全。
+        const SIGCHLD = (1 << 4) | (1 << 0);
+        // 如果设置此标志，调用进程和子进程将共享同一内存空间。
+        // 在一个进程中的内存写入在另一个进程中可见。
+        const CLONE_VM = 1 << 8;
+        // 如果设置此标志，子进程将与父进程共享文件系统信息（如当前工作目录）
+        const CLONE_FS = 1 << 9;
+        // 如果设置此标志，子进程将与父进程共享文件描述符表。
+        const CLONE_FILES = 1 << 10;
+        const CLONE_SIGHAND = 1 << 11;
+        const CLONE_PIDFD = 1 << 12;
+        const CLONE_PTRACE = 1 << 13;
+        const CLONE_VFORK = 1 << 14;
+        const CLONE_PARENT = 1 << 15;
+        const CLONE_THREAD = 1 << 16;
+        const CLONE_NEWNS = 1 << 17;
+        const CLONE_SYSVSEM = 1 << 18;
+        const CLONE_SETTLS = 1 << 19;
+        const CLONE_PARENT_SETTID = 1 << 20;
+        const CLONE_CHILD_CLEARTID = 1 << 21;
+        const CLONE_DETACHED = 1 << 22;
+        const CLONE_UNTRACED = 1 << 23;
+        const CLONE_CHILD_SETTID = 1 << 24;
+        const CLONE_NEWCGROUP = 1 << 25;
+        const CLONE_NEWUTS = 1 << 26;
+        const CLONE_NEWIPC = 1 << 27;
+        const CLONE_NEWUSER = 1 << 28;
+        const CLONE_NEWPID = 1 << 29;
+        const CLONE_NEWNET = 1 << 30;
+        const CLONE_IO = 1 << 31;
+    }
 }
