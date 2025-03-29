@@ -1,3 +1,5 @@
+use crate::arch::mm::copy_from_user;
+use crate::task::CloneFlags;
 use crate::{
     arch::mm::copy_to_user,
     arch::timer::get_time_ms,
@@ -13,6 +15,7 @@ use crate::{
 use alloc::sync::Arc;
 use bitflags::bitflags;
 
+#[cfg(target_arch = "riscv64")]
 pub fn sys_clone(
     flags: u32,
     stack_ptr: usize,
@@ -21,6 +24,7 @@ pub fn sys_clone(
     _chilren_tid_ptr: usize,
 ) -> isize {
     // ToDo: 更新错误检验
+    log::error!("[sys_clone] flags: {}, stack_ptr: {}", flags, stack_ptr);
     let flags = match CloneFlags::from_bits(flags as u32) {
         None => {
             log::error!("clone flags is None: {}", flags);
@@ -52,8 +56,56 @@ pub fn sys_clone(
     new_tid as isize
 }
 
+#[cfg(target_arch = "loongarch64")]
+pub fn sys_clone(
+    flags: u32,
+    stack_ptr: usize,
+    _parent_tid_ptr: usize,
+    _tls_ptr: usize,
+    _chilren_tid_ptr: usize,
+) -> isize {
+    // debug
+    log::error!("[sys_clone] flags: {}, stack_ptr: {}", flags, stack_ptr);
+    // ToDo: 更新错误检验
+    let flags = match CloneFlags::from_bits(flags as u32) {
+        None => {
+            log::error!("clone flags is None: {}", flags);
+            return 22;
+        }
+        Some(flag) => flag,
+    };
+    let task = current_task();
+    let new_task = task.kernel_clone(flags);
+    let new_tid = new_task.tid();
+    // 设定进程返回值
+    let new_kstack = new_task.kstack();
+    let new_trap_cx_ptr = (new_kstack + core::mem::size_of::<TaskContext>()) as *mut TrapContext;
+    unsafe {
+        // 设定子任务返回值为0，令tp指向该任务结构
+        // ToDo: 检验用户栈指针
+        if stack_ptr != 0 {
+            (*new_trap_cx_ptr).r[3] = stack_ptr;
+        }
+        (*new_trap_cx_ptr).r[2] = Arc::as_ptr(&new_task) as usize;
+        (*new_trap_cx_ptr).r[4] = 0;
+    }
+    log::info!(
+        "[sys_clone]: strong_count: {}",
+        Arc::strong_count(&new_task),
+    );
+    // ToDo: 更新信号检验
+    add_task(new_task);
+    new_tid as isize
+}
+
 pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> isize {
     let path = c_str_to_string(path);
+    log::error!(
+        "[sys_execve] path: {}, args: {:?}, envs: {:?}",
+        path,
+        args,
+        envs
+    );
     // argv[0]是应用程序的名字
     // 后续元素是用户在命令行中输入的参数
     let mut args_vec = extract_cstrings(args);
@@ -152,7 +204,7 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: usize, option: i32) -> isize {
                         // exit_code_ptr为空, 表示不关心子进程的退出状态
                         copy_to_user(
                             exit_code_ptr as *mut i32,
-                            &child.exit_code() as *const i32,
+                            &((child.exit_code() & 0xff) << 8) as *const i32,
                             1,
                         )
                         .unwrap();
@@ -172,104 +224,6 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: usize, option: i32) -> isize {
     })
 }
 
-// pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
-//     let task = current_task();
-//     let mut inner = task.inner.lock();
-//     if !inner
-//         .children
-//         .iter()
-//         .any(|p| pid == -1 || pid as usize == p.tid.0)
-//     {
-//         return -1;
-//     }
-//     let pair = inner.children.iter().enumerate().find(|(_, p)| {
-//         p.inner.lock().task_status == TaskStatus::Zombie && (pid == -1 || pid as usize == p.tid.0)
-//     });
-//     if let Some((idx, _)) = pair {
-//         let child = inner.children.remove(idx);
-//         assert_eq!(Arc::strong_count(&child), 1);
-//         let found_tid = child.tid.0 as i32;
-//         // 写入exit_code
-//         // Todo: 需要对地址检查
-//         if exit_code_ptr != core::ptr::null_mut() {
-//             unsafe {
-//                 *exit_code_ptr = child.inner.lock().exit_code;
-//             }
-//         }
-//         return found_tid as isize;
-//     } else {
-//         -2
-//     }
-// }
-
-// /// 成功返回退出子进程的pid, 失败返回-1
-// pub fn wait_pid(pid: i32, exit_code_ptr: *mut i32) -> Result<usize, WaitError> {
-//     let current_task = current_task();
-//     let mut idx_to_remove = None;
-//     {
-//         let children = current_task.inner.lock().children.clone();
-//         if children.is_empty() {
-//             return Err(WaitError::NoChild);
-//         }
-//         for (idx, child) in children.iter().enumerate() {
-//             if pid == 0 {
-//                 log::error!("[wait_pid] process group wait is not implemented");
-//             } else if pid == -1 || pid == child.tid as i32 {
-//                 // pid == -1, 等待任意子进程
-//                 let child_inner = child.inner.lock();
-//                 if child_inner.task_status == TaskStatus::Zombie {
-//                     let exit_code = child_inner.exit_code;
-//                     let from = &exit_code as *const i32;
-//                     // unsafe {
-//                     //     *exit_code_ptr = exit_code;
-//                     // }
-//                     if let Err(err) = copy_to_user(exit_code_ptr, from, 1) {
-//                         panic!("[wait_pid]copy exit_code failed: {}", err);
-//                     }
-//                     log::info!(
-//                         "[wait_pid] child {} exit with code {}",
-//                         child.tid,
-//                         exit_code
-//                     );
-//                     idx_to_remove = Some(idx);
-//                     break;
-//                 }
-//             }
-//         }
-//     } // children释放
-
-//     // 移除已经退出的子进程
-//     if let Some(idx) = idx_to_remove {
-//         let child = current_task.inner.lock().children.remove(idx);
-//         assert!(
-//             Arc::strong_count(&child) == 1,
-//             "child strong count: {}",
-//             Arc::strong_count(&child)
-//         );
-//         return Ok(child.tid);
-//     }
-//     Err(WaitError::NotFound)
-// }
-
-// pub fn sys_wait4(pid: isize, exit_code_ptr: *mut i32, option: i32) -> isize {
-//     let options = WaitOption::from_bits(option).unwrap();
-//     let task = current_task();
-//     loop {
-//         match wait_pid(pid as i32, exit_code_ptr) {
-//             Ok(tid) => return tid as isize,
-//             Err(_) => {
-//                 if options.contains(WaitOption::WNOHANG) {
-//                     // 返回0, 表示没有子进程退出
-//                     return 0;
-//                 } else {
-//                     // 没有子进程退出, 则挂起当前进程
-//                     suspend_current_and_run_next();
-//                 }
-//             }
-//         }
-//     }
-// }
-
 /// sys_gettimeofday, current time = sec + usec
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -287,15 +241,16 @@ pub fn sys_get_time(time_val_ptr: usize) -> isize {
         sec: current_time_ms / 1000,
         usec: current_time_ms % 1000 * 1000,
     };
-    unsafe {
-        time_val_ptr.write_volatile(time_val);
-    }
+    // unsafe {
+    //     time_val_ptr.write_volatile(time_val);
+    // }
+    copy_to_user(time_val_ptr, &time_val as *const TimeVal, 1).unwrap();
     0
 }
 
 pub fn sys_nanosleep(time_val_ptr: usize) -> isize {
     let time_val_ptr = time_val_ptr as *const TimeVal;
-    let time_val = unsafe { time_val_ptr.read() };
+    let time_val = copy_from_user(time_val_ptr, 1).unwrap()[0];
     let time_ms = time_val.sec * 1000 + time_val.usec / 1000;
     let start_time = get_time_ms();
     loop {
@@ -305,47 +260,4 @@ pub fn sys_nanosleep(time_val_ptr: usize) -> isize {
         }
     }
     0
-}
-
-bitflags! {
-    /// Open file flags
-    pub struct CloneFlags: u32 {
-        // SIGCHLD 是一个信号，在UNIX和类UNIX操作系统中，当一个子进程改变了它的状态时，内核会向其父进程发送这个信号。这个信号可以用来通知父进程子进程已经终止或者停止了。父进程可以采取适当的行动，比如清理资源或者等待子进程的状态。
-        // 以下是SIGCHLD信号的一些常见用途：
-        // 子进程终止：当子进程结束运行时，无论是正常退出还是因为接收到信号而终止，操作系统都会向其父进程发送SIGCHLD信号。
-        // 资源清理：父进程可以处理SIGCHLD信号来执行清理工作，例如释放子进程可能已经使用的资源。
-        // 状态收集：父进程可以通过调用wait()或waitpid()系统调用来获取子进程的终止状态，了解子进程是如何结束的。
-        // 孤儿进程处理：在某些情况下，如果父进程没有适当地处理SIGCHLD信号，子进程可能会变成孤儿进程。孤儿进程最终会被init进程（PID为1的进程）收养，并由init进程来处理其终止。
-        // 避免僵尸进程：通过正确响应SIGCHLD信号，父进程可以避免产生僵尸进程（zombie process）。僵尸进程是已经终止但父进程尚未收集其终止状态的进程。
-        // 默认情况下，SIGCHLD信号的处理方式是忽略，但是开发者可以根据需要设置自定义的信号处理函数来响应这个信号。在多线程程序中，如果需要，也可以将SIGCHLD信号的传递方式设置为线程安全。
-        const SIGCHLD = (1 << 4) | (1 << 0);
-        // 如果设置此标志，调用进程和子进程将共享同一内存空间。
-        // 在一个进程中的内存写入在另一个进程中可见。
-        const CLONE_VM = 1 << 8;
-        // 如果设置此标志，子进程将与父进程共享文件系统信息（如当前工作目录）
-        const CLONE_FS = 1 << 9;
-        // 如果设置此标志，子进程将与父进程共享文件描述符表。
-        const CLONE_FILES = 1 << 10;
-        const CLONE_SIGHAND = 1 << 11;
-        const CLONE_PIDFD = 1 << 12;
-        const CLONE_PTRACE = 1 << 13;
-        const CLONE_VFORK = 1 << 14;
-        const CLONE_PARENT = 1 << 15;
-        const CLONE_THREAD = 1 << 16;
-        const CLONE_NEWNS = 1 << 17;
-        const CLONE_SYSVSEM = 1 << 18;
-        const CLONE_SETTLS = 1 << 19;
-        const CLONE_PARENT_SETTID = 1 << 20;
-        const CLONE_CHILD_CLEARTID = 1 << 21;
-        const CLONE_DETACHED = 1 << 22;
-        const CLONE_UNTRACED = 1 << 23;
-        const CLONE_CHILD_SETTID = 1 << 24;
-        const CLONE_NEWCGROUP = 1 << 25;
-        const CLONE_NEWUTS = 1 << 26;
-        const CLONE_NEWIPC = 1 << 27;
-        const CLONE_NEWUSER = 1 << 28;
-        const CLONE_NEWPID = 1 << 29;
-        const CLONE_NEWNET = 1 << 30;
-        const CLONE_IO = 1 << 31;
-    }
 }

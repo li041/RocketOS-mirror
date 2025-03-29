@@ -1,33 +1,35 @@
-use core::ptr::NonNull;
+use core::{
+    alloc::Layout,
+    ptr::{self, NonNull},
+};
 
-use super::BlockDevice;
-use crate::config::KERNEL_BASE;
-use crate::mutex::SpinNoIrqLock;
-use alloc::alloc::alloc_zeroed;
-use alloc::boxed::Box;
-use alloc::vec::Vec;
 use buddy_system_allocator::FrameAllocator;
-use lazy_static::*;
-use virtio_drivers::device::blk::VirtIOBlk;
-use virtio_drivers::transport::mmio::{MmioTransport, VirtIOHeader};
-use virtio_drivers::{BufferDirection, Hal};
+use lazy_static::lazy_static;
 
-// FakeHal使用的crate
-use crate::config::PAGE_SIZE;
-use alloc::alloc::{dealloc, handle_alloc_error};
-use core::alloc::Layout;
-use core::ptr;
+use alloc::{
+    alloc::{alloc_zeroed, dealloc, handle_alloc_error},
+    boxed::Box,
+    vec::Vec,
+};
+use virtio_drivers::{
+    device::{self, blk::VirtIOBlk},
+    transport::pci::{
+        bus::{Cam, PciRoot},
+        PciTransport,
+    },
+    BufferDirection, Hal,
+};
+
+use crate::{arch::config::PAGE_SIZE, mutex::SpinNoIrqLock};
+
 use zerocopy::FromZeroes;
 
-//线性偏移
-const VIRTIO0: usize = 0x10001000 + KERNEL_BASE;
+use super::block_dev::BlockDevice;
 
-pub struct VirtIOBlock(SpinNoIrqLock<VirtIOBlk<HalImpl, MmioTransport>>);
+pub struct VirtIOBlock(SpinNoIrqLock<VirtIOBlk<HalImpl, PciTransport>>);
 
 pub struct HalImpl;
 
-/// Fake HAL implementation for use in unit tests.
-/// virtio-drivers crate中的Hal trait的实现
 unsafe impl Hal for HalImpl {
     fn dma_alloc(pages: usize, _direction: BufferDirection) -> (usize, NonNull<u8>) {
         assert_ne!(pages, 0);
@@ -96,11 +98,11 @@ unsafe impl Hal for HalImpl {
 }
 
 fn virt_to_phys(vaddr: usize) -> usize {
-    vaddr - KERNEL_BASE
+    vaddr
 }
 
 fn phys_to_virt(paddr: usize) -> usize {
-    paddr + KERNEL_BASE
+    paddr
 }
 
 lazy_static! {
@@ -122,54 +124,18 @@ impl BlockDevice for VirtIOBlock {
     }
 }
 
+const PCI_MMIO_BASE: usize = 0x40000000;
+
 impl VirtIOBlock {
     #[allow(unused)]
     pub fn new() -> Self {
         unsafe {
-            let header = NonNull::new(VIRTIO0 as *mut VirtIOHeader).unwrap();
-            let transport = unsafe { MmioTransport::new(header) }.unwrap();
-            let device = VirtIOBlk::<HalImpl, _>::new(transport).unwrap();
-            VirtIOBlock(SpinNoIrqLock::new(device))
+            let pri_root = PciRoot::new(PCI_MMIO_BASE as *mut u8, Cam::MmioCam);
+            // let device_function = 
+            // let transport = PciTransport::new(0x1000, 0x1, 0x0, 0x0).unwrap();
+            // let device = VirtIOBlk::<HalImpl, _>::new(transport).unwrap();
+            // VirtIOBlock(SpinNoIrqLock::new(device));
+            todo!();
         }
     }
 }
-
-// 适配的是老的virtio-drivers
-// pub struct VirtioHal;
-
-// impl Hal for VirtioHal {
-//     fn dma_alloc(pages: usize) -> usize {
-//         let mut ppn_base = PhysPageNum(0);
-//         for i in 0..pages {
-//             let frame = frame_alloc().unwrap();
-//             if i == 0 {
-//                 ppn_base = frame.ppn;
-//             }
-//             assert_eq!(frame.ppn.0, ppn_base.0 + i);
-//             QUEUE_FRAMES.lock().push(frame);
-//         }
-//         let pa: PhysAddr = ppn_base.into();
-//         pa.0
-//     }
-
-//     fn dma_dealloc(pa: usize, pages: usize) -> i32 {
-//         // let pa = PhysAddr::from(pa);
-//         // let mut ppn_base: PhysPageNum = pa.into();
-//         let mut ppn_base: PhysPageNum = PhysPageNum(pa >> PAGE_SIZE_BITS);
-//         for _ in 0..pages {
-//             frame_dealloc(ppn_base);
-//             ppn_base.step();
-//         }
-//         0
-//     }
-
-//     fn phys_to_virt(addr: usize) -> usize {
-//         addr + KERNEL_BASE
-//     }
-
-//     fn virt_to_phys(vaddr: usize) -> usize {
-//         PageTable::from_token(*KERNEL_SATP)
-//             .translate_va_to_pa(VirtAddr::from(vaddr))
-//             .unwrap()
-//     }
-// }

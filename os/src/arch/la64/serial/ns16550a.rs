@@ -35,7 +35,7 @@ impl Read<u8> for Ns16550a {
 
 impl Write<u8> for Ns16550a {
     fn write(&mut self, word: u8) -> nb::Result<(), Self::Error> {
-        // 写，但是不刷新
+        // 写，但是不flush
         unsafe { write_volatile((self.base + offsets::THR) as *mut u8, word) };
         Ok(())
     }

@@ -8,21 +8,26 @@
 # - `FS`: disk image to use
 
 # Building
+# ARCH ?= loongarch64
 ARCH ?= riscv64
 MODE := debug
 FEATURES := default
-FS := ../img/ext4_final.img
 
-# Target, Binutils(Objcopy)
+# Target, Binutils(Objcopy), FS
 ifeq ($(ARCH), riscv64)
 	TARGET := riscv64gc-unknown-none-elf
 	OBJCOPY := rust-objcopy --binary-architecture=riscv64
+    FS := ../img/ext4_prev.img
 else ifeq ($(ARCH), loongarch64)
 	TARGET := loongarch64-unknown-none
 	OBJCOPY := loongarch64-linux-gnu-objcopy 
+    FS := ../img/ext4_prev-la.img
 else
 	$(error "Unsupported architecture: $(ARCH), Use riscv64 or loongarch64")
 endif
+
+# User
+USER_TARGET_PATH := ../user/target/$(TARGET)/release/
 
 KERNEL_ELF := target/$(TARGET)/$(MODE)/os
 KERNEL_BIN := $(KERNEL_ELF).bin
@@ -54,16 +59,20 @@ ifeq ($(ARCH), riscv64)
                     -kernel $(KERNEL_BIN) \
                     -nographic \
                     -smp 2\
-                    -bios $(BOOTLOADER_ELF)\
+                    -bios default \
                     -drive file=$(FS),if=none,format=raw,id=x0 \
                     -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0\
                     -device virtio-net-device,netdev=net -netdev user,id=net
 else ifeq ($(ARCH), loongarch64)
+
+                    # -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
     QEMU_CMD := qemu-system-loongarch64
     QEMU_ARGS = 	-kernel $(KERNEL_ELF) -m $(MEM_SIZE) -nographic \
                     -smp 1\
                     -machine virt \
                     -no-reboot \
+                    -drive file=$(FS),if=none,format=raw,id=disk0 \
+                    -device virtio-blk-pci,drive=disk0 \
                     -nographic 
 else
 	$(error "Unsupported architecture: $(ARCH), Use riscv64 or loongarch64")
@@ -95,10 +104,10 @@ gdbclient:
 # 	@$(OBJCOPY) $(KERNEL_ELF) --strip-all -O binary $(KERNEL_BIN)
 
 build: move-cargo
-	LOG=$(LOG) cargo build $(MODE_ARG) --features $(FEATURES) --target $(TARGET)
+	USER_TARGET_PATH=$(USER_TARGET_PATH) LOG=$(LOG) cargo build $(MODE_ARG) --features $(FEATURES) --target $(TARGET)
 	@$(OBJCOPY) $(KERNEL_ELF) --strip-all -O binary $(KERNEL_BIN)
 	
-run: build
+run: build 
 	$(QEMU_CMD) $(QEMU_ARGS)
 
 clean:
@@ -110,7 +119,7 @@ move-cargo:
 	cp cargo/config_$(ARCH).toml .cargo/config.toml
 
 make-user:
-	@cd ../user && make
+	@cd ../user && make ARCH=$(ARCH)
 	@./build
 
 all: move-cargo make-user build-offline move-bin

@@ -1,7 +1,7 @@
 //! Implementation of [`FrameAllocator`] which
 //! controls all the frames in the operating system.
 use crate::mutex::SpinNoIrqLock;
-use crate::{boards::qemu::MEMORY_END, config::KERNEL_BASE};
+use crate::{arch::boards::qemu::MEMORY_END, arch::config::KERNEL_BASE};
 use alloc::vec::Vec;
 use core::fmt::{self, Debug, Formatter};
 use lazy_static::*;

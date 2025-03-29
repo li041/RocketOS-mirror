@@ -1,15 +1,18 @@
+use std::env;
 use std::fs::{read_dir, File};
 use std::io::{Result, Write};
 
 fn main() {
+    let target_path = env::var("USER_TARGET_PATH")
+        .unwrap_or_else(|_| "../user/target/loongarch64-unknown-none/release/".to_string());
     println!("cargo:rerun-if-changed=../user/src/");
-    println!("cargo:rerun-if-changed={}", TARGET_PATH);
-    insert_app_data().unwrap();
+    println!("cargo:rerun-if-changed={}", target_path);
+    insert_app_data(&target_path).unwrap();
 }
 
-static TARGET_PATH: &str = "../user/target/riscv64gc-unknown-none-elf/release/";
+// static TARGET_PATH: &str = "../user/target/loongarch64-unknown-none/release/";
 
-fn insert_app_data() -> Result<()> {
+fn insert_app_data(target_path: &str) -> Result<()> {
     let mut f = File::create("src/link_app.S").unwrap();
     let mut apps: Vec<_> = read_dir("../user/src/bin")
         .unwrap()
@@ -61,7 +64,7 @@ _app_names:"#
 app_{0}_start:
     .incbin "{2}{1}"
 app_{0}_end:"#,
-            idx, app, TARGET_PATH
+            idx, app, target_path
         )?;
     }
     Ok(())

@@ -8,59 +8,121 @@ use crate::{
         CrMd, TLBREHi, DMW0, DMW1, DMW2, DMW3, PWCH, PWCL, STLBPS,
     },
     mm::heap_allocator::init_heap,
+    task::current_task,
 };
 
+use memory_set::KERNEL_SATP;
+
+use core::slice::{from_raw_parts, from_raw_parts_mut};
+
 pub use address::{PhysAddr, PhysPageNum, StepByOne, VPNRange, VirtAddr, VirtPageNum};
+pub use memory_set::{MapArea, MapPermission, MemorySet, KERNEL_SPACE};
+pub use page_table::{PageTable, PageTableEntry};
 
 mod address;
 pub mod frame_allocator;
+mod memory_set;
+mod page_table;
 // mod memory_set;
 
 pub fn init() {
     init_heap();
     init_frame_allocator();
+
+    println!("kernel satp: {:#x}", *KERNEL_SATP);
+    KERNEL_SPACE.lock().activate();
 }
 
-// 配置页表格式
-pub fn mmu_init() {
-    // 直接映射配置窗口
-    println!("DMW0: {:?}", DMW0::read());
-    println!("DMW1: {:?}", DMW1::read());
-    println!("DMW2: {:?}", DMW2::read());
-    println!("DMW3: {:?}", DMW3::read());
-
-    // STLB
-    // STLB页大小为`2^(ps)` byte, 例如`ps=0xc`时，页大小为`2^12=4KB`
-    assert!(STLBPS::read().get_ps() == 0xc);
-    println!("TLBREHi: {:?}", TLBREHi::read());
-
-    // 设置页表遍历控制寄存器PWC(PWCL + PWCH)
-    // loongarch支持5级页表, 这里设置为Sv39
-    // 页大小为4KB, PTEWidth为8字节, 页表索引位数为9
-    // PWCL::read()
-    //     .set_ptbase(PAGE_SIZE_BITS)
-    //     .set_ptwidth(DIR_WIDTH)
-    //     .set_dir1_base(PAGE_SIZE_BITS + DIR_WIDTH)
-    //     .set_dir2_base(0)
-    //     .set_dir2_width(0)
-    //     .set_pte_width(PTE_WIDTH)
-    //     .write();
-    // PWCH::read()
-    //     .set_dir3_base(PAGE_SIZE_BITS + DIR_WIDTH * 2)
-    //     .set_dir3_base(DIR_WIDTH)
-    //     .set_dir4_base(0)
-    //     .set_dir4_base(0)
-    //     .write();
-    log::error!("PWCL: {:?}", PWCL::read());
-    log::error!("PWCH: {:?}", PWCH::read());
-    // CrMd::read()
-    //     .set_watchpoint_enabled(false)
-    //     .set_paging(true)
-    //     .set_ie(false)
-    //     .write();
-}
-
-// Todo:
+// Todo: 支持page fault预处理
 pub fn copy_to_user<T: Copy>(to: *mut T, from: *const T, n: usize) -> Result<usize, &'static str> {
-    todo!()
+    if to.is_null() || from.is_null() {
+        return Err("null pointer");
+    }
+    // 没有数据复制
+    if n == 0 {
+        return Ok(0);
+    }
+    // 检查地址是否合法
+    // 连续的虚拟地址在页表中的对应页表项很有可能是连续的(但不一定)
+    let start_vpn = VirtAddr::from(to as usize).floor();
+    let end_vpn = VirtAddr::from(to as usize + n * core::mem::size_of::<T>()).ceil();
+    let vpn_range = VPNRange::new(start_vpn, end_vpn);
+    let (ret, to_pa) = current_task().op_memory_set_mut(|memory_set| {
+        let ret = memory_set.check_valid_user_vpn_range(vpn_range, MapPermission::W);
+        // memory_set.pre_handle_page_fault(vpn_range)
+        let to_pa = memory_set
+            .translate_va_to_pa(VirtAddr::from(to as usize))
+            .unwrap();
+        (ret, to_pa)
+    });
+    ret?;
+    // 执行复制
+    unsafe {
+        let from_slice = from_raw_parts(from, n);
+        let to_slice = from_raw_parts_mut(to_pa as *mut T, n);
+        to_slice.copy_from_slice(from_slice);
+    }
+    Ok(n)
+}
+
+/// to是用户的虚拟地址, 需要将其转换为内核使用的虚拟地址
+/// 由调用者保证n不为0
+pub fn copy_from_user<'a, T: Copy>(from: *const T, n: usize) -> Result<&'a [T], &'static str> {
+    if from.is_null() {
+        return Err("null pointer");
+    }
+    // 没有数据复制
+    if n == 0 {
+        return Err("no data to copy");
+    }
+    // 检查地址是否合法
+    // 连续的虚拟地址在页表中的对应页表项很有可能是连续的(但不一定)
+    let start_vpn = VirtAddr::from(from as usize).floor();
+    let end_vpn = VirtAddr::from(from as usize + n * core::mem::size_of::<T>()).ceil();
+    let vpn_range = VPNRange::new(start_vpn, end_vpn);
+    current_task().op_memory_set_mut(|memory_set| {
+        memory_set.check_valid_user_vpn_range(vpn_range, MapPermission::R)
+    })?;
+    // 将用户的虚拟地址转换为内核的虚拟地址(由于直接映射, 在数值上等于物理地址)
+    return current_task().op_memory_set_mut(|memory_set| {
+        let from = memory_set
+            .translate_va_to_pa(VirtAddr::from(from as usize))
+            .unwrap();
+        unsafe {
+            return Ok(core::slice::from_raw_parts(from as *const T, n));
+        }
+    });
+}
+
+/// to是用户的虚拟地址, 需要将其转换为内核使用的虚拟地址
+pub fn copy_from_user_mut<'a, T: Copy>(
+    from: *mut T,
+    n: usize,
+) -> Result<&'a mut [T], &'static str> {
+    if from.is_null() {
+        return Err("null pointer");
+    }
+    // 没有数据复制
+    if n == 0 {
+        return Err("no data to copy");
+    }
+    // 检查地址是否合法
+    // 连续的虚拟地址在页表中的对应页表项很有可能是连续的(但不一定)
+    let start_vpn = VirtAddr::from(from as usize).floor();
+    let end_vpn = VirtAddr::from(from as usize + n * core::mem::size_of::<T>()).ceil();
+    let vpn_range = VPNRange::new(start_vpn, end_vpn);
+    current_task().op_memory_set_mut(|memory_set| {
+        memory_set.check_valid_user_vpn_range(vpn_range, MapPermission::R)
+    })?;
+    // debug
+    log::error!("valid vpn range");
+    // 将用户的虚拟地址转换为内核的虚拟地址(由于直接映射, 在数值上等于物理地址)
+    return current_task().op_memory_set_mut(|memory_set| {
+        let from = memory_set
+            .translate_va_to_pa(VirtAddr::from(from as usize))
+            .unwrap();
+        unsafe {
+            return Ok(core::slice::from_raw_parts_mut(from as *mut T, n));
+        }
+    });
 }

@@ -1,4 +1,7 @@
+use crate::arch::mm::copy_to_user;
+
 #[repr(C)]
+#[derive(Debug, Clone, Copy)]
 pub struct Utsname {
     /// 系统名称
     pub sysname: [u8; 65],
@@ -15,7 +18,7 @@ pub struct Utsname {
 impl Default for Utsname {
     fn default() -> Self {
         Self {
-            sysname: Self::from_str("RROS"),
+            sysname: Self::from_str("RocketOS"),
             nodename: Self::from_str("LAPTOP"),
             release: Self::from_str("5.15.146.1-standard"),
             version: Self::from_str("#1 SMP Thu Jan"),
@@ -34,6 +37,7 @@ impl Utsname {
 
 /// sys_times, 单位都是us
 #[repr(C)]
+#[derive(Debug, Clone, Copy)]
 pub struct Tms {
     /// CPU time spent executing instructions of the calling process
     pub utime: usize,
@@ -63,9 +67,10 @@ pub fn sys_uname(uts: usize) -> isize {
     let uts = uts as *mut Utsname;
     //Todo!: check validarity
     let utsname = Utsname::default();
-    unsafe {
-        core::ptr::write(uts, utsname);
-    }
+    // unsafe {
+    //     core::ptr::write(uts, utsname);
+    // }
+    copy_to_user(uts, &utsname as *const Utsname, 1).unwrap();
     0
 }
 
@@ -75,8 +80,9 @@ pub fn sys_uname(uts: usize) -> isize {
 pub fn sys_times(buf: usize) -> isize {
     let buf = buf as *mut Tms;
     let tms = Tms::default();
-    unsafe {
-        core::ptr::write(buf, tms);
-    }
+    // unsafe {
+    //     core::ptr::write(buf, tms);
+    // }
+    copy_to_user(buf, &tms as *const Tms, 1).unwrap();
     0
 }

@@ -44,7 +44,7 @@ pub trait FileOp: Any + Send + Sync {
     fn readable(&self) -> bool;
     // writable
     fn writable(&self) -> bool;
-    fn ioctl(&self, op: usize, arg_ptr: usize) -> isize {
+    fn ioctl(&self, _op: usize, _arg_ptr: usize) -> isize {
         -ENOTTY
     }
 }

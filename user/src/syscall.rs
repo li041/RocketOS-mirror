@@ -12,6 +12,7 @@ const SYSCALL_FORK: usize = 220;
 const SYSCALL_EXECVE: usize = 221;
 const SYSCALL_WAITPID: usize = 260;
 
+#[cfg(target_arch = "riscv64")]
 fn syscall(id: usize, args: [usize; 6]) -> isize {
     let mut ret: isize;
     unsafe {
@@ -25,6 +26,23 @@ fn syscall(id: usize, args: [usize; 6]) -> isize {
             in("x15") args[5],
             in("x17") id
         );
+    }
+    ret
+}
+#[cfg(target_arch = "loongarch64")]
+pub fn syscall(id: usize, args: [usize; 6]) -> isize {
+    let mut ret: isize;
+    unsafe {
+        asm!(
+            "syscall 0",
+            inlateout("$r4") args[0] => ret,
+            in("$r5") args[1],
+            in("$r6") args[2],
+            in("$r7") args[3],
+            in("$r8") args[4],
+            in("$r9") args[5],
+            in("$r11") id
+        )
     }
     ret
 }

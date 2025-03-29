@@ -6,4 +6,3 @@ pub const MMIO: &[(usize, usize)] = &[
     (0x1000_1000, 0x00_1000), // Virtio Block in virt machine
 ];
 
-pub type BlockDeviceImpl = crate::drivers::block::VirtIOBlock;

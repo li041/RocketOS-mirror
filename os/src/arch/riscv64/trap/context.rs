@@ -4,8 +4,8 @@ use alloc::vec::Vec;
 use riscv::register::sstatus::{self, Sstatus, SPP};
 
 use crate::{
+    arch::config::PAGE_SIZE_BITS,
     arch::mm::{frame_alloc, map_temp},
-    config::PAGE_SIZE_BITS,
 };
 
 /// Trap Context
@@ -18,9 +18,10 @@ pub struct TrapContext {
     /// 对于loongarch, general regs[0..31], r[4]是a0, r[2]是tp, x[1]是ra, r[3]是sp
     pub x: [usize; 32],
     /// CSR sstatus      
-    ///
+    /// 用于保存当前的特权级别, 在la中是PRMD
     pub sstatus: Sstatus,
     /// CSR sepc
+    /// 用于保存当前的异常指令地址. 在la中时ERA
     pub sepc: usize,
 }
 
