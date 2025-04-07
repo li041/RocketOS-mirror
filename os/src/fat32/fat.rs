@@ -64,7 +64,7 @@ impl FAT32FileAllocTable {
 
     // update FAT32Info
     fn stat_free(&self) {
-        let mut info = self.info.lock();
+        let mut info = self.info.write();
         if info.free_cluster_count == (FSINFO_NOT_AVAILABLE as usize)
             || info.next_free_cluster == (FSINFO_NOT_AVAILABLE as usize)
         {
@@ -124,7 +124,7 @@ impl FAT32FileAllocTable {
 
     // 分配一个空闲的cluster, 由调用者负责保证这个簇在某个簇链中
     fn alloc_cluster_inner(&self) -> Option<usize> {
-        let mut info = self.info.lock();
+        let mut info = self.info.write();
         info!(
             "[FileAllocTable::alloc_cluster_inner] tot_cluster_count: {}, last_used_cluster: {}",
             self.meta.total_cluster_count, info.next_free_cluster
@@ -175,7 +175,7 @@ impl FAT32FileAllocTable {
             self.write_fat_entry(pre, FATENTRY_EOC);
         }
         self.write_fat_entry(cluster_id, 0);
-        self.info.lock().free_cluster_count += 1;
+        self.info.write().free_cluster_count += 1;
         Some(())
     }
 }

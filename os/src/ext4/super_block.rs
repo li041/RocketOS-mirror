@@ -2,6 +2,7 @@ use core::fmt::Debug;
 
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use spin::RwLock;
 
 use crate::{
     drivers::block::{
@@ -34,7 +35,7 @@ pub struct Ext4SuperBlock {
     pub block_group_count: u32, // 块组总数
 
     // 孤立的inode列表
-    pub orphan_inodes: SpinNoIrqLock<Vec<usize>>,
+    pub orphan_inodes: RwLock<Vec<usize>>,
 
     pub inner: FSMutex<SuperBlockInner>,
 }
@@ -75,7 +76,7 @@ impl Ext4SuperBlock {
             inodes_per_group: super_block.inodes_per_group,
             inode_size: super_block.inode_size,
             block_group_count,
-            orphan_inodes: SpinNoIrqLock::new(Vec::new()),
+            orphan_inodes: RwLock::new(Vec::new()),
             inner: FSMutex::new(SuperBlockInner::new(
                 super_block.free_inodes_count,
                 super_block.free_blocks_count(),

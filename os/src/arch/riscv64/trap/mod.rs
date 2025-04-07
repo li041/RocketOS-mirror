@@ -1,5 +1,6 @@
 use core::arch::global_asm;
 
+use bitflags::bitflags;
 pub use context::TrapContext;
 use riscv::register::{
     satp,
@@ -11,9 +12,7 @@ use riscv::register::{
 };
 
 use crate::{
-    arch::mm::{handle_recoverable_page_fault, PageTable, VirtAddr},
-    syscall::syscall,
-    task::yield_current_task,
+    arch::mm::PageTable, mm::VirtAddr, syscall::syscall, task::{current_task, yield_current_task}
 };
 
 use super::timer::set_next_trigger;
@@ -57,6 +56,24 @@ pub fn enable_timer_interrupt() {
     unimplemented!();
 }
 
+#[derive(PartialEq)]
+pub enum PageFaultCause {
+    LOAD,
+    STORE,
+    EXEC,
+}
+
+impl From<scause::Trap> for PageFaultCause {
+    fn from(e: scause::Trap) -> Self {
+        match e {
+            Trap::Exception(Exception::LoadPageFault) => PageFaultCause::LOAD,
+            Trap::Exception(Exception::StorePageFault) => PageFaultCause::STORE,
+            Trap::Exception(Exception::InstructionPageFault) => PageFaultCause::EXEC,
+            _ => unreachable!(),
+        }
+    }
+}
+
 #[no_mangle]
 /// handle an interrupt, exception, or system call from user space
 pub fn trap_handler(cx: &mut TrapContext) {
@@ -70,10 +87,11 @@ pub fn trap_handler(cx: &mut TrapContext) {
             ) as usize;
         }
         Trap::Exception(Exception::InstructionFault)
-        | Trap::Exception(Exception::InstructionPageFault) => {
+        => {
             let satp = satp::read().bits();
             let page_table = PageTable::from_token(satp);
-            //page_table.dump_all();
+            page_table.dump_all_user_mapping();
+            log::error!("Instruction fault at {:#x}", stval);
             let pte = page_table.find_pte(VirtAddr::from(stval).floor()).unwrap();
             log::error!("pte: {:?}", pte);
             // page fault exit code
@@ -85,26 +103,38 @@ pub fn trap_handler(cx: &mut TrapContext) {
             );
         }
         Trap::Exception(Exception::LoadPageFault)
-        | Trap::Exception(Exception::LoadFault)
-        | Trap::Exception(Exception::StorePageFault)
-        | Trap::Exception(Exception::StoreFault) => {
+        | Trap::Exception(Exception::StorePageFault) 
+        | Trap::Exception(Exception::InstructionPageFault) => {
             // stval is the faulting virtual address
             // recoverable page fault:
             // 1. fork COW area
             // 2. lazy allocation
             let va = VirtAddr::from(stval);
-            let satp = satp::read().bits();
-            let page_table = PageTable::from_token(satp);
-            if handle_recoverable_page_fault(&page_table, va).is_err() {
-                page_table.dump_all_user_mapping();
+            log::error!("page fault at {:#x}", va.0);
+            let casue = PageFaultCause::from(scause.cause());
+            current_task().op_memory_set_mut(|memory_set| 
+                {
+                    if let Err(e) = memory_set.handle_recoverable_page_fault(va, casue) {
+                        memory_set.page_table.dump_all_user_mapping();
+                        panic!(
+                            "Unrecoverble page fault in application, bad addr = {:#x}, scause = {:?}, sepc = {:#x}",
+                            stval,
+                            scause.cause(),
+                            sepc::read()
+                        );
+                    }
+                }
+            )
+            // we should jump back to the faulting instruction after handling the page fault
+        }
+        Trap::Exception(Exception::LoadFault)
+        | Trap::Exception(Exception::StoreFault) => {
                 panic!(
                     "Unrecoverble page fault in application, bad addr = {:#x}, scause = {:?}, sepc = {:#x}",
                     stval,
                     scause.cause(),
                     sepc::read()
                 );
-            }
-            // we should jump back to the faulting instruction after handling the page fault
         }
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
             set_next_trigger();

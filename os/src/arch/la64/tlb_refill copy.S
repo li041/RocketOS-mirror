@@ -19,40 +19,14 @@ __rfill:
     csrwr $t0, TLBRSAVE
     # 加载发生TLB重填例外的页表
     csrrd $t0, PGD
-
-    # 第一次lddir - 获取二级页目录
     lddir $t0, $t0, 2
-    # 如果lddir失败, 跳转到构造无效页表项
-    beqz $t0, construct_invalid
     # 查出来最低位为1, 需要减去
     addi.d $t0, $t0, -1
-
-    # 第二次lddir - 获取一级页目录
     lddir $t0, $t0, 1
-    # 如果lddir失败, 跳转到构造无效页表项
-    beqz $t0, construct_invalid
     addi.d $t0, $t0, -1
     ldpte $t0, 0
     ldpte $t0, 1
     tlbfill
-    b restore_t0
-
-construct_invalid: 
-    csrrd $t0, TLBREHI
-    ori $t0, $t0, 0xC
-    csrwr $t0, TLBEHI
-
-    rotri.d $t0, $t0, 61
-    ori $t0, $t0, 3
-    rotri.d $t0, $t0, 3
-
-    csrwr $t0, TLBRELO0
-    csrrd $t0, TLBRELO0
-    csrwr $t0, TLBRELO1
-    tlbfill
-
-
-restore_t0: 
     # 恢复t0
     csrrd $t0, TLBRSAVE
     # 异常返回(返回地址是TLBBADV)

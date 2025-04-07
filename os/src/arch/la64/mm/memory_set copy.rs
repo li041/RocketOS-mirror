@@ -300,7 +300,6 @@ impl MemorySet {
         let elf_header = elf.header;
         let magic = elf_header.pt1.magic;
 
-        // Todo: 不知道magic num会不会变
         assert_eq!(magic, [0x7f, 0x45, 0x4c, 0x46], "invalid elf!");
 
         let ph_count = elf_header.pt2.ph_count();
@@ -477,9 +476,12 @@ impl MemorySet {
             ustack_bottom,
             ustack_top
         );
-        memory_set.insert_framed_area_va(
-            ustack_bottom.into(),
-            ustack_top.into(),
+        let vpn_range = VPNRange::new(
+            VirtAddr::from(ustack_bottom).floor(),
+            VirtAddr::from(ustack_top).ceil(),
+        );
+        memory_set.insert_framed_area(
+            vpn_range,
             MapPermission::R | MapPermission::W | MapPermission::U,
         );
 
@@ -528,18 +530,8 @@ impl MemorySet {
     /// 由caller保证区域没有冲突, 且start_va和end_va是页对齐的
     /// 插入framed的空白区域
     /// used by `kstack_alloc`, `from_elf 用户栈`
-    pub fn insert_framed_area_va(
-        &mut self,
-        start_va: VirtAddr,
-        end_va: VirtAddr,
-        map_perm: MapPermission,
-    ) {
-        self.push_anoymous_area(MapArea::from_va(
-            start_va,
-            end_va,
-            MapType::Framed,
-            map_perm,
-        ));
+    pub fn insert_framed_area(&mut self, vpn_range: VPNRange, map_perm: MapPermission) {
+        self.push_anoymous_area(MapArea::from_va(MapType::Framed, map_perm));
     }
     pub fn insert_framed_area_vpn_range(&mut self, vpn_range: VPNRange, map_perm: MapPermission) {
         self.push_anoymous_area(MapArea::from_vpn_range(
@@ -613,7 +605,7 @@ impl MemorySet {
     }
 
     // 这里从尾部开始找, 因为在MemorySet中, 内核栈一般在最后
-    // used by `sys_brk`, 这是因为heap_bottom是固定的
+    // used by `kstack Drop trait`
     pub fn remove_area_with_start_vpn(&mut self, start_vpn: VirtPageNum) {
         if let Some(pos) = self
             .areas

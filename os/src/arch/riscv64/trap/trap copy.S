@@ -2,16 +2,6 @@
 # 在trap中不需要修改TCB中的sp, 因为在__switch中当前任务的内核栈是根据现在的sp来确定的, 这个sp的值已经减去了TrapContext的大小
 # 但在__swtich中, 需要修改当前TCB中的sp, 因为在__switch中下个任务的内核栈位置是通过TCB中的sp来确定的
 
-# 2025-03-31 更改
-# 由于用户态下会更新tp寄存器的值，因此在-8(sp)的位置保存了内核tp
-#             0  ----------------------
-#             |                       |
-#             |     trap_context      |
-#             |                       |   x[4](tp) 保存用户tp
-#  [sp] -> 34*8 -----------------------
-#             |     kernel_tp         | 
-#          35*8 -----------------------
-
 .altmacro
 .macro SAVE_GP n
     sd x\n, \n*8(sp)
@@ -28,14 +18,14 @@
 __trap_from_user:
     # 交换sp和sscratch的值
     csrrw sp, sscratch, sp
+    # now sp->kernel stack, sscratch->user stack
     # 在内核栈上保存用户的上下文 
     addi sp, sp, -34*8
     # save general-purpose registers
     sd x1, 1*8(sp)
     # skip sp(x2), we will save it later
     sd x3, 3*8(sp)
-    # 先保存用户tp
-    sd x4, 4*8(sp)
+    # skip tp(x4), application does not use it
     # save x5~x31
     .set n, 5
     .rept 27
@@ -52,8 +42,6 @@ __trap_from_user:
     sd t2, 2*8(sp)
     # 第一个参数是TrapContext在内核栈上的地址, 通过a0传递
     mv a0, sp
-    # 载入内核tp
-    ld tp, -8(sp)
     # 注意要在保存上下文后设置stvec
     # 设置stvec为Mode(0~1 bits) Direct, 基地址为__trap_from_kernel
     la t0, __trap_from_user
@@ -83,16 +71,12 @@ __return_to_user:
     # `return_to_user` general-purpuse registers except sp/tp
     ld x1, 1*8(sp)
     ld x3, 3*8(sp)
-    # 跳过内核tp
+    # skip tp(x4), application does not use it
     .set n, 5
     .rept 27
         LOAD_GP %n
         .set n, n+1
     .endr
-    # 保存内核tp
-    sd x4, -8(sp)
-    # 恢复用户tp
-    ld x4, 4*8(sp)
     # release TrapContext on kernel stack
     addi sp, sp, 34*8
     csrrw sp, sscratch, sp

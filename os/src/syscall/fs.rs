@@ -1,3 +1,5 @@
+use core::mem;
+
 use alloc::{string::String, vec};
 
 use alloc::string::ToString;
@@ -21,7 +23,8 @@ use crate::{
     utils::c_str_to_string,
 };
 
-use crate::arch::mm::{copy_from_user, copy_from_user_mut, copy_to_user, VirtAddr};
+use crate::arch::mm::{copy_from_user, copy_from_user_mut, copy_to_user};
+use crate::mm::VirtAddr;
 
 #[cfg(target_arch = "riscv64")]
 pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
@@ -245,6 +248,11 @@ pub fn sys_openat(dirfd: i32, pathname: *const u8, flags: usize, mode: usize) ->
         flags,
         mode
     );
+    if pathname as usize == 0x12dc0 {
+        current_task().op_memory_set(|memory_set| {
+            memory_set.page_table.dump_all_user_mapping();
+        });
+    }
     let task = current_task();
     let path = c_str_to_string(pathname);
     if let Ok(file) = path_openat(&path, flags, dirfd, mode) {
@@ -544,4 +552,37 @@ pub fn sys_ioctl(fd: usize, op: usize, _arg_ptr: usize) -> isize {
         return file.ioctl(op, _arg_ptr);
     }
     return -EBADF;
+}
+
+/// 检查进程是否可以访问指定的文件
+/// Todo: 目前只检查pathname指定的文件是否存在, 没有检查权限
+pub fn sys_faccessat(fd: usize, pathname: *const u8, mode: i32, flags: i32) -> isize {
+    log::info!(
+        "[sys_faccessat] fd: {}, pathname: {:?}, mode: {}, flags: {}",
+        fd,
+        pathname,
+        mode,
+        flags
+    );
+    let path = c_str_to_string(pathname);
+    if path.is_empty() {
+        log::error!("[sys_faccessat] pathname is empty");
+        return -1;
+    }
+    let mut nd = Nameidata::new(&path, fd as i32);
+    let fake_lookup_flags = 0;
+    match filename_lookup(&mut nd, fake_lookup_flags) {
+        Ok(_) => {
+            // let inode = dentry.get_inode();
+            // if inode.mode() & mode as u16 == 0 {
+            //     log::error!("[sys_faccessat] permission denied");
+            //     return;
+            // }
+            return 0;
+        }
+        Err(e) => {
+            log::info!("[sys_faccessat] fail to faccessat: {}, {}", path, e);
+            return -1;
+        }
+    }
 }

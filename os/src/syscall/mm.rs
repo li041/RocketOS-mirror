@@ -1,12 +1,15 @@
 use crate::{
     arch::{
         config::{MMAP_MIN_ADDR, PAGE_SIZE, PAGE_SIZE_BITS},
-        mm::{copy_to_user, MapPermission, VPNRange, VirtAddr, VirtPageNum},
+        mm::copy_to_user,
     },
+    fs::file::File,
+    index_list::{IndexList, ListIndex},
+    mm::{MapArea, MapPermission, VPNRange, VirtAddr, VirtPageNum},
     task::current_task,
     utils::{ceil_to_page_size, floor_to_page_size},
 };
-use alloc::string::String;
+use alloc::{string::String, vec::Vec};
 use bitflags::bitflags;
 
 pub fn sys_brk(brk: usize) -> isize {
@@ -35,9 +38,12 @@ pub fn sys_brk(brk: usize) -> isize {
                     heap_bottom,
                     new_end_vpn.0 << PAGE_SIZE_BITS
                 );
-                memory_set.insert_framed_area_va(
-                    VirtAddr::from(heap_bottom),
-                    VirtAddr::from(new_end_vpn.0 << PAGE_SIZE_BITS),
+                let vpn_range = VPNRange::new(
+                    VirtAddr::from(heap_bottom).floor(),
+                    VirtAddr::from(new_end_vpn.0 << PAGE_SIZE_BITS).ceil(),
+                );
+                memory_set.insert_framed_area(
+                    vpn_range,
                     MapPermission::R | MapPermission::W | MapPermission::U,
                 );
             } else {
@@ -57,7 +63,7 @@ pub fn sys_brk(brk: usize) -> isize {
 
 bitflags! {
     /// MMAP memeory protection
-    pub struct MMAPPROT: u32 {
+    pub struct MmapProt: u32 {
         /// Readable
         const PROT_READ = 0x1;
         /// Writeable
@@ -67,26 +73,27 @@ bitflags! {
     }
 }
 
-impl From<MMAPPROT> for MapPermission {
-    fn from(prot: MMAPPROT) -> Self {
-        let mut map_permission = MapPermission::from_bits(0).unwrap();
-        if prot.contains(MMAPPROT::PROT_READ) {
+impl From<MmapProt> for MapPermission {
+    /// 注意: 对于其他位prot不应该设置, 只设置R/W/X
+    fn from(prot: MmapProt) -> Self {
+        let mut map_permission = MapPermission::empty();
+        if prot.contains(MmapProt::PROT_READ) {
             map_permission |= MapPermission::R;
         }
-        if prot.contains(MMAPPROT::PROT_WRITE) {
+        if prot.contains(MmapProt::PROT_WRITE) {
             map_permission |= MapPermission::W;
         }
-        if prot.contains(MMAPPROT::PROT_EXEC) {
+        if prot.contains(MmapProt::PROT_EXEC) {
             map_permission |= MapPermission::X;
         }
         map_permission
     }
 }
-
 bitflags! {
     /// determines whether updates to the mapping are visible to other processes mapping the same region, and whether
     /// updates are carried through to the underlying file.
-    pub struct MMAPFLAGS: u32 {
+    #[derive(Debug, Clone, Copy)]
+    pub struct MmapFlags: u32 {
         /// MAP_SHARED
         const MAP_SHARED = 0x01;
         /// MAP_PRIVATE
@@ -104,99 +111,19 @@ bitflags! {
 }
 
 // Todo: 别用unwarp
-#[cfg(target_arch = "riscv64")]
 pub fn sys_mmap(
-    _hint: usize,
+    hint: usize,
     len: usize,
     prot: usize,
     flags: usize,
     fd: i32,
     offset: usize,
 ) -> isize {
-    log::error!(
-        "sys_mmap: hint: {:#x}, len: {:#x}, prot: {:#x}, flags: {:#x}, fd: {:#x}, offset: {:#x}",
-        _hint,
-        len,
-        prot,
-        flags,
-        fd,
-        offset
-    );
-    //处理参数
-    let prot = MMAPPROT::from_bits(prot as u32).unwrap();
-    let flags = MMAPFLAGS::from_bits(flags as u32).unwrap();
-    let task = current_task();
-    if len == 0 {
-        return -22;
-    }
-    // mmap区域最低地址为MMAP_MIN_ADDR
-    let mut permission: MapPermission = prot.into();
-    // 注意加上U权限
-    permission |= MapPermission::U;
-    // 匿名映射
-    if flags.contains(MMAPFLAGS::MAP_ANONYMOUS) {
-        //需要fd为-1, offset为0
-        if fd != -1 || offset != 0 {
-            return -22;
-        }
-        task.op_memory_set_mut(|memory_set| {
-            permission |= MapPermission::R;
-            permission |= MapPermission::W;
-            assert!(
-                permission.contains(MapPermission::R | MapPermission::W),
-                "permission error: anonymous mmap must have R and W permission"
-            );
-            // start可以保证是页对齐的
-            let start = memory_set.mmap_start;
-            let vpn_range = memory_set.get_unmapped_area(start, len);
-            log::error!(
-                "[sys_mmap]start: {:#x}, end: {:#x}",
-                start,
-                vpn_range.get_end().0 << PAGE_SIZE_BITS
-            );
-            memory_set.insert_framed_area_vpn_range(vpn_range, permission);
-            return start as isize;
-        })
-    } else {
-        // 文件映射
-        // Todo:fake
-        // 需要offset为page aligned
-        if offset % PAGE_SIZE != 0 {
-            return -22;
-        }
-        // 读取文件
-        let file = task.fd_table().get_file(fd as usize).unwrap();
-        task.op_memory_set_mut(|memory_set| {
-            let start = memory_set.mmap_start;
-            let vpn_range = memory_set.get_unmapped_area(start, len);
-            // tmp add permission W
-            permission |= MapPermission::W;
-            memory_set.insert_framed_area_vpn_range(vpn_range, permission);
-            log::error!("mmap permission: {:?}", permission);
-            let buf = unsafe { core::slice::from_raw_parts_mut(start as *mut u8, len) };
-            let origin_offset = file.get_offset();
-            file.seek(offset);
-            file.read(buf);
-            file.seek(origin_offset);
-            // log::error!("mmap start: {:#x}", start as isize);
-            // log::error!("mmap content: {:?}", buf);
-            return start as isize;
-        })
-    }
-}
+    use crate::mm::{MapArea, MapType};
 
-#[cfg(target_arch = "loongarch64")]
-pub fn sys_mmap(
-    _hint: usize,
-    len: usize,
-    prot: usize,
-    flags: usize,
-    fd: i32,
-    offset: usize,
-) -> isize {
     log::error!(
         "sys_mmap: hint: {:#x}, len: {:#x}, prot: {:#x}, flags: {:#x}, fd: {:#x}, offset: {:#x}",
-        _hint,
+        hint,
         len,
         prot,
         flags,
@@ -204,71 +131,174 @@ pub fn sys_mmap(
         offset
     );
     //处理参数
-    let prot = MMAPPROT::from_bits(prot as u32).unwrap();
-    let flags = MMAPFLAGS::from_bits(flags as u32).unwrap();
+    let prot = MmapProt::from_bits(prot as u32).unwrap();
+    let flags = MmapFlags::from_bits(flags as u32).unwrap();
     let task = current_task();
-    if len == 0 {
+    // 判断参数合法性, 包括
+    // 1. 映射长度不为0 2. MAP_FIXED时指定地址不能为0 3.文件映射时offset页对齐(非文件映射时offset应该为0) 4.同时指定MAP_SHARED和MAP_PRIVATE
+    if len == 0
+        || (hint == 0 && flags.contains(MmapFlags::MAP_FIXED))
+        || offset % PAGE_SIZE != 0
+        || (flags.contains(MmapFlags::MAP_SHARED) && flags.contains(MmapFlags::MAP_PRIVATE))
+    {
         return -1;
     }
-    // mmap区域最低地址为MMAP_MIN_ADDR
-    let mut permission: MapPermission = prot.into();
-    // 注意加上U权限
-    permission |= MapPermission::U;
-    // 匿名映射
-    if flags.contains(MMAPFLAGS::MAP_ANONYMOUS) {
-        //需要fd为-1, offset为0
+
+    let mut map_perm: MapPermission = prot.into();
+    // 加上U权限
+    map_perm |= MapPermission::U;
+    if flags.contains(MmapFlags::MAP_SHARED) {
+        map_perm |= MapPermission::S;
+    }
+
+    // 强制映射到指定地址, 如果该地址范围已经有映射, 则会取消原来的映射, 如果不能在指定地址成功映射, mmap将会失败, 而不会选择其他地址
+    if flags.contains(MmapFlags::MAP_FIXED) {
+        // 取消原有映射
+        log::error!("[sys_mmap] MAP_FIXED: {:#x}", hint);
+        task.op_memory_set_mut(|memory_set| {
+            let start_vpn = VirtPageNum::from(hint >> PAGE_SIZE_BITS);
+            let end_vpn = VirtPageNum::from(ceil_to_page_size(hint + len) >> PAGE_SIZE_BITS);
+            let unmap_vpn_range = VPNRange::new(start_vpn, end_vpn);
+            let found = memory_set.remove_area_with_overlap(unmap_vpn_range);
+            if found == false {
+                log::warn!("[sys_mmap] MAP_FIXED : {:#x} not found", hint);
+            }
+        });
+    }
+
+    if flags.contains(MmapFlags::MAP_ANONYMOUS) {
+        // 匿名映射
+        // 需要fd为-1, offset为0
+        // Todo: 支持lazy_allocation
         if fd != -1 || offset != 0 {
             return -1;
         }
         task.op_memory_set_mut(|memory_set| {
-            permission |= MapPermission::R;
-            permission |= MapPermission::W;
-            assert!(
-                permission.contains(MapPermission::R | MapPermission::W),
-                "permission error: anonymous mmap must have R and W permission"
-            );
-            // start可以保证是页对齐的
-            let start = memory_set.mmap_start;
-            let vpn_range = memory_set.get_unmapped_area(start, len);
+            let vpn_range = if flags.contains(MmapFlags::MAP_FIXED) {
+                VPNRange::new(
+                    VirtAddr::from(hint).floor(),
+                    VirtAddr::from(hint + len).ceil(),
+                )
+            } else {
+                memory_set.get_unmapped_area(len)
+            };
+            memory_set.insert_framed_area(vpn_range, map_perm);
+            // Debug
             log::error!(
-                "[sys_mmap]start: {:#x}, end: {:#x}",
-                start,
-                vpn_range.get_end().0 << PAGE_SIZE_BITS
+                "[sys_mmap] anonymous return {:#x}",
+                vpn_range.get_start().0 << PAGE_SIZE_BITS
             );
-            memory_set.insert_framed_area_vpn_range(vpn_range, permission);
-            return start as isize;
+            return (vpn_range.get_start().0 << PAGE_SIZE_BITS) as isize;
         })
     } else {
-        // 文件映射
-        // Todo:fake
-        // 需要offset为page aligned
-        if offset % PAGE_SIZE != 0 {
-            return -1;
-        }
-        // 读取文件
+        // 文件私有映射, 写时复制, 不会影响页缓存, 共享映射会影响页缓存, 并且可能会写回磁盘(`msync`)
+        // 注意文件私有映射在发生写时复制前内容都是与页缓存一致的
         let file = task.fd_table().get_file(fd as usize).unwrap();
         task.op_memory_set_mut(|memory_set| {
-            let start = memory_set.mmap_start;
-            let vpn_range = memory_set.get_unmapped_area(start, len);
-            // tmp add permission W
-            permission |= MapPermission::W;
-            memory_set.insert_framed_area_vpn_range(vpn_range, permission);
-            log::error!("mmap permission: {:?}", permission);
-            let start_pa = memory_set
-                .translate_va_to_pa(VirtAddr::from(start))
-                .unwrap();
-            let buf = unsafe { core::slice::from_raw_parts_mut(start_pa as *mut u8, len) };
-            let origin_offset = file.get_offset();
-            file.seek(offset);
-            file.read(buf);
-            file.seek(origin_offset);
-            // log::error!("mmap start: {:#x}", start as isize);
-            // log::error!("mmap content: {:?}", buf);
-            return start as isize;
+            let vpn_range = if flags.contains(MmapFlags::MAP_FIXED) {
+                VPNRange::new(
+                    VirtAddr::from(hint).floor(),
+                    VirtAddr::from(hint + len).ceil(),
+                )
+            } else {
+                memory_set.get_unmapped_area(len)
+            };
+            let mmap_area = MapArea::new(vpn_range, MapType::Filebe, map_perm, Some(file), offset);
+            memory_set.insert_filebe_area_lazily(mmap_area);
+            log::error!(
+                "[sys_mmap] file return {:#x}",
+                vpn_range.get_start().0 << PAGE_SIZE_BITS
+            );
+            return (vpn_range.get_start().0 << PAGE_SIZE_BITS) as isize;
         })
     }
 }
 
+// #[cfg(target_arch = "loongarch64")]
+// pub fn sys_mmap(
+//     _hint: usize,
+//     len: usize,
+//     prot: usize,
+//     flags: usize,
+//     fd: i32,
+//     offset: usize,
+// ) -> isize {
+//     log::error!(
+//         "sys_mmap: hint: {:#x}, len: {:#x}, prot: {:#x}, flags: {:#x}, fd: {:#x}, offset: {:#x}",
+//         _hint,
+//         len,
+//         prot,
+//         flags,
+//         fd,
+//         offset
+//     );
+//     //处理参数
+//     let prot = MmapProt::from_bits(prot as u32).unwrap();
+//     let flags = MmapFlags::from_bits(flags as u32).unwrap();
+//     let task = current_task();
+//     if len == 0 {
+//         return -1;
+//     }
+//     // mmap区域最低地址为MMAP_MIN_ADDR
+//     let mut permission: MapPermission = prot.into();
+//     // 注意加上U权限
+//     permission |= MapPermission::U;
+//     // 匿名映射
+//     if flags.contains(MmapFlags::MAP_ANONYMOUS) {
+//         //需要fd为-1, offset为0
+//         if fd != -1 || offset != 0 {
+//             return -1;
+//         }
+//         task.op_memory_set_mut(|memory_set| {
+//             permission |= MapPermission::R;
+//             permission |= MapPermission::W;
+//             assert!(
+//                 permission.contains(MapPermission::R | MapPermission::W),
+//                 "permission error: anonymous mmap must have R and W permission"
+//             );
+//             // start可以保证是页对齐的
+//             let start = memory_set.mmap_start;
+//             let vpn_range = memory_set.get_unmapped_area(start, len);
+//             log::error!(
+//                 "[sys_mmap]start: {:#x}, end: {:#x}",
+//                 start,
+//                 vpn_range.get_end().0 << PAGE_SIZE_BITS
+//             );
+//             memory_set.insert_framed_area_vpn_range(vpn_range, permission);
+//             return start as isize;
+//         })
+//     } else {
+//         // 文件映射
+//         // Todo:fake
+//         // 需要offset为page aligned
+//         if offset % PAGE_SIZE != 0 {
+//             return -1;
+//         }
+//         // 读取文件
+//         let file = task.fd_table().get_file(fd as usize).unwrap();
+//         task.op_memory_set_mut(|memory_set| {
+//             let start = memory_set.mmap_start;
+//             let vpn_range = memory_set.get_unmapped_area(start, len);
+//             // tmp add permission W
+//             permission |= MapPermission::W;
+//             memory_set.insert_framed_area_vpn_range(vpn_range, permission);
+//             log::error!("mmap permission: {:?}", permission);
+//             let start_pa = memory_set
+//                 .translate_va_to_pa(VirtAddr::from(start))
+//                 .unwrap();
+//             let buf = unsafe { core::slice::from_raw_parts_mut(start_pa as *mut u8, len) };
+//             let origin_offset = file.get_offset();
+//             file.seek(offset);
+//             file.read(buf);
+//             file.seek(origin_offset);
+//             // log::error!("mmap start: {:#x}", start as isize);
+//             // log::error!("mmap content: {:?}", buf);
+//             return start as isize;
+//         })
+//     }
+// }
+
+// Todo: 目前只支持取消文件映射, 需要支持匿名映射
 pub fn sys_munmap(start: usize, len: usize) -> isize {
     // start必须页对齐, 且要大于等于MMAP_MIN_ADDR
     if start % PAGE_SIZE != 0 || len == 0 || start < MMAP_MIN_ADDR {
@@ -286,6 +316,100 @@ pub fn sys_munmap(start: usize, len: usize) -> isize {
     );
     let unmap_vpn_range = VPNRange::new(start_vpn, end_vpn);
     let task = current_task();
-    task.op_memory_set_mut(|memory_set| memory_set.remove_area_with_overlap(unmap_vpn_range));
+    task.op_memory_set_mut(|memory_set| {
+        if !memory_set.remove_area_with_overlap(unmap_vpn_range) {
+            log::warn!("[sys_munmap] {:#x} not found", start);
+        }
+    });
     0
+}
+
+///
+pub fn sys_mprotect(addr: usize, size: usize, prot: i32) -> isize {
+    log::info!(
+        "sys_mprotect: addr: {:#x}, size: {:#x}, prot: {:#x}",
+        addr,
+        size,
+        prot
+    );
+    // addr必须页对齐
+    if addr % PAGE_SIZE != 0 {
+        return -1;
+    }
+    let prot = MmapProt::from_bits(prot as u32).unwrap();
+    let map_perm_from_prot: MapPermission = prot.into();
+    let remap_start_vpn = VirtPageNum::from(addr >> PAGE_SIZE_BITS);
+    let remap_end_vpn = VirtPageNum::from(ceil_to_page_size(addr + size) >> PAGE_SIZE_BITS);
+    let remap_range = VPNRange::new(remap_start_vpn, remap_end_vpn);
+    let found = current_task().op_memory_set_mut(|memory_set| {
+        // 分裂可能产生新的映射区, 需要先保存, 然后再加入memory_set.areas
+        let mut split_areas = Vec::new();
+        // 先查找指定地址范是否有映射, 如果没有则返回-1, 设置ENOMEM
+        if let Some((_, area)) = memory_set
+            .areas
+            .range_mut(..=remap_range.get_start())
+            .next_back()
+        {
+            if area.vpn_range.contains_vpn(remap_start_vpn) {
+                if area.vpn_range == remap_range {
+                    log::error!(
+                    "[sys_mprotect] map_perm from {:?} to {:?}, vpn_range: {:?}, remap_range: {:?}",
+                    area.map_perm,
+                    map_perm_from_prot,
+                    area.vpn_range,
+                    remap_range
+                );
+                    // 对于已经映射的区域, 需要将其权限修改为新的权限(remap)
+                    area.map_perm.update_rwx(map_perm_from_prot);
+                    area.remap(&mut memory_set.page_table);
+                } else {
+                    // 需要分割
+                    log::error!(
+                    "[sys_mprotect] map_perm from {:?} to {:?}, vpn_range: {:?}, remap_range: {:?}",
+                    area.map_perm,
+                    map_perm_from_prot,
+                    area.vpn_range,
+                    remap_range
+                    );
+                    // remap_map_perm根据area.map_perm和map_perm_from_prot计算出新的权限, 只修改R, W, X
+                    let new_area = area.split_in(remap_range.get_start(), remap_range.get_end());
+                    split_areas.push(new_area);
+                    let offset = if area.backend_file.is_some() {
+                        area.offset
+                            + (remap_range.get_start().0 - area.vpn_range.get_start().0) * PAGE_SIZE
+                    } else {
+                        area.offset
+                    };
+                    let mut remap_map_perm = area.map_perm;
+                    remap_map_perm.update_rwx(map_perm_from_prot);
+                    let mut remap_area = MapArea::new(
+                        remap_range,
+                        area.map_type,
+                        remap_map_perm,
+                        area.backend_file.clone(),
+                        offset,
+                    );
+                    // 划分页
+                    area.pages.retain(|vpn, page| {
+                        if *vpn >= remap_start_vpn && *vpn < remap_end_vpn {
+                            remap_area.pages.insert(*vpn, page.clone());
+                            false
+                        } else {
+                            true
+                        }
+                    });
+                    // 重新映射
+                    remap_area.remap(&mut memory_set.page_table);
+                    // 加入新的映射区
+                    split_areas.push(remap_area);
+                }
+                return 0;
+            }
+            // 没有找到指定地址范围的映射, 直接返回-1
+            return -1;
+        }
+        // 没有找到指定地址范围的映射, 直接返回-1
+        return -1;
+    });
+    return found;
 }

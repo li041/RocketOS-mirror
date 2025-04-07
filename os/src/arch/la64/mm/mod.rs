@@ -1,4 +1,3 @@
-use frame_allocator::{frame_allocator_test, init_frame_allocator};
 #[cfg(feature = "test")]
 use heap_allocator::heap_test;
 
@@ -7,30 +6,22 @@ use crate::{
         config::{DIR_WIDTH, PAGE_SIZE_BITS, PTE_WIDTH},
         CrMd, TLBREHi, DMW0, DMW1, DMW2, DMW3, PWCH, PWCL, STLBPS,
     },
-    mm::heap_allocator::init_heap,
+    mm::{MapPermission, VPNRange, VirtAddr},
     task::current_task,
 };
 
-use memory_set::KERNEL_SATP;
+use core::{
+    arch::asm,
+    slice::{from_raw_parts, from_raw_parts_mut},
+};
 
-use core::slice::{from_raw_parts, from_raw_parts_mut};
+pub use page_table::{PTEFlags, PageTable, PageTableEntry};
 
-pub use address::{PhysAddr, PhysPageNum, StepByOne, VPNRange, VirtAddr, VirtPageNum};
-pub use memory_set::{MapArea, MapPermission, MemorySet, KERNEL_SPACE};
-pub use page_table::{PageTable, PageTableEntry};
-
-mod address;
-pub mod frame_allocator;
-mod memory_set;
 mod page_table;
-// mod memory_set;
 
-pub fn init() {
-    init_heap();
-    init_frame_allocator();
-
-    println!("kernel satp: {:#x}", *KERNEL_SATP);
-    KERNEL_SPACE.lock().activate();
+#[inline(always)]
+pub unsafe fn sfence_vma_vaddr(vaddr: usize) {
+    asm!("invtlb 0x4, $zero, {}", in(reg) vaddr, options(nostack))
 }
 
 // Todo: 支持page fault预处理

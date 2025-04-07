@@ -60,7 +60,7 @@ pub trait TLBEL: BitField {
     fn set_ppn(&mut self, ppn: PhysPageNum) -> &mut Self;
 }
 
-use crate::{arch::config::PALEN, arch::mm::PhysPageNum};
+use crate::{arch::config::PALEN, mm::PhysPageNum};
 use bit_field::BitField;
 use core::{
     convert::TryFrom,

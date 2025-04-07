@@ -17,7 +17,7 @@ FEATURES := default
 ifeq ($(ARCH), riscv64)
 	TARGET := riscv64gc-unknown-none-elf
 	OBJCOPY := rust-objcopy --binary-architecture=riscv64
-    FS := ../img/ext4_prev.img
+    FS := ../img/ext4_final.img
 else ifeq ($(ARCH), loongarch64)
 	TARGET := loongarch64-unknown-none
 	OBJCOPY := loongarch64-linux-gnu-objcopy 

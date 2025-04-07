@@ -1,3 +1,8 @@
+pub const MEMORY_START: usize = 0x0000_0000_9000_0000;
+pub const MEMORY_SIZE: usize = 0x1000_0000;
+pub const MEMORY_END: usize = MEMORY_SIZE + MEMORY_START;
+
+pub const DISK_IMAGE_BASE: usize = 0x800_0000 + MEMORY_START;
 /// I/O
 pub const UART_BASE: usize = 0x1fe0_01e0;
 pub const MMIO: &[(usize, usize)] = &[

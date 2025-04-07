@@ -1,4 +1,5 @@
 use alloc::sync::Arc;
+use spin::RwLock;
 
 use crate::{
     drivers::block::{block_cache::get_block_cache, block_dev::BlockDevice},
@@ -71,7 +72,7 @@ pub struct GroupDesc {
     pub inode_bitmap: u64,
     pub exclude_bitmap: u64,
 
-    inner: SpinNoIrqLock<GroupDescInner>,
+    inner: RwLock<GroupDescInner>,
 }
 
 impl GroupDesc {
@@ -88,7 +89,7 @@ impl GroupDesc {
             inode_bitmap: group_desc_disk.inode_bitmap(),
             exclude_bitmap: (group_desc_disk.exclude_bitmap_hi as u64) << 32
                 | group_desc_disk.exclude_bitmap_lo as u64,
-            inner: SpinNoIrqLock::new(GroupDescInner::new(
+            inner: RwLock::new(GroupDescInner::new(
                 group_desc_disk.free_blocks_count(),
                 group_desc_disk.free_inodes_count(),
                 group_desc_disk.used_dirs_count(),
@@ -113,7 +114,7 @@ impl GroupDesc {
             inode_bitmap_size,
             ext4_block_size
         );
-        let mut inner = self.inner.lock();
+        let mut inner = self.inner.write();
         // 检查当前块组是否还有空闲的inode
         if inner.free_inodes_count > 0 {
             // 注意inode_bitmap的size = inodes_per_group / 8 byte
@@ -150,7 +151,7 @@ impl GroupDesc {
         inode_size: usize,
         ext4_block_size: usize,
     ) {
-        let mut inner = self.inner.lock();
+        let mut inner = self.inner.write();
         // 释放inode_table
         let block_id = self.inode_table as usize + local_inode_num * inode_size / ext4_block_size;
         let block_offset = local_inode_num * inode_size % ext4_block_size;
@@ -184,7 +185,7 @@ impl GroupDesc {
         ext4_block_size: usize,
         block_bitmap_size: usize,
     ) -> Option<usize> {
-        let mut inner = self.inner.lock();
+        let mut inner = self.inner.write();
         if inner.free_blocks_count > 0 {
             let num_blocks = block_bitmap_size / ext4_block_size;
             for i in 0..num_blocks {

@@ -28,7 +28,7 @@ pub fn c_str_to_string(ptr: *const u8) -> String {
 /// 由caller保证ptr的合法性
 /// Convert C-style string(end with '\0') to rust string
 pub fn c_str_to_string(ptr: *const u8) -> String {
-    use crate::{arch::mm::VirtAddr, task::current_task};
+    use crate::{mm::VirtAddr, task::current_task};
 
     assert!(
         !ptr.is_null(),
@@ -79,7 +79,7 @@ pub fn extract_cstrings(ptr: *const usize) -> Vec<String> {
 /// Convert C-style strings(end with '\0') to rust strings
 /// used by sys_exec: 提取args和envs
 pub fn extract_cstrings(ptr: *const usize) -> Vec<String> {
-    use crate::{arch::mm::VirtAddr, task::current_task};
+    use crate::{mm::VirtAddr, task::current_task};
 
     let mut vec: Vec<String> = Vec::new();
     let mut current = current_task().op_memory_set(|memory_set| unsafe {

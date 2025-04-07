@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 use core::fmt::{self, Debug, Formatter};
 use lazy_static::*;
 
-use super::{PhysAddr, PhysPageNum};
+use crate::mm::{PhysAddr, PhysPageNum};
 
 /// manage a frame which has the same lifecycle as the tracker
 pub struct FrameTracker {
