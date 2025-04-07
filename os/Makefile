@@ -27,7 +27,7 @@ else
 endif
 
 # User
-USER_TARGET_PATH := ../user/target/$(TARGET)/release/
+USER_TARGET_PATH := ../user/target/$(TARGET)/$(MODE)/
 
 KERNEL_ELF := target/$(TARGET)/$(MODE)/os
 KERNEL_BIN := $(KERNEL_ELF).bin
@@ -52,9 +52,10 @@ endif
 
 # QEMU
 # 添加一块虚拟硬盘, 命名为`x0`, 将`sdcard.img`挂载到这块硬盘上, VirtIO总线通过MMIO进行控制, 且该块设备在总线中的编号为0
+# 查看设备树 -machine virt,dumpdtb=out.dtb 
 ifeq ($(ARCH), riscv64)
     QEMU_CMD := qemu-system-riscv64
-    QEMU_ARGS := 	-machine virt \
+    QEMU_ARGS := 	-machine virt\
                     -m $(MEM_SIZE) \
                     -kernel $(KERNEL_BIN) \
                     -nographic \

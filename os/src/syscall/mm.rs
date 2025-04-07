@@ -214,90 +214,6 @@ pub fn sys_mmap(
     }
 }
 
-// #[cfg(target_arch = "loongarch64")]
-// pub fn sys_mmap(
-//     _hint: usize,
-//     len: usize,
-//     prot: usize,
-//     flags: usize,
-//     fd: i32,
-//     offset: usize,
-// ) -> isize {
-//     log::error!(
-//         "sys_mmap: hint: {:#x}, len: {:#x}, prot: {:#x}, flags: {:#x}, fd: {:#x}, offset: {:#x}",
-//         _hint,
-//         len,
-//         prot,
-//         flags,
-//         fd,
-//         offset
-//     );
-//     //处理参数
-//     let prot = MmapProt::from_bits(prot as u32).unwrap();
-//     let flags = MmapFlags::from_bits(flags as u32).unwrap();
-//     let task = current_task();
-//     if len == 0 {
-//         return -1;
-//     }
-//     // mmap区域最低地址为MMAP_MIN_ADDR
-//     let mut permission: MapPermission = prot.into();
-//     // 注意加上U权限
-//     permission |= MapPermission::U;
-//     // 匿名映射
-//     if flags.contains(MmapFlags::MAP_ANONYMOUS) {
-//         //需要fd为-1, offset为0
-//         if fd != -1 || offset != 0 {
-//             return -1;
-//         }
-//         task.op_memory_set_mut(|memory_set| {
-//             permission |= MapPermission::R;
-//             permission |= MapPermission::W;
-//             assert!(
-//                 permission.contains(MapPermission::R | MapPermission::W),
-//                 "permission error: anonymous mmap must have R and W permission"
-//             );
-//             // start可以保证是页对齐的
-//             let start = memory_set.mmap_start;
-//             let vpn_range = memory_set.get_unmapped_area(start, len);
-//             log::error!(
-//                 "[sys_mmap]start: {:#x}, end: {:#x}",
-//                 start,
-//                 vpn_range.get_end().0 << PAGE_SIZE_BITS
-//             );
-//             memory_set.insert_framed_area_vpn_range(vpn_range, permission);
-//             return start as isize;
-//         })
-//     } else {
-//         // 文件映射
-//         // Todo:fake
-//         // 需要offset为page aligned
-//         if offset % PAGE_SIZE != 0 {
-//             return -1;
-//         }
-//         // 读取文件
-//         let file = task.fd_table().get_file(fd as usize).unwrap();
-//         task.op_memory_set_mut(|memory_set| {
-//             let start = memory_set.mmap_start;
-//             let vpn_range = memory_set.get_unmapped_area(start, len);
-//             // tmp add permission W
-//             permission |= MapPermission::W;
-//             memory_set.insert_framed_area_vpn_range(vpn_range, permission);
-//             log::error!("mmap permission: {:?}", permission);
-//             let start_pa = memory_set
-//                 .translate_va_to_pa(VirtAddr::from(start))
-//                 .unwrap();
-//             let buf = unsafe { core::slice::from_raw_parts_mut(start_pa as *mut u8, len) };
-//             let origin_offset = file.get_offset();
-//             file.seek(offset);
-//             file.read(buf);
-//             file.seek(origin_offset);
-//             // log::error!("mmap start: {:#x}", start as isize);
-//             // log::error!("mmap content: {:?}", buf);
-//             return start as isize;
-//         })
-//     }
-// }
-
 // Todo: 目前只支持取消文件映射, 需要支持匿名映射
 pub fn sys_munmap(start: usize, len: usize) -> isize {
     // start必须页对齐, 且要大于等于MMAP_MIN_ADDR
@@ -403,6 +319,13 @@ pub fn sys_mprotect(addr: usize, size: usize, prot: i32) -> isize {
                     // 加入新的映射区
                     split_areas.push(remap_area);
                 }
+
+                // 把split_areas加入到memory_set.areas中
+                memory_set.areas.extend(
+                    split_areas
+                        .into_iter()
+                        .map(|area| (area.vpn_range.get_start(), area)),
+                );
                 return 0;
             }
             // 没有找到指定地址范围的映射, 直接返回-1
@@ -412,4 +335,21 @@ pub fn sys_mprotect(addr: usize, size: usize, prot: i32) -> isize {
         return -1;
     });
     return found;
+}
+
+// Todo:
+pub fn sys_madvise(addr: usize, len: usize, advice: i32) -> isize {
+    log::info!(
+        "sys_madvise: addr: {:#x}, len: {:#x}, advice: {:#x}",
+        addr,
+        len,
+        advice
+    );
+    log::warn!("[sys_madvise] Unimplemented");
+    // addr必须页对齐
+    if addr % PAGE_SIZE != 0 {
+        return -1;
+    }
+    // Todo:
+    0
 }

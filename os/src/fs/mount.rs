@@ -156,7 +156,7 @@ pub fn do_mount(
 
 pub fn ext4_list_apps(root_inode: Arc<dyn InodeOp>) {
     println!("/**** ROOT APPS ****");
-    let dirents = root_inode.getdents();
+    let dirents = root_inode.getdents(0).1;
     if dirents.is_empty() {
         println!("No apps found!");
     } else {

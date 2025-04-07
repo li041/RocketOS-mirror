@@ -166,8 +166,12 @@ impl<'a, T: ?Sized, S: MutexSupport> Drop for MutexGuard<'a, T, S> {
     /// The dropping of the MutexGuard will release the lock it was created from.
     #[inline(always)]
     fn drop(&mut self) {
-        assert!(self.mutex.lock.load(Ordering::Relaxed));
-        // println!("[auto unlock] by {}", get_local_hart().hart_id,);
+        debug_assert!(
+            // assert!(
+            self.mutex.lock.load(Ordering::Relaxed),
+            "drop lock at {:p}",
+            self.mutex
+        );
         self.mutex.lock.store(false, Ordering::Release);
         S::after_unlock(&mut self.support_guard);
     }

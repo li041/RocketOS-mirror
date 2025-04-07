@@ -74,6 +74,8 @@ pub fn switch_to_next_task() {
 // 注意调用者要释放原任务的锁, 否则会死锁
 #[no_mangle]
 pub fn yield_current_task() {
+    // 注意下面这行日志不要删, 是loongarch64 release跑起来的神奇小咒语
+    log::trace!("[yield_current_task] enter");
     let task = current_task();
     if let Some(next_task) = fetch_task() {
         task.set_ready();

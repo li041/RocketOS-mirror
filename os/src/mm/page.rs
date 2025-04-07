@@ -44,7 +44,6 @@ pub struct InlinePageInfo {
 }
 
 // 页缓存中使用的页结构
-// Todo: 支持私有的Page
 pub struct Page {
     vaddr: usize,
     page_kind: PageKind,

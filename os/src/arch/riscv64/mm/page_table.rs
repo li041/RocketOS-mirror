@@ -6,12 +6,13 @@ use core::{
     fmt::{self, Debug, Formatter},
 };
 
-use crate::mm::{
-    frame_alloc, MapPermission, PhysAddr, PhysPageNum, VirtAddr, VirtPageNum, KERNEL_SPACE,
-};
 use crate::{
     arch::config::{KERNEL_DIRECT_OFFSET, PAGE_SIZE_BITS, USER_MAX_VA},
     mm::FrameTracker,
+};
+use crate::{
+    arch::mm::sfence_vma_vaddr,
+    mm::{frame_alloc, MapPermission, PhysAddr, PhysPageNum, VirtAddr, VirtPageNum, KERNEL_SPACE},
 };
 use bitflags::bitflags;
 
@@ -254,7 +255,9 @@ impl PageTable {
                 }
             }
         }
-
+        unsafe {
+            asm!("sfence.vma");
+        }
         frames.push(cld_root_frame);
         // 子进程的页表拥有自己的所有三级页表
         PageTable {
@@ -309,6 +312,10 @@ impl PageTable {
         let pte = self.find_pte_create(vpn).unwrap();
         assert!(!pte.is_valid(), "vpn {:?} is mapped before mapping", vpn);
         *pte = PageTableEntry::new(ppn, flags | PTEFlags::V | PTEFlags::A | PTEFlags::D);
+        // Todo: 不用刷新页表? tlb中本身没有该页表项
+        // unsafe {
+        //     sfence_vma_vaddr(vpn.0 << PAGE_SIZE_BITS);
+        // }
     }
     /// Remap a mapping from `vpn` to `ppn`.
     /// 由上层调用者保证vpn已经被映射
@@ -320,6 +327,9 @@ impl PageTable {
             vpn
         );
         *pte = PageTableEntry::new(pte.ppn(), flags | PTEFlags::V | PTEFlags::A | PTEFlags::D);
+        unsafe {
+            sfence_vma_vaddr(vpn.0 << PAGE_SIZE_BITS);
+        }
     }
     pub fn unmap(&mut self, vpn: VirtPageNum) {
         let pte = self.find_pte(vpn).unwrap();
@@ -329,6 +339,9 @@ impl PageTable {
             vpn
         );
         *pte = PageTableEntry::empty();
+        unsafe {
+            sfence_vma_vaddr(vpn.0 << PAGE_SIZE_BITS);
+        }
     }
 }
 

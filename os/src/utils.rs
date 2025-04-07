@@ -1,3 +1,5 @@
+use core::fmt::Debug;
+
 use alloc::{string::String, vec::Vec};
 
 use crate::arch::config::PAGE_SIZE;
@@ -109,4 +111,106 @@ pub fn ceil_to_page_size(size: usize) -> usize {
 
 pub fn floor_to_page_size(size: usize) -> usize {
     size & !(PAGE_SIZE - 1)
+}
+
+/* Time */
+pub struct DateTime {
+    pub year: u32,
+    pub month: u8,  // 1~12
+    pub day: u8,    // 1~31
+    pub hour: u8,   // 0~23
+    pub minute: u8, // 0~59
+    pub second: u8, // 0~59
+}
+
+impl Debug for DateTime {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+            self.year, self.month, self.day, self.hour, self.minute, self.second
+        )
+    }
+}
+
+impl Default for DateTime {
+    fn default() -> Self {
+        DateTime {
+            year: 1970,
+            month: 1,
+            day: 1,
+            hour: 0,
+            minute: 0,
+            second: 0,
+        }
+    }
+}
+
+/// seconds 从1970-01-01 00:00:00 UTC以来的秒数
+pub fn seconds_to_beijing_datetime(mut seconds: u64) -> DateTime {
+    // 加上北京时间的偏移：+8 小时
+    seconds += 8 * 3600;
+
+    let mut year = 1970;
+    let secs_per_day = 86400;
+    let secs_per_hour = 3600;
+    let secs_per_minute = 60;
+
+    // Step 1: 计算天数
+    let mut days = seconds / secs_per_day;
+    seconds %= secs_per_day;
+
+    // Step 2: 时分秒
+    let hour = (seconds / secs_per_hour) as u8;
+    seconds %= secs_per_hour;
+
+    let minute = (seconds / secs_per_minute) as u8;
+    let second = (seconds % secs_per_minute) as u8;
+
+    // Step 3: 累加年份
+    while days >= days_in_year(year) {
+        days -= days_in_year(year);
+        year += 1;
+    }
+
+    // Step 4: 累加月份
+    let mut month = 0;
+    while month < 12 {
+        let dim = days_in_month(year, month + 1) as u64;
+        if days < dim {
+            break;
+        }
+        days -= dim;
+        month += 1;
+    }
+
+    DateTime {
+        year: year as u32,
+        month: (month + 1) as u8,
+        day: (days + 1) as u8,
+        hour,
+        minute,
+        second,
+    }
+}
+
+fn is_leap_year(year: u64) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+}
+
+fn days_in_year(year: u64) -> u64 {
+    if is_leap_year(year) {
+        366
+    } else {
+        365
+    }
+}
+
+fn days_in_month(year: u64, month: usize) -> u8 {
+    const DAYS: [u8; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    if month == 2 && is_leap_year(year) {
+        29
+    } else {
+        DAYS[month - 1]
+    }
 }

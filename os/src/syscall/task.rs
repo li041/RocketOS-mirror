@@ -1,3 +1,5 @@
+use core::sync::atomic::{compiler_fence, Ordering};
+
 use crate::arch::mm::copy_from_user;
 use crate::task::CloneFlags;
 use crate::{
@@ -164,65 +166,131 @@ pub fn sys_exit(exit_code: i32) -> ! {
 #[no_mangle]
 pub fn sys_waitpid(pid: isize, exit_code_ptr: usize, option: i32) -> isize {
     let option = WaitOption::from_bits(option).unwrap();
-    log::warn!(
-        "[sys_waitpid] pid: {}, exit_code_ptr: {:x}, option: {:?}",
-        pid,
-        exit_code_ptr,
-        option
-    );
-    let task = current_task();
-    task.op_children_mut(|children| {
-        // 没有子进程
-        if !children
-            .values()
-            .any(|p| pid == -1 || pid as usize == p.tid())
-        {
-            return -1;
-        }
-        // 有子进程, 进一步看是否有子进程退出
-        else {
-            loop {
-                let wait_task = children.values().find(|task| {
-                    let task = task.as_ref();
-                    task.is_zombie() && (pid == -1 || pid as usize == task.tid())
-                });
+    if pid != -1 {
+        log::warn!(
+            "[sys_waitpid] pid: {}, exit_code_ptr: {:x}, option: {:?}",
+            pid,
+            exit_code_ptr,
+            option
+        );
+    }
+    let current_task = current_task();
 
-                // 如果pid > 0, 则等待指定的子进程
-                if let Some(wait_task) = wait_task {
-                    let child = children.remove(&wait_task.tid()).unwrap();
-                    assert_eq!(Arc::strong_count(&child), 1);
-                    let found_tid = child.tid() as i32;
-                    // 写入exit_code
-                    // Todo: 需要对地址检查
-                    log::warn!(
-                        "[sys_waitpid] child {} exit with code {}, exit_code_ptr: {:x}",
-                        found_tid,
-                        child.exit_code(),
-                        exit_code_ptr
-                    );
-                    if exit_code_ptr != 0 {
-                        // exit_code_ptr为空, 表示不关心子进程的退出状态
-                        copy_to_user(
-                            exit_code_ptr as *mut i32,
-                            &((child.exit_code() & 0xff) << 8) as *const i32,
-                            1,
-                        )
-                        .unwrap();
-                    }
-                    return found_tid as isize;
+    loop {
+        // 先检查当前进程是否存在满足目标子进程
+        let target_task = current_task.op_children_mut(|children| {
+            for child in children.values() {
+                if pid == -1 || pid as usize == child.tid() {
+                    return Some(child.clone());
+                }
+            }
+            None
+        });
+
+        if let Some(wait_task) = target_task {
+            // 目标子进程已死
+            if wait_task.is_zombie() {
+                current_task.remove_child_task(wait_task.tid());
+                debug_assert_eq!(Arc::strong_count(&wait_task), 1);
+                let found_tid = wait_task.tid() as i32;
+                // 写入exit_code
+                // Todo: 需要对地址检查
+                log::warn!(
+                    "[sys_waitpid] child {} exit with code {}, exit_code_ptr: {:x}",
+                    found_tid,
+                    wait_task.exit_code(),
+                    exit_code_ptr
+                );
+                if exit_code_ptr != 0 {
+                    // exit_code_ptr为空, 表示不关心子进程的退出状态
+                    copy_to_user(
+                        exit_code_ptr as *mut i32,
+                        &((wait_task.exit_code() & 0xff) << 8) as *const i32,
+                        1,
+                    )
+                    .unwrap();
+                }
+                return found_tid as isize;
+            }
+            // 如果目标子进程未死亡
+            else {
+                drop(wait_task);
+                if option.contains(WaitOption::WNOHANG) {
+                    return 0;
                 } else {
-                    if option.contains(WaitOption::WNOHANG) {
-                        return 0;
-                    } else {
-                        // 没有子进程退出, 则挂起当前进程
-                        yield_current_task();
-                        // blocking_current_task_and_run_next();
-                    }
+                    yield_current_task();
                 }
             }
         }
-    })
+        // 不存在目标进程
+        else {
+            return -1;
+        }
+    }
 }
+
+// #[no_mangle]
+// pub fn sys_waitpid(pid: isize, exit_code_ptr: usize, option: i32) -> isize {
+//     let option = WaitOption::from_bits(option).unwrap();
+//     log::warn!(
+//         "[sys_waitpid] pid: {}, exit_code_ptr: {:x}, option: {:?}",
+//         pid,
+//         exit_code_ptr,
+//         option
+//     );
+//     let task = current_task();
+//     task.op_children_mut(|children| {
+//         // 没有子进程
+//         if !children
+//             .values()
+//             .any(|p| pid == -1 || pid as usize == p.tid())
+//         {
+//             return -1;
+//         }
+//         // 有子进程, 进一步看是否有子进程退出
+//         else {
+//             loop {
+//                 let wait_task = children.values().find(|task| {
+//                     let task = task.as_ref();
+//                     task.is_zombie() && (pid == -1 || pid as usize == task.tid())
+//                 });
+
+//                 // 如果pid > 0, 则等待指定的子进程
+//                 if let Some(wait_task) = wait_task {
+//                     let child = children.remove(&wait_task.tid()).unwrap();
+//                     assert_eq!(Arc::strong_count(&child), 1);
+//                     let found_tid = child.tid() as i32;
+//                     // 写入exit_code
+//                     // Todo: 需要对地址检查
+//                     log::warn!(
+//                         "[sys_waitpid] child {} exit with code {}, exit_code_ptr: {:x}",
+//                         found_tid,
+//                         child.exit_code(),
+//                         exit_code_ptr
+//                     );
+//                     if exit_code_ptr != 0 {
+//                         // exit_code_ptr为空, 表示不关心子进程的退出状态
+//                         copy_to_user(
+//                             exit_code_ptr as *mut i32,
+//                             &((child.exit_code() & 0xff) << 8) as *const i32,
+//                             1,
+//                         )
+//                         .unwrap();
+//                     }
+//                     return found_tid as isize;
+//                 } else {
+//                     if option.contains(WaitOption::WNOHANG) {
+//                         return 0;
+//                     } else {
+//                         // 没有子进程退出, 则挂起当前进程
+//                         yield_current_task();
+//                         // blocking_current_task_and_run_next();
+//                     }
+//                 }
+//             }
+//         }
+//     })
+// }
 
 /// sys_gettimeofday, current time = sec + usec
 #[repr(C)]
