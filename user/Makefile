@@ -2,7 +2,7 @@
 # Building
 # ARCH ?= loongarch64
 ARCH ?= riscv64
-MODE := release
+MODE ?= release
 
 # Target, Binutils(Objcopy)
 ifeq ($(ARCH), riscv64)
@@ -42,7 +42,7 @@ ifeq ($(TEST), 1)
 endif
 
 binary: elf
-	@$(foreach elf, $(ELFS), $(OBJCOPY) $(elf) --strip-all -O binary $(patsubst $(TARGET_DIR)/%, $(TARGET_DIR)/%.bin, $(elf));)
+	$(foreach elf, $(ELFS), $(OBJCOPY) $(elf) --strip-all -O binary $(patsubst $(TARGET_DIR)/%, $(TARGET_DIR)/%.bin, $(elf));)
 
 move-cargo:
 	@rm -rf .cargo

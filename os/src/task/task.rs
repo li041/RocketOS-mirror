@@ -1,17 +1,42 @@
 use super::{
-    aux::{AuxHeader, AT_EXECFN, AT_NULL, AT_RANDOM}, context::TaskContext, id::{tid_alloc, TidHandle}, kstack::{get_stack_top_by_sp, kstack_alloc, KernelStack}, remove_task, scheduler::switch_to_next_task, String, Tid
+    aux::{AuxHeader, AT_EXECFN, AT_NULL, AT_RANDOM},
+    context::TaskContext,
+    id::{tid_alloc, TidHandle},
+    kstack::{get_stack_top_by_sp, kstack_alloc, KernelStack},
+    remove_task,
+    scheduler::switch_to_next_task,
+    String, Tid,
 };
 use crate::{
-    arch::{mm::copy_to_user, trap::TrapContext}, fs::{fdtable::FdTable, file::FileOp, path::Path, FileOld, Stdin, Stdout}, mm::{MapArea, MapPermission, MapType, MemorySet, VPNRange, VirtAddr}, mutex::{SpinNoIrq, SpinNoIrqLock}, signal::{SiField, Sig, SigHandler, SigInfo, SigPending, SigSet, SignalStack, UContext}, task::{
-        aux, context::write_task_cx, kstack, manager::TASK_MANAGER, scheduler::{add_task, remove_thread_group, SCHEDULER}, INITPROC
-    }
+    arch::{mm::copy_to_user, trap::TrapContext},
+    fs::{fdtable::FdTable, file::FileOp, path::Path, FileOld, Stdin, Stdout},
+    mm::{MapArea, MapPermission, MapType, MemorySet, VPNRange, VirtAddr},
+    mutex::{SpinNoIrq, SpinNoIrqLock},
+    signal::{SiField, Sig, SigHandler, SigInfo, SigPending, SigSet, SignalStack, UContext},
+    task::{
+        aux,
+        context::write_task_cx,
+        kstack,
+        manager::TASK_MANAGER,
+        scheduler::{add_task, remove_thread_group, SCHEDULER},
+        INITPROC,
+    },
 };
 use alloc::{
-    collections::btree_map::BTreeMap, sync::{Arc, Weak}, vec::Vec, vec,
+    collections::btree_map::BTreeMap,
+    sync::{Arc, Weak},
+    vec,
+    vec::Vec,
 };
 use bitflags::bitflags;
+use core::{
+    any::Any,
+    assert_ne,
+    future::{pending, Pending},
+    mem,
+    sync::atomic::{AtomicI32, AtomicUsize},
+};
 use xmas_elf::sections::NoteHeader;
-use core::{any::Any, assert_ne, future::{pending, Pending}, mem, sync::atomic::{AtomicI32, AtomicUsize}};
 
 pub const INIT_PROC_PID: usize = 0;
 
@@ -49,12 +74,12 @@ pub struct Task {
     root: Arc<SpinNoIrqLock<Arc<Path>>>,
     pwd: Arc<SpinNoIrqLock<Arc<Path>>>,
     // ToDo: 信号处理
-    sig_pending: SpinNoIrqLock<SigPending>,                 // 待处理信号
-    sig_handler: Arc<SpinNoIrqLock<SigHandler>>,            // 信号处理函数
-    sig_stack: SpinNoIrqLock<Option<SignalStack>>,          // 额外信号栈
-    // Todo: 进程组
-    // ToDo：运行时间(调度相关)
-    // ToDo: 多核启动
+    sig_pending: SpinNoIrqLock<SigPending>,      // 待处理信号
+    sig_handler: Arc<SpinNoIrqLock<SigHandler>>, // 信号处理函数
+    sig_stack: SpinNoIrqLock<Option<SignalStack>>, // 额外信号栈
+                                                 // Todo: 进程组
+                                                 // ToDo：运行时间(调度相关)
+                                                 // ToDo: 多核启动
 }
 
 impl core::fmt::Debug for Task {
@@ -96,7 +121,8 @@ impl Task {
 
     /// 初始化地址空间, 将 `TrapContext` 与 `TaskContext` 压入内核栈中
     pub fn initproc(elf_data: &[u8], root_path: Arc<Path>) -> Arc<Self> {
-        let (memory_set, pgdl_ppn, user_sp, entry_point, _aux_vec) = MemorySet::from_elf(elf_data.to_vec(), &mut Vec::<String>::new());
+        let (memory_set, pgdl_ppn, user_sp, entry_point, _aux_vec) =
+            MemorySet::from_elf(elf_data.to_vec(), &mut Vec::<String>::new());
         let tid = tid_alloc();
         let tgid = SpinNoIrqLock::new(TidHandle(tid.0));
         // 申请内核栈
@@ -166,13 +192,16 @@ impl Task {
         let sig_stack;
         log::trace!(
             "[kernel_clone] current_task pid: {}, new_task pid: {}",
-            self.tid(), tid
+            self.tid(),
+            tid
         );
         // 是否与父进程共享信号处理器
         if flags.contains(CloneFlags::CLONE_SIGHAND) {
             sig_handler = self.sig_handler.clone();
         } else {
-            sig_handler = Arc::new(SpinNoIrqLock::new(self.op_sig_handler_mut(|handler| handler.clone())))
+            sig_handler = Arc::new(SpinNoIrqLock::new(
+                self.op_sig_handler_mut(|handler| handler.clone()),
+            ))
         }
         // 创建线程
         if flags.contains(CloneFlags::CLONE_THREAD) {
@@ -244,7 +273,7 @@ impl Task {
             task.tid(),
             task.kstack(),
             Arc::strong_count(&task)
-        );  // 未加入调度器理论为 2
+        ); // 未加入调度器理论为 2
         log::trace!("[kernel_clone] task{} create sucessfully!", task.tid());
         task
     }
@@ -257,8 +286,8 @@ impl Task {
         envs_vec: Vec<String>,
     ) {
         // 创建地址空间
-        let (mut memory_set, _satp, ustack_top, entry_point, aux_vec) 
-            = MemorySet::from_elf(elf_data.to_vec(), &mut args_vec);
+        let (mut memory_set, _satp, ustack_top, entry_point, aux_vec) =
+            MemorySet::from_elf(elf_data.to_vec(), &mut args_vec);
         // 更新页表
         memory_set.activate();
         #[cfg(target_arch = "loongarch64")]
@@ -345,6 +374,9 @@ impl Task {
     pub fn add_child(&self, task: Arc<Task>) {
         self.children.lock().try_insert(task.tid(), task);
     }
+    pub fn remove_child_task(&self, tid: Tid) {
+        self.children.lock().remove(&tid);
+    }
 
     // 关闭线程组所有其他线程（保留当前进程）
     pub fn close_thread(&self) {
@@ -377,7 +409,8 @@ impl Task {
         unsafe {
             dst_trap_cx_ptr.write(src_trap_cx_ptr.read());
         }
-        let dst_trap_cx_tp_ptr = (dst_trap_cx_ptr as usize + 4 * core::mem::size_of::<usize>()) as *mut usize;
+        let dst_trap_cx_tp_ptr =
+            (dst_trap_cx_ptr as usize + 4 * core::mem::size_of::<usize>()) as *mut usize;
         unsafe { dst_trap_cx_tp_ptr.write(Arc::as_ptr(self) as usize) };
         dst_trap_cx_ptr as usize
     }
@@ -468,13 +501,13 @@ impl Task {
     pub fn op_thread_group_mut<T>(&self, f: impl FnOnce(&mut ThreadGroup) -> T) -> T {
         f(&mut self.thread_group.lock())
     }
-    pub fn op_sig_pending_mut<T>(&self, f: impl FnOnce(&mut SigPending)-> T) -> T {
+    pub fn op_sig_pending_mut<T>(&self, f: impl FnOnce(&mut SigPending) -> T) -> T {
         f(&mut self.sig_pending.lock())
     }
     pub fn op_sig_handler<T>(&self, f: impl FnOnce(&SigHandler) -> T) -> T {
         f(&self.sig_handler.lock())
     }
-    pub fn op_sig_handler_mut<T>(&self, f: impl FnOnce(&mut SigHandler)-> T) -> T {
+    pub fn op_sig_handler_mut<T>(&self, f: impl FnOnce(&mut SigHandler) -> T) -> T {
         f(&mut self.sig_handler.lock())
     }
     /******************************** 任务状态判断 **************************************/
@@ -545,18 +578,20 @@ pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
     // 清空文件描述符表
     task.fd_table().clear();
     // 清空信号
-    task.op_sig_pending_mut(|pending|{
+    task.op_sig_pending_mut(|pending| {
         pending.clear();
     });
     // 向父进程发送SIGCHID
-    task.op_parent(|parent|{
+    task.op_parent(|parent| {
         if let Some(parent) = parent {
             parent.upgrade().unwrap().receive_siginfo(
-                SigInfo{
+                SigInfo {
                     signo: Sig::SIGCHLD.raw(),
                     code: SigInfo::CLD_EXITED,
                     fields: SiField::kill { tid: task.tid() },
-                }, false);
+                },
+                false,
+            );
         }
     });
     TASK_MANAGER.remove(task.tid());
@@ -581,13 +616,19 @@ fn init_user_stack(
     mut auxs_vec: Vec<AuxHeader>,
     mut user_sp: usize,
 ) -> (usize, usize, usize, usize) {
-    fn push_strings_to_stack(memory_set: &MemorySet, strings: &[String], stack_ptr: &mut usize) -> Vec<usize> {
+    fn push_strings_to_stack(
+        memory_set: &MemorySet,
+        strings: &[String],
+        stack_ptr: &mut usize,
+    ) -> Vec<usize> {
         let mut addresses = vec![0; strings.len()];
         for (i, string) in strings.iter().enumerate() {
             *stack_ptr -= string.len() + 1; // '\0'
             *stack_ptr -= *stack_ptr % core::mem::size_of::<usize>(); // 按照usize对齐
             #[cfg(target_arch = "loongarch64")]
-            let ptr = (memory_set.translate_va_to_pa(VirtAddr::from(*stack_ptr)).unwrap()) as *mut u8;
+            let ptr = (memory_set
+                .translate_va_to_pa(VirtAddr::from(*stack_ptr))
+                .unwrap()) as *mut u8;
             #[cfg(target_arch = "riscv64")]
             let ptr = *stack_ptr as *mut u8;
             unsafe {
@@ -599,11 +640,17 @@ fn init_user_stack(
         addresses
     }
 
-    fn push_pointers_to_stack(memory_set: &MemorySet, pointers: &[usize], stack_ptr: &mut usize) -> usize {
+    fn push_pointers_to_stack(
+        memory_set: &MemorySet,
+        pointers: &[usize],
+        stack_ptr: &mut usize,
+    ) -> usize {
         let len = (pointers.len() + 1) * core::mem::size_of::<usize>(); // +1 for null terminator
         *stack_ptr -= len;
         #[cfg(target_arch = "loongarch64")]
-        let base = memory_set.translate_va_to_pa(VirtAddr::from(*stack_ptr)).unwrap();
+        let base = memory_set
+            .translate_va_to_pa(VirtAddr::from(*stack_ptr))
+            .unwrap();
         #[cfg(target_arch = "riscv64")]
         let base = *stack_ptr;
         unsafe {
@@ -616,11 +663,17 @@ fn init_user_stack(
         base
     }
 
-    fn push_aux_headers_to_stack(memory_set: &MemorySet, aux_headers: &[AuxHeader], stack_ptr: &mut usize) -> usize {
+    fn push_aux_headers_to_stack(
+        memory_set: &MemorySet,
+        aux_headers: &[AuxHeader],
+        stack_ptr: &mut usize,
+    ) -> usize {
         let len = aux_headers.len() * core::mem::size_of::<AuxHeader>();
         *stack_ptr -= len;
         #[cfg(target_arch = "loongarch64")]
-        let base = memory_set.translate_va_to_pa(VirtAddr::from(*stack_ptr)).unwrap();
+        let base = memory_set
+            .translate_va_to_pa(VirtAddr::from(*stack_ptr))
+            .unwrap();
         #[cfg(target_arch = "riscv64")]
         let base = *stack_ptr;
         unsafe {
@@ -639,7 +692,7 @@ fn init_user_stack(
     );
 
     // Push environment variables to the stack
-    let envp = push_strings_to_stack(memory_set, envs_vec,  &mut user_sp);
+    let envp = push_strings_to_stack(memory_set, envs_vec, &mut user_sp);
 
     // Push arguments to the stack
     let argv = push_strings_to_stack(memory_set, args_vec, &mut user_sp);
@@ -649,11 +702,13 @@ fn init_user_stack(
     let platform = "RISC-V64";
     #[cfg(target_arch = "loongarch64")]
     let platform = "loongarch64";
-    
+
     user_sp -= platform.len() + 1;
     user_sp -= user_sp % core::mem::size_of::<usize>();
     #[cfg(target_arch = "loongarch64")]
-    let ptr = (memory_set.translate_va_to_pa(VirtAddr::from(user_sp)).unwrap()) as *mut u8;
+    let ptr = (memory_set
+        .translate_va_to_pa(VirtAddr::from(user_sp))
+        .unwrap()) as *mut u8;
     #[cfg(target_arch = "riscv64")]
     let ptr = user_sp as *mut u8;
     unsafe {
@@ -680,18 +735,20 @@ fn init_user_stack(
         aux_type: AT_NULL,
         value: 0,
     });
-    let auxv_base = push_aux_headers_to_stack(&memory_set,&auxs_vec, &mut user_sp);
-    
+    let auxv_base = push_aux_headers_to_stack(&memory_set, &auxs_vec, &mut user_sp);
+
     // Push environment pointers to the stack
-    let envp_base = push_pointers_to_stack(&memory_set,&envp, &mut user_sp);
+    let envp_base = push_pointers_to_stack(&memory_set, &envp, &mut user_sp);
 
     // Push argument pointers to the stack
-    let argv_base = push_pointers_to_stack(&memory_set,&argv, &mut user_sp);
+    let argv_base = push_pointers_to_stack(&memory_set, &argv, &mut user_sp);
 
     // Push argc (number of arguments)
-    user_sp -= core::mem::size_of::<usize>(); 
+    user_sp -= core::mem::size_of::<usize>();
     #[cfg(target_arch = "loongarch64")]
-    let user_sp_pa = (memory_set.translate_va_to_pa(VirtAddr::from(user_sp.clone())).unwrap()) as *mut u8;
+    let user_sp_pa = (memory_set
+        .translate_va_to_pa(VirtAddr::from(user_sp.clone()))
+        .unwrap()) as *mut u8;
     #[cfg(target_arch = "riscv64")]
     let user_sp_pa = user_sp as *mut u8;
     unsafe {

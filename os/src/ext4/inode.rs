@@ -815,7 +815,7 @@ impl Ext4Inode {
             ext4_block_size,
         ) {
             Some(extent) => extent,
-            None=> {
+            None => {
                 // 创建新的extent
                 let new_block_num = self.alloc_block();
                 let new_extent = Ext4Extent::new(logical_start_block, 1, new_block_num);
@@ -912,16 +912,16 @@ impl Ext4Inode {
         let dir_content = Ext4DirContentRO::new(&buf);
         dir_content.find(name)
     }
-    pub fn getdents(&self) -> Vec<Ext4DirEntry> {
+    pub fn getdents(&self, offset: usize) -> Vec<Ext4DirEntry> {
         assert!(self.inner.read().inode_on_disk.is_dir(), "not a directory");
         let dir_size = self.inner.read().inode_on_disk.get_size();
         assert!(
             dir_size & (PAGE_SIZE as u64 - 1) == 0,
             "dir_size is not page aligned"
         );
-        let mut buf = vec![0u8; dir_size as usize];
+        let mut buf = vec![0u8; (dir_size as usize - offset) as usize];
         // buf中是目录的所有内容
-        self.read(0, &mut buf).expect("read failed");
+        self.read(offset, &mut buf).expect("read failed");
         let dir_content = Ext4DirContentRO::new(&buf);
         dir_content.getdents()
     }

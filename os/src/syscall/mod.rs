@@ -15,7 +15,7 @@ use fs::{
     sys_getdents64, sys_ioctl, sys_linkat, sys_mkdirat, sys_mount, sys_openat, sys_pipe2, sys_read,
     sys_statx, sys_umount2, sys_unlinkat, sys_write, sys_writev,
 };
-use mm::{sys_brk, sys_mmap, sys_mprotect, sys_munmap};
+use mm::{sys_brk, sys_madvise, sys_mmap, sys_mprotect, sys_munmap};
 use task::{
     sys_clone, sys_execve, sys_get_time, sys_getpid, sys_getppid, sys_nanosleep, sys_waitpid,
     sys_yield,
@@ -38,6 +38,7 @@ mod signal;
 const SYSCALL_GETCWD: usize = 17;
 const SYSCALL_DUP: usize = 23;
 const SYSCALL_DUP2: usize = 24;
+const SYSCALL_FCNTL: usize = 25;
 const SYSCALL_IOCTL: usize = 29;
 const SYSCALL_MKDIRAT: usize = 34;
 const SYSCALL_UNLINKAT: usize = 35;
@@ -55,8 +56,9 @@ const SYSCALL_WRITE: usize = 64;
 const SYSCALL_WRITEV: usize = 66;
 const SYSCALL_FSTATAT: usize = 79;
 const SYSCALL_FSTAT: usize = 80;
-const SYS_EXIT_GROUP: usize = 94;
+const SYSCALL_UTIMENSAT: usize = 88;
 const SYSCALL_EXIT: usize = 93;
+const SYS_EXIT_GROUP: usize = 94;
 const SYSCALL_SET_TID_ADDRESS: usize = 96;
 const SYSCALL_SET_ROBUST_LIST: usize = 99;
 const SYSCALL_NANOSLEEP: usize = 101;
@@ -83,6 +85,7 @@ const SYSCALL_MUNMAP: usize = 215;
 const SYSCALL_FORK: usize = 220;
 const SYSCALL_EXEC: usize = 221;
 const SYSCALL_MMAP: usize = 222;
+const SYSCALL_MADVISE: usize = 233;
 const SYSCALL_MPROTECT: usize = 226;
 const SYSCALL_WAIT4: usize = 260;
 const SYSCALL_STATX: usize = 291;
@@ -160,6 +163,7 @@ pub fn syscall(
         SYSCALL_GETPPID => sys_getppid(),
         SYSCALL_BRK => sys_brk(a0),
         SYSCALL_MUNMAP => sys_munmap(a0, a1),
+        SYSCALL_MADVISE => sys_madvise(a0, a1, a2 as i32),
         SYSCALL_MPROTECT => sys_mprotect(a0, a1, a2 as i32),
         SYSCALL_FORK => sys_clone(a0 as u32, a1, a2, a3, a4),
         SYSCALL_EXEC => sys_execve(a0 as *mut u8, a1 as *const usize, a2 as *const usize),
@@ -173,8 +177,8 @@ pub fn syscall(
             a4 as *mut Statx,
         ),
         _ => {
-            log::warn!("Unsupported syscall_id: {}", syscall_id);
-            -1
+            log::error!("Unsupported syscall_id: {}", syscall_id);
+            0
         } // panic!("Unsupported syscall_id: {}", syscall_id),
     }
 }

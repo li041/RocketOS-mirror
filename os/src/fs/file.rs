@@ -33,22 +33,36 @@ pub struct FileInner {
 const ENOTTY: isize = 25;
 /// File trait
 pub trait FileOp: Any + Send + Sync {
-    fn as_any(&self) -> &dyn Any;
+    fn as_any(&self) -> &dyn Any {
+        unimplemented!();
+    }
     // 从文件中读取数据到buf中, 返回读取的字节数, 同时更新文件偏移量
-    fn read<'a>(&'a self, buf: &'a mut [u8]) -> usize;
+    fn read<'a>(&'a self, buf: &'a mut [u8]) -> usize {
+        unimplemented!();
+    }
     fn get_page(self: Arc<Self>, page_offset: usize) -> Result<Arc<Page>, &'static str> {
         unimplemented!();
     }
     /// Write `UserBuffer` to file
-    fn write<'a>(&'a self, buf: &'a [u8]) -> usize;
+    fn write<'a>(&'a self, buf: &'a [u8]) -> usize {
+        unimplemented!();
+    }
     // move the file offset
-    fn seek(&self, offset: usize);
+    fn seek(&self, offset: usize) {
+        unimplemented!();
+    }
     // Get the file offset
-    fn get_offset(&self) -> usize;
+    fn get_offset(&self) -> usize {
+        unimplemented!();
+    }
     // readable
-    fn readable(&self) -> bool;
+    fn readable(&self) -> bool {
+        unimplemented!();
+    }
     // writable
-    fn writable(&self) -> bool;
+    fn writable(&self) -> bool {
+        unimplemented!();
+    }
     fn ioctl(&self, _op: usize, _arg_ptr: usize) -> isize {
         -ENOTTY
     }
@@ -106,7 +120,10 @@ impl File {
 
     pub fn readdir(&self) -> Result<Vec<LinuxDirent64>, &'static str> {
         if self.is_dir() {
-            return Ok(self.inner_handler(|inner| inner.inode.getdents()));
+            let (offset, linux_dirents) =
+                self.inner_handler(|inner| inner.inode.getdents(inner.offset));
+            self.add_offset(offset);
+            return Ok(linux_dirents);
         }
         return Err("not a directory");
     }

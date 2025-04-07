@@ -247,9 +247,6 @@ impl MapArea {
         // 对于已经映射的页, 需要重新设置权限
         for &vpn in self.pages.keys() {
             page_table.remap(vpn, PTEFlags::from(self.map_perm));
-            unsafe {
-                sfence_vma_vaddr(vpn.0 << PAGE_SIZE_BITS);
-            }
         }
     }
 }

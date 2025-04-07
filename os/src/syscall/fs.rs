@@ -5,7 +5,9 @@ use alloc::{string::String, vec};
 use alloc::string::ToString;
 use xmas_elf::header::parse_header;
 
+use crate::arch::timer::TimeSpec;
 use crate::fs::kstat::Statx;
+use crate::fs::pipe::make_pipe;
 use crate::{
     ext4::{self, inode::S_IFDIR},
     fs::{
@@ -24,9 +26,8 @@ use crate::{
 };
 
 use crate::arch::mm::{copy_from_user, copy_from_user_mut, copy_to_user};
-use crate::mm::VirtAddr;
 
-#[cfg(target_arch = "riscv64")]
+// #[cfg(target_arch = "riscv64")]
 pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
     let task = current_task();
     let file = task.fd_table().get_file(fd);
@@ -35,49 +36,57 @@ pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
         if !file.readable() {
             return -1;
         }
-        let ret = file.read(unsafe { core::slice::from_raw_parts_mut(buf, len) });
-        if fd >= 3 {
-            log::info!("sys_read: fd: {}, len: {}, ret: {}", fd, len, ret);
+        // let ret = file.read(unsafe { core::slice::from_raw_parts_mut(buf, len) });
+        let mut ker_buf = vec![0u8; len];
+        let read_len = file.read(&mut ker_buf);
+        log::error!(
+            "ker_buf: {:?}, len: {:#x}, read_len: {:#x}",
+            ker_buf,
+            len,
+            read_len
+        );
+        let ker_buf_ptr = ker_buf.as_ptr();
+        assert!(ker_buf_ptr != core::ptr::null());
+        // 写回用户空间
+        let ret = copy_to_user(buf, ker_buf_ptr, read_len as usize);
+        match ret {
+            Ok(ret) => return ret as isize,
+            Err(e) => {
+                log::error!("sys_read: copy_to_user failed: {}", e);
+                return -1;
+            }
         }
-        // new
-        // let buf = current_task().op_memory_set(|memory_set| {
-        //     memory_set
-        //         .translate_va_to_pa(VirtAddr::from(buf as usize))
-        //         .unwrap()
-        // });
-        // let ret = file.read(unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, len) });
-        // // if fd >= 3 {
-        // log::info!("sys_read: fd: {}, len: {}, ret: {}", fd, len, ret);
-        // // }
-        ret as isize
     } else {
         -1
     }
 }
-#[cfg(target_arch = "loongarch64")]
-pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
-    let task = current_task();
-    let file = task.fd_table().get_file(fd);
-    if let Some(file) = file {
-        let file = file.clone();
-        if !file.readable() {
-            return -1;
-        }
-        let buf = current_task().op_memory_set(|memory_set| {
-            memory_set
-                .translate_va_to_pa(VirtAddr::from(buf as usize))
-                .unwrap()
-        });
-        let ret = file.read(unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, len) });
-        // ToOptimize:
-        if fd >= 3 {
-            log::info!("sys_read: fd: {}, len: {}, ret: {}", fd, len, ret);
-        }
-        ret as isize
-    } else {
-        -1
-    }
-}
+
+// #[cfg(target_arch = "loongarch64")]
+// pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
+//     use crate::mm::VirtAddr;
+
+//     let task = current_task();
+//     let file = task.fd_table().get_file(fd);
+//     if let Some(file) = file {
+//         let file = file.clone();
+//         if !file.readable() {
+//             return -1;
+//         }
+//         let buf = current_task().op_memory_set(|memory_set| {
+//             memory_set
+//                 .translate_va_to_pa(VirtAddr::from(buf as usize))
+//                 .unwrap()
+//         });
+//         let ret = file.read(unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, len) });
+//         // ToOptimize:
+//         if fd >= 3 {
+//             log::info!("sys_read: fd: {}, len: {}, ret: {}", fd, len, ret);
+//         }
+//         ret as isize
+//     } else {
+//         -1
+//     }
+// }
 
 #[no_mangle]
 pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
@@ -248,11 +257,6 @@ pub fn sys_openat(dirfd: i32, pathname: *const u8, flags: usize, mode: usize) ->
         flags,
         mode
     );
-    if pathname as usize == 0x12dc0 {
-        current_task().op_memory_set(|memory_set| {
-            memory_set.page_table.dump_all_user_mapping();
-        });
-    }
     let task = current_task();
     let path = c_str_to_string(pathname);
     if let Ok(file) = path_openat(&path, flags, dirfd, mode) {
@@ -482,7 +486,7 @@ pub fn sys_chdir(pathname: *const u8) -> isize {
 // Todo: 直接往用户地址空间写入, 没有检查
 pub fn sys_pipe2(fdset: *const u8) -> isize {
     let task = current_task();
-    let pipe_pair = Pipe::new_pair();
+    let pipe_pair = make_pipe();
     let fd_table = task.fd_table();
     let fd1 = fd_table.alloc_fd(pipe_pair.0.clone());
     let fd2 = fd_table.alloc_fd(pipe_pair.1.clone());
@@ -509,6 +513,17 @@ pub fn sys_close(fd: usize) -> isize {
     } else {
         -1
     }
+}
+
+pub fn sys_utimensat(dirfd: i32, pathname: *const u8, times: *const TimeSpec, flags: i32) -> isize {
+    log::info!(
+        "[sys_utimensat] dirfd: {}, pathname: {:?}, times: {:?}, flags: {}",
+        dirfd,
+        pathname,
+        times,
+        flags
+    );
+    0
 }
 
 /* Todo: fake  */
@@ -544,7 +559,12 @@ pub fn sys_umount2(target: *const u8, flags: i32) -> isize {
 const EBADF: isize = 9;
 /// op是与设备相关的操作码, arg_ptr是指向参数的指针(untyped pointer, 由设备决定)
 pub fn sys_ioctl(fd: usize, op: usize, _arg_ptr: usize) -> isize {
-    log::error!("[sys_ioctl] fd: {}, op: {:x}, arg_ptr: {:x}", fd, op, _arg_ptr);
+    log::error!(
+        "[sys_ioctl] fd: {}, op: {:x}, arg_ptr: {:x}",
+        fd,
+        op,
+        _arg_ptr
+    );
     log::warn!("sys_ioctl Unimplemented");
     let task = current_task();
     let file = task.fd_table().get_file(fd);
@@ -564,6 +584,7 @@ pub fn sys_faccessat(fd: usize, pathname: *const u8, mode: i32, flags: i32) -> i
         mode,
         flags
     );
+    log::warn!("[sys_faccessat] Unimplemented");
     let path = c_str_to_string(pathname);
     if path.is_empty() {
         log::error!("[sys_faccessat] pathname is empty");

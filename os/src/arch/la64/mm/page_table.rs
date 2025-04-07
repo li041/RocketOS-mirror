@@ -5,7 +5,8 @@ use core::fmt::{self, Debug};
 use core::result;
 
 use crate::arch::config::{PAGE_SIZE_BITS, PALEN, USER_MAX_VA};
-use crate::arch::la64::tlb::tlb_global_invalidate;
+use crate::arch::la64::tlb::{tlb_global_invalidate, tlb_invalidate};
+use crate::arch::mm::sfence_vma_vaddr;
 use crate::arch::{PGDH, PGDL};
 
 use crate::mm::{
@@ -56,7 +57,7 @@ impl From<MapPermission> for PTEFlags {
             flags |= PTEFlags::NR;
         }
         if perm.contains(MapPermission::W) {
-            flags |= PTEFlags::W;
+            flags |= PTEFlags::D | PTEFlags::W;
         }
         if !perm.contains(MapPermission::X) {
             flags |= PTEFlags::NX;
@@ -67,8 +68,8 @@ impl From<MapPermission> for PTEFlags {
         if perm.contains(MapPermission::G) {
             flags |= PTEFlags::G;
         }
-        if perm.contains(MapPermission::D) {
-            flags |= PTEFlags::D;
+        if perm.contains(MapPermission::S) {
+            flags |= PTEFlags::S;
         }
         flags
     }
@@ -98,6 +99,7 @@ impl PageTableEntry {
     pub fn from_pte_cow(pte: PageTableEntry) -> Self {
         let mut flags = pte.flags();
         flags.remove(PTEFlags::W);
+        flags.remove(PTEFlags::D);
         flags.insert(PTEFlags::COW);
         Self {
             bits: pte.ppn().0 << 12 | flags.bits(),
@@ -120,7 +122,7 @@ impl PageTableEntry {
         !self.flags().contains(PTEFlags::NR)
     }
     pub fn writable(&self) -> bool {
-        self.flags().contains(PTEFlags::W)
+        self.flags().contains(PTEFlags::D)
     }
     pub fn executable(&self) -> bool {
         !self.flags().contains(PTEFlags::NX)
@@ -179,6 +181,13 @@ impl PTEFlags {
             ret.push_str("MAT_SUC");
         }
 
+        if self.contains(PTEFlags::COW) {
+            ret.push_str("COW");
+        }
+        if self.contains(PTEFlags::S) {
+            ret.push_str("S");
+        }
+
         ret
     }
 }
@@ -205,6 +214,8 @@ impl PageTable {
         }
     }
     pub fn from_existed_user(parent_pagetbl: &PageTable) -> Self {
+        // 注意这行别删, 是loongarch relesae跑起来的神奇咒语
+        log::trace!("[PageTable] from_existed_user");
         let cld_root_frame = frame_alloc().unwrap();
         let cld_root_ppn = cld_root_frame.ppn;
         let mut frames: Vec<FrameTracker> = Vec::new();
@@ -260,8 +271,9 @@ impl PageTable {
                 }
             }
         }
-
         frames.push(cld_root_frame);
+        // 注意修改了当前用户空间的页表项刷新tlb
+        tlb_invalidate();
         // 子进程的页表拥有自己的所有三级页表
         PageTable {
             root_ppn: cld_root_ppn,
@@ -273,6 +285,7 @@ impl PageTable {
 // 操作页表项pte
 // complete
 impl PageTable {
+    /// 由上层调用者保证刷新页表
     pub fn find_pte_create(&mut self, vpn: VirtPageNum) -> Option<&mut PageTableEntry> {
         let idxs = vpn.indexes();
         let mut ppn = self.root_ppn;
@@ -298,22 +311,26 @@ impl PageTable {
         let mut result: Option<&mut PageTableEntry> = None;
         for (i, idx) in idxs.iter().enumerate() {
             let pte = &mut ppn.get_pte_array()[*idx];
+            if !pte.is_valid() {
+                return None;
+            }
             if i == 2 {
                 result = Some(pte);
                 break;
-            }
-            if !pte.is_valid() {
-                return None;
             }
             ppn = pte.ppn();
         }
         result
     }
+    /// Todo: 对于loongarch, 好像D是可写位
     pub fn map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, flags: PTEFlags) {
         let pte = self.find_pte_create(vpn).unwrap();
         assert!(!pte.is_valid(), "vpn {:?} is mapped before mapping", vpn);
-        // *pte = PageTableEntry::new(ppn, flags | PTEFlags::V);
-        *pte = PageTableEntry::new(ppn, flags | PTEFlags::V | PTEFlags::D);
+        *pte = PageTableEntry::new(ppn, flags | PTEFlags::V);
+        // *pte = PageTableEntry::new(ppn, flags | PTEFlags::V | PTEFlags::D);
+        unsafe {
+            sfence_vma_vaddr(vpn.0 << PAGE_SIZE_BITS);
+        }
     }
     pub fn remap(&mut self, vpn: VirtPageNum, flags: PTEFlags) {
         let pte = self.find_pte_create(vpn).unwrap();
@@ -323,6 +340,9 @@ impl PageTable {
             vpn
         );
         *pte = PageTableEntry::new(pte.ppn(), flags | PTEFlags::V | PTEFlags::D);
+        unsafe {
+            sfence_vma_vaddr(vpn.0 << PAGE_SIZE_BITS);
+        }
     }
     pub fn unmap(&mut self, vpn: VirtPageNum) {
         let pte = self.find_pte(vpn).unwrap();
@@ -332,6 +352,9 @@ impl PageTable {
             vpn
         );
         *pte = PageTableEntry::empty();
+        unsafe {
+            sfence_vma_vaddr(vpn.0 << PAGE_SIZE_BITS);
+        }
     }
 }
 

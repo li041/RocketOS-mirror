@@ -65,7 +65,9 @@ impl FileOp for Stdout {
         // for buffer in user_buf.buffers.iter() {
         //     print!("{}", core::str::from_utf8(*buffer).unwrap());
         // }
-        print!("{}", core::str::from_utf8(buf).unwrap());
+        unsafe {
+            print!("{}", core::str::from_utf8_unchecked(buf));
+        }
         buf.len()
     }
     fn seek(&self, _offset: usize) {

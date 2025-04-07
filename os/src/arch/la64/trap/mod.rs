@@ -51,6 +51,7 @@ impl From<Trap> for PageFaultCause {
             Trap::Exception(Exception::PageInvalidLoad) => PageFaultCause::LOAD,
             Trap::Exception(Exception::PageInvalidStore) => PageFaultCause::STORE,
             Trap::Exception(Exception::PageInvalidFetch) => PageFaultCause::EXEC,
+            Trap::Exception(Exception::PageModifyFault) => PageFaultCause::STORE,
             _ => unreachable!(),
         }
     }
@@ -70,32 +71,33 @@ pub fn trap_handler(cx: &mut TrapContext) {
             ) as usize;
         }
         Trap::Exception(Exception::PagePrivilegeIllegal)
-        | Trap::Exception(Exception::PageModifyFault)
         | Trap::Exception(Exception::PageNonReadableFault)
-        | Trap::Exception(Exception::PageNonExecutableFault) => {
-            let task = current_task();
-            let badv = register::BadV::read().get_vaddr();
-            // let va = VirtAddr::from(badv);
-            let pgdl_ppn = PGDL::read().get_base() >> PAGE_SIZE_BITS;
-            let page_table = PageTable::from_token(pgdl_ppn);
-            page_table.dump_all_user_mapping();
-            page_table.dump_with_va(badv);
+        | Trap::Exception(Exception::PageNonExecutableFault) 
+        //     let task = current_task();
+        //     let badv = register::BadV::read().get_vaddr();
+        //     // let va = VirtAddr::from(badv);
+        //     let pgdl_ppn = PGDL::read().get_base() >> PAGE_SIZE_BITS;
+        //     let page_table = PageTable::from_token(pgdl_ppn);
+        //     page_table.dump_all_user_mapping();
+        //     page_table.dump_with_va(badv);
 
-            log::error!(
-                "[page_fault] pid: {}, type: {:?}, badv: {:#x}",
-                task.tid(),
-                cause,
-                badv
-            );
-            panic!("page fault");
-        }
-        Trap::Exception(Exception::PageInvalidFetch)
+        //     log::error!(
+        //         "[page_fault] pid: {}, type: {:?}, badv: {:#x}",
+        //         task.tid(),
+        //         cause,
+        //         badv
+        //     );
+        //     panic!("page fault");
+        // }
+        | Trap::Exception(Exception::PageInvalidFetch)
         | Trap::Exception(Exception::PageInvalidStore)
+        | Trap::Exception(Exception::PageModifyFault)
         | Trap::Exception(Exception::PageInvalidLoad) => {
             let badv = register::BadV::read().get_vaddr();
-            log::error!("page fault at {:#x}", badv);
+            log::error!("{:?} at {:#x}", cause, badv);
             let va = VirtAddr::from(badv);
             let cause = PageFaultCause::from(cause);
+            current_task().memory_set().try_lock().expect("try to lock memory_set failed");
             current_task().op_memory_set_mut(|memory_set| {
                 if let Err(e) = memory_set.handle_recoverable_page_fault(va, cause) {
                         memory_set.page_table.dump_all_user_mapping();
