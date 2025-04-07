@@ -36,7 +36,7 @@ pub trait FileOld: Send + Sync {
 lazy_static! {
     pub static ref FAT32_ROOT_INODE: Arc<dyn InodeTrait> = {
         FAT32FileSystem::open(BLOCK_DEVICE.clone())
-            .lock()
+            .write()
             .root_inode()
     };
 }

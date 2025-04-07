@@ -36,7 +36,7 @@ pub trait InodeTrait: Send + Sync {
 #[allow(unused)]
 impl dyn InodeTrait {
     pub fn insert_child(&self, name: String, inode: Arc<dyn InodeTrait>) {
-        self.get_meta().inner.lock().children.insert(name, inode);
+        self.get_meta().inner.write().children.insert(name, inode);
     }
 
     pub fn sync(&self) {
@@ -56,7 +56,7 @@ impl dyn InodeTrait {
         log::info!("[mkdir_v] child inode name {}", name);
         self.get_meta()
             .inner
-            .lock()
+            .write()
             .children
             .insert(name.to_string(), child.clone());
         Ok(child)
@@ -85,7 +85,7 @@ impl dyn InodeTrait {
             if name == "." {
                 continue;
             } else if name == ".." {
-                if let Some(new_dir) = current_dir.get_meta().inner.lock().parent.clone() {
+                if let Some(new_dir) = current_dir.get_meta().inner.read().parent.clone() {
                     current_dir = new_dir.upgrade().unwrap();
                 } else {
                     return Err(1);
@@ -113,7 +113,7 @@ impl dyn InodeTrait {
     }
 
     pub fn delete(&self) {
-        let parent = self.get_meta().inner.lock().parent.clone();
+        let parent = self.get_meta().inner.write().parent.clone();
         if let Some(parent) = parent {
             let parent = parent.upgrade().unwrap();
             let name = self.get_name();
@@ -177,12 +177,12 @@ impl InodeMeta {
         this: Arc<dyn InodeTrait>,
         f: impl FnOnce(&mut BTreeMap<String, Arc<dyn InodeTrait>>) -> T,
     ) -> T {
-        let mut inner = self.inner.lock();
+        let mut inner = self.inner.write();
         if inner.state == InodeState::Init {
             inner.state = InodeState::Unmodified;
             drop(inner); // release lock, avoid deadlock in load_children_from_disk()
             this.load_children_from_disk(this.clone());
-            f(&mut self.inner.lock().children)
+            f(&mut self.inner.write().children)
         } else {
             f(&mut inner.children)
         }

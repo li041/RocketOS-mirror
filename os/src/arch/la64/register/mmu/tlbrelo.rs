@@ -1,7 +1,7 @@
 use core::convert::{TryFrom, TryInto};
 
 use super::{tlbelo::TLBEL, MemoryAccessType};
-use crate::{arch::config::PALEN, arch::mm::PhysPageNum};
+use crate::{arch::config::PALEN, mm::PhysPageNum};
 use bit_field::BitField;
 impl_define_csr!(TLBRELo0,"TLB Refill Exception Entry Low-order Bits (TLBRELO0, TLBRELO1)
 

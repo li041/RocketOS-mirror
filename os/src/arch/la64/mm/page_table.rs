@@ -4,19 +4,17 @@ use bitflags::bitflags;
 use core::fmt::{self, Debug};
 use core::result;
 
-use crate::arch::config::{PAGE_SIZE_BITS, PALEN};
+use crate::arch::config::{PAGE_SIZE_BITS, PALEN, USER_MAX_VA};
 use crate::arch::la64::tlb::tlb_global_invalidate;
 use crate::arch::{PGDH, PGDL};
 
-use super::memory_set::{MapPermission, KERNEL_SATP};
-use super::{
-    frame_allocator::{frame_alloc, FrameTracker},
-    PhysPageNum,
+use crate::mm::{
+    frame_alloc, FrameTracker, MapPermission, PhysAddr, PhysPageNum, VirtAddr, VirtPageNum,
+    KERNEL_SATP,
 };
-use super::{PhysAddr, VirtAddr, VirtPageNum};
 
 bitflags! {
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub struct PTEFlags: usize {
         const V = 1 << 0;
         const D = 1 << 1;
@@ -36,6 +34,11 @@ bitflags! {
         /// 存在位, 1表示已分配物理页(用于按需分配, COW)
         const P = 1 << 7;
         const W = 1 << 8;
+        /// copy on write, 1表示该页表项是一个COW页表项
+        /// 该页表项的物理页在写入时会被复制到一个新的物理页上
+        const COW = 1 << 9;
+        /// 共享位, 1表示该页表项可以被多个进程共享
+        const S = 1 << 10;
 
         /// 不可读
         const NR = 1 << (usize::BITS - 3);
@@ -46,8 +49,8 @@ bitflags! {
     }
 }
 
-impl From<&MapPermission> for PTEFlags {
-    fn from(perm: &MapPermission) -> Self {
+impl From<MapPermission> for PTEFlags {
+    fn from(perm: MapPermission) -> Self {
         let mut flags = PTEFlags::V | PTEFlags::MAT_CC | PTEFlags::P;
         if !perm.contains(MapPermission::R) {
             flags |= PTEFlags::NR;
@@ -92,6 +95,14 @@ impl PageTableEntry {
             bits: ppn.0 << 12 | flags.bits(),
         }
     }
+    pub fn from_pte_cow(pte: PageTableEntry) -> Self {
+        let mut flags = pte.flags();
+        flags.remove(PTEFlags::W);
+        flags.insert(PTEFlags::COW);
+        Self {
+            bits: pte.ppn().0 << 12 | flags.bits(),
+        }
+    }
     pub fn empty() -> Self {
         Self { bits: 0 }
     }
@@ -116,6 +127,12 @@ impl PageTableEntry {
     }
     pub fn is_user(&self) -> bool {
         self.flags().contains(PTEFlags::PLV3)
+    }
+    pub fn is_cow(&self) -> bool {
+        self.flags().contains(PTEFlags::COW)
+    }
+    pub fn is_shared(&self) -> bool {
+        self.flags().contains(PTEFlags::S)
     }
 }
 
@@ -187,9 +204,69 @@ impl PageTable {
             frames: Vec::new(),
         }
     }
-    // Todo:
     pub fn from_existed_user(parent_pagetbl: &PageTable) -> Self {
-        todo!()
+        let cld_root_frame = frame_alloc().unwrap();
+        let cld_root_ppn = cld_root_frame.ppn;
+        let mut frames: Vec<FrameTracker> = Vec::new();
+        let prt_root_ppn = parent_pagetbl.root_ppn;
+        // parent and child root page table
+        let cld_1_table = cld_root_frame.ppn.get_pte_array();
+        let prt_1_table = prt_root_ppn.get_pte_array();
+
+        // // 1. Copy only kernel mapping from parent root page table
+        // let kernel_start_vpn = VirtPageNum::from(KERNEL_DIRECT_OFFSET);
+        // let kernel_start_idx1 = kernel_start_vpn.indexes()[0];
+        // cld_1_table[kernel_start_idx1..].copy_from_slice(&prt_1_table[kernel_start_idx1..]);
+
+        // 2. copy user mapping from parent root page table and 2nd level page table
+        // todo: 考虑优化, 将level_1_idx作为常量
+        let user_end_vpn = VirtAddr::from(USER_MAX_VA).ceil();
+        let user_end_idx1 = user_end_vpn.indexes()[0];
+        let prt_1_table_user = &prt_1_table[..user_end_idx1];
+        for (idx1, prt_1_entry) in prt_1_table_user.iter().enumerate() {
+            if prt_1_entry.is_valid() {
+                let cld_1_pte = &mut cld_1_table[idx1];
+                let frame = frame_alloc().unwrap();
+                // Copy parent's 2nd level page table
+                let prt_2_table = prt_1_entry.ppn().get_pte_array();
+                let cld_2_table = frame.ppn.get_pte_array();
+                cld_2_table.copy_from_slice(&prt_2_table);
+                // add mapping to child 1st level page table
+                *cld_1_pte = PageTableEntry::new(frame.ppn, PTEFlags::V);
+                // add frame to child pagetable(是子进程独有的)
+                frames.push(frame);
+
+                for (idx2, prt_2_entry) in prt_2_table.iter_mut().enumerate() {
+                    if prt_2_entry.is_valid() {
+                        let cld_2_pte = &mut cld_2_table[idx2];
+                        let prt_3_table = prt_2_entry.ppn().get_pte_array();
+                        // 3. clear PTE_W and set PTE_COW in parent 3rd level pagetable
+                        for ptr_3_entry in prt_3_table.iter_mut() {
+                            // 如果pte是private, 且可写, 则设置为COW
+                            if ptr_3_entry.writable() && !ptr_3_entry.is_shared() {
+                                // todo: 优化 modify in place
+                                *ptr_3_entry = PageTableEntry::from_pte_cow(*ptr_3_entry);
+                            }
+                        }
+                        // 4. copy parent's 3rd level page table
+                        let frame = frame_alloc().unwrap();
+                        let cld_3_table = frame.ppn.get_pte_array();
+                        cld_3_table.copy_from_slice(&prt_3_table);
+                        // add mapping to child 2nd level page table
+                        *cld_2_pte = PageTableEntry::new(frame.ppn, PTEFlags::V);
+                        // add frame to child pagetable(是子进程独有的)
+                        frames.push(frame);
+                    }
+                }
+            }
+        }
+
+        frames.push(cld_root_frame);
+        // 子进程的页表拥有自己的所有三级页表
+        PageTable {
+            root_ppn: cld_root_ppn,
+            frames,
+        }
     }
 }
 
@@ -197,7 +274,7 @@ impl PageTable {
 // complete
 impl PageTable {
     pub fn find_pte_create(&mut self, vpn: VirtPageNum) -> Option<&mut PageTableEntry> {
-        let idxs = vpn.indexes::<3>();
+        let idxs = vpn.indexes();
         let mut ppn = self.root_ppn;
         let mut result: Option<&mut PageTableEntry> = None;
         for (i, idx) in idxs.iter().enumerate() {
@@ -216,7 +293,7 @@ impl PageTable {
         result
     }
     pub fn find_pte(&self, vpn: VirtPageNum) -> Option<&mut PageTableEntry> {
-        let idxs = vpn.indexes::<3>();
+        let idxs = vpn.indexes();
         let mut ppn = self.root_ppn;
         let mut result: Option<&mut PageTableEntry> = None;
         for (i, idx) in idxs.iter().enumerate() {
@@ -237,6 +314,15 @@ impl PageTable {
         assert!(!pte.is_valid(), "vpn {:?} is mapped before mapping", vpn);
         // *pte = PageTableEntry::new(ppn, flags | PTEFlags::V);
         *pte = PageTableEntry::new(ppn, flags | PTEFlags::V | PTEFlags::D);
+    }
+    pub fn remap(&mut self, vpn: VirtPageNum, flags: PTEFlags) {
+        let pte = self.find_pte_create(vpn).unwrap();
+        assert!(
+            pte.is_valid(),
+            "vpn {:?} is not mapped before remapping",
+            vpn
+        );
+        *pte = PageTableEntry::new(pte.ppn(), flags | PTEFlags::V | PTEFlags::D);
     }
     pub fn unmap(&mut self, vpn: VirtPageNum) {
         let pte = self.find_pte(vpn).unwrap();
@@ -317,7 +403,7 @@ impl PageTable {
         let pagetable = self.root_ppn.get_pte_array();
         let mut va = va;
         let vpn = va >> PAGE_SIZE_BITS;
-        let indexes = VirtPageNum::from(vpn).indexes::<3>();
+        let indexes = VirtPageNum::from(vpn).indexes();
         let pte = pagetable[indexes[0]];
         if !pte.is_valid() {
             log::error!("level1: --- va: {:#x}, pte: None", va);

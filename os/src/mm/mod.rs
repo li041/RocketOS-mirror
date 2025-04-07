@@ -7,7 +7,28 @@ use core::{
 #[cfg(feature = "test")]
 use heap_allocator::heap_test;
 
-pub mod heap_allocator;
+mod heap_allocator;
 
-// #[cfg(target_arch = "riscv64")]
-pub mod page;
+mod address;
+mod area;
+mod frame_allocator;
+mod memory_set;
+mod page;
+
+pub use address::{PhysAddr, PhysPageNum, VPNRange, VirtAddr, VirtPageNum};
+pub use area::{MapArea, MapPermission, MapType};
+pub use frame_allocator::{frame_alloc, frame_dealloc, FrameTracker};
+pub use memory_set::{MemorySet, KERNEL_SATP, KERNEL_SPACE};
+pub use page::{Page, PageKind};
+
+pub fn init() {
+    heap_allocator::init_heap();
+    frame_allocator::init_frame_allocator();
+    #[cfg(feature = "test")]
+    heap_test();
+    #[cfg(feature = "test")]
+    frame_allocator::frame_allocator_test();
+    // 用于初始化Kernel Space
+    let _kernel_satp = KERNEL_SATP.clone();
+    KERNEL_SPACE.lock().activate();
+}

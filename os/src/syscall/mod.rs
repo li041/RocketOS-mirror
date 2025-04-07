@@ -11,11 +11,11 @@
 //! submodules, and you should also implement syscalls this way.
 
 use fs::{
-    sys_chdir, sys_close, sys_dup, sys_dup2, sys_fstat, sys_fstatat, sys_getcwd, sys_getdents64,
-    sys_ioctl, sys_linkat, sys_mkdirat, sys_mount, sys_openat, sys_pipe2, sys_read, sys_statx,
-    sys_umount2, sys_unlinkat, sys_write, sys_writev,
+    sys_chdir, sys_close, sys_dup, sys_dup2, sys_faccessat, sys_fstat, sys_fstatat, sys_getcwd,
+    sys_getdents64, sys_ioctl, sys_linkat, sys_mkdirat, sys_mount, sys_openat, sys_pipe2, sys_read,
+    sys_statx, sys_umount2, sys_unlinkat, sys_write, sys_writev,
 };
-use mm::{sys_brk, sys_mmap, sys_munmap};
+use mm::{sys_brk, sys_mmap, sys_mprotect, sys_munmap};
 use task::{
     sys_clone, sys_execve, sys_get_time, sys_getpid, sys_getppid, sys_nanosleep, sys_waitpid,
     sys_yield,
@@ -26,6 +26,7 @@ use crate::fs::{
     kstat::{Stat, Statx},
     uio::IoVec,
 };
+pub use mm::MmapFlags;
 pub use task::sys_exit;
 mod fs;
 mod mm;
@@ -55,6 +56,7 @@ const SYSCALL_FSTAT: usize = 80;
 const SYS_EXIT_GROUP: usize = 94;
 const SYSCALL_EXIT: usize = 93;
 const SYSCALL_SET_TID_ADDRESS: usize = 96;
+const SYSCALL_SET_ROBUST_LIST: usize = 99;
 const SYSCALL_NANOSLEEP: usize = 101;
 const SYSCALL_YIELD: usize = 124;
 const SYSCALL_TIMES: usize = 153;
@@ -68,6 +70,7 @@ const SYSCALL_MUNMAP: usize = 215;
 const SYSCALL_FORK: usize = 220;
 const SYSCALL_EXEC: usize = 221;
 const SYSCALL_MMAP: usize = 222;
+const SYSCALL_MPROTECT: usize = 226;
 const SYSCALL_WAIT4: usize = 260;
 const SYSCALL_STATX: usize = 291;
 
@@ -112,6 +115,7 @@ pub fn syscall(
             a3,
             a4 as *const u8,
         ),
+        SYSCALL_FACCESSAT => sys_faccessat(a0 as usize, a1 as *const u8, a2 as i32, a3 as i32),
         SYSCALL_CHDIR => sys_chdir(a0 as *const u8),
         SYSCALL_OPENAT => sys_openat(a0 as i32, a1 as *const u8, a2, a3),
         SYSCALL_CLOSE => sys_close(a0),
@@ -132,6 +136,7 @@ pub fn syscall(
         SYSCALL_GETPPID => sys_getppid(),
         SYSCALL_BRK => sys_brk(a0),
         SYSCALL_MUNMAP => sys_munmap(a0, a1),
+        SYSCALL_MPROTECT => sys_mprotect(a0, a1, a2 as i32),
         SYSCALL_FORK => sys_clone(a0 as u32, a1, a2, a3, a4),
         SYSCALL_EXEC => sys_execve(a0 as *mut u8, a1 as *const usize, a2 as *const usize),
         SYSCALL_MMAP => sys_mmap(a0, a1, a2, a3, a4 as i32, a5),
@@ -144,9 +149,8 @@ pub fn syscall(
             a4 as *mut Statx,
         ),
         _ => {
-            log::error!("Unsupported syscall_id: {}", syscall_id);
-            0
+            log::warn!("Unsupported syscall_id: {}", syscall_id);
+            -1
         } // panic!("Unsupported syscall_id: {}", syscall_id),
     }
 }
-

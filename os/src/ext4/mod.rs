@@ -5,6 +5,7 @@ use crate::{
         inode::InodeOp,
         kstat::Kstat,
     },
+    mm::Page,
 };
 use alloc::vec;
 use alloc::{
@@ -15,10 +16,14 @@ use alloc::{
 use block_op::Ext4DirContentWE;
 use dentry::EXT4_DT_DIR;
 use fs::EXT4_BLOCK_SIZE;
-use inode::{load_inode, write_inode, Ext4Inode, EXT4_EXTENTS_FL, S_IALLUGO, S_IFDIR, S_IFREG};
+use inode::{
+    load_inode, write_inode, Ext4Inode, EXT4_EXTENTS_FL, EXT4_INLINE_DATA_FL, S_IALLUGO, S_IFDIR,
+    S_IFREG,
+};
 
 use alloc::vec::Vec;
 use core::any::Any;
+use spin::RwLock;
 
 mod block_group;
 pub mod block_op;
@@ -34,6 +39,11 @@ impl InodeOp for Ext4Inode {
     }
     fn read<'a>(&'a self, offset: usize, buf: &'a mut [u8]) -> usize {
         self.read(offset, buf).expect("Ext4Inode::read failed")
+    }
+    // 共享文件映射和私有文件映射只读时调用
+    fn get_page(self: Arc<Self>, page_index: usize) -> Result<Arc<Page>, &'static str> {
+        self.get_page_cache(page_index)
+            .ok_or("Ext4Inode::get_page failed")
     }
 
     fn write<'a>(&'a self, page_offset: usize, buf: &'a [u8]) -> usize {
@@ -110,7 +120,7 @@ impl InodeOp for Ext4Inode {
         // 初始化新的inode结构
         let new_inode = Ext4Inode::new(
             (mode & S_IALLUGO) as u16 | S_IFREG,
-            EXT4_EXTENTS_FL,
+            EXT4_INLINE_DATA_FL,
             self.ext4_fs.clone(),
             new_inode_num,
             self.block_device.clone(),
@@ -177,7 +187,7 @@ impl InodeOp for Ext4Inode {
         // 2. 初始化新的inode结构
         let new_inode = Ext4Inode::new(
             (mode & S_IALLUGO) as u16 | S_IFREG,
-            EXT4_EXTENTS_FL,
+            EXT4_INLINE_DATA_FL,
             self.ext4_fs.clone(),
             new_inode_num,
             self.block_device.clone(),
@@ -271,7 +281,7 @@ impl InodeOp for Ext4Inode {
     /// inode->link直接存储符号链接目标路径, 如果存在, 则直接返回
     /// 如果inode->link为空, 则从数据块中读取
     fn get_link(&self) -> String {
-        if let Some(link) = self.link.lock().as_ref() {
+        if let Some(link) = self.link.read().as_ref() {
             return link.clone();
         }
         // 从inode中读取

@@ -109,7 +109,7 @@ impl Ext4FileSystem {
                 is_dir,
             ) {
                 // 修改super_block的free_inodes_count
-                self.super_block.inner.lock().free_inodes_count -= 1;
+                self.super_block.inner.write().free_inodes_count -= 1;
                 let global_inode_num =
                     local_inode_num + self.super_block.inodes_per_group as usize * i;
                 return global_inode_num;
@@ -135,7 +135,7 @@ impl Ext4FileSystem {
     }
 
     pub fn add_orphan_inode(&self, inode_num: usize) {
-        self.super_block.orphan_inodes.lock().push(inode_num);
+        self.super_block.orphan_inodes.write().push(inode_num);
     }
     pub fn alloc_block(&self, block_device: Arc<dyn BlockDevice>) -> usize {
         let block_bitmap_size = self.super_block.blocks_per_group as usize / 8;
@@ -144,7 +144,7 @@ impl Ext4FileSystem {
                 group.alloc_block(block_device.clone(), self.block_size(), block_bitmap_size)
             {
                 // 修改super_block的free_blocks_count
-                self.super_block.inner.lock().free_blocks_count -= 1;
+                self.super_block.inner.write().free_blocks_count -= 1;
                 let global_block_num =
                     local_block_num + self.super_block.blocks_per_group as usize * i;
                 return global_block_num;

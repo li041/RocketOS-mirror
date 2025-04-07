@@ -6,19 +6,20 @@ use core::{
     fmt::{self, Debug, Formatter},
 };
 
-use super::address::{PhysAddr, PhysPageNum, VirtPageNum};
-use crate::arch::config::{KERNEL_DIRECT_OFFSET, PAGE_SIZE_BITS, USER_MAX_VA};
+use crate::mm::{
+    frame_alloc, MapPermission, PhysAddr, PhysPageNum, VirtAddr, VirtPageNum, KERNEL_SPACE,
+};
+use crate::{
+    arch::config::{KERNEL_DIRECT_OFFSET, PAGE_SIZE_BITS, USER_MAX_VA},
+    mm::FrameTracker,
+};
 use bitflags::bitflags;
 
-use super::{
-    frame_allocator::{frame_alloc, FrameTracker},
-    memory_set::KERNEL_SPACE,
-    VirtAddr,
-};
 use alloc::vec::Vec;
 use alloc::{string::String, vec};
 
 bitflags! {
+    #[derive(Clone)]
     pub struct PTEFlags: u16 {
         const V = 1 << 0;
         const R = 1 << 1;
@@ -29,6 +30,14 @@ bitflags! {
         const A = 1 << 6;
         const D = 1 << 7;
         const COW = 1 << 8;
+        const S = 1 << 9;
+    }
+}
+
+impl From<MapPermission> for PTEFlags {
+    #[inline]
+    fn from(permission: MapPermission) -> Self {
+        PTEFlags::from_bits(permission.bits()).unwrap()
     }
 }
 
@@ -74,7 +83,6 @@ impl PageTableEntry {
     }
     ///Return 10bit flag
     pub fn flags(&self) -> PTEFlags {
-        // PTEFlags::from_bits(self.bits as u16).unwrap()
         PTEFlags::from_bits_truncate(self.bits as u16)
     }
     ///Check PTE valid
@@ -100,6 +108,10 @@ impl PageTableEntry {
     /// Check PTE COW
     pub fn is_cow(&self) -> bool {
         self.flags().contains(PTEFlags::COW)
+    }
+    /// Check PTE shared
+    pub fn is_shared(&self) -> bool {
+        self.flags().contains(PTEFlags::S)
     }
 }
 
@@ -133,6 +145,9 @@ impl PTEFlags {
         }
         if self.contains(PTEFlags::COW) {
             ret.push_str("COW");
+        }
+        if self.contains(PTEFlags::S) {
+            ret.push_str("S");
         }
         ret
     }
@@ -182,6 +197,7 @@ impl PageTable {
             frames: vec![frame],
         }
     }
+    /// 支持共享内存
     pub fn from_existed_user(parent_pagetbl: &PageTable) -> Self {
         let cld_root_frame = frame_alloc().unwrap();
         let cld_root_ppn = cld_root_frame.ppn;
@@ -220,7 +236,8 @@ impl PageTable {
                         let prt_3_table = prt_2_entry.ppn().get_pte_array();
                         // 3. clear PTE_W and set PTE_COW in parent 3rd level pagetable
                         for ptr_3_entry in prt_3_table.iter_mut() {
-                            if ptr_3_entry.writable() {
+                            // 如果pte是private, 且可写, 则设置为COW
+                            if ptr_3_entry.writable() && !ptr_3_entry.is_shared() {
                                 // todo: 优化 modify in place
                                 *ptr_3_entry = PageTableEntry::from_pte_cow(*ptr_3_entry);
                             }
@@ -276,12 +293,12 @@ impl PageTable {
         let mut result: Option<&mut PageTableEntry> = None;
         for (i, idx) in idxs.iter().enumerate() {
             let pte = &mut ppn.get_pte_array()[*idx];
+            if !pte.is_valid() {
+                return None;
+            }
             if i == 2 {
                 result = Some(pte);
                 break;
-            }
-            if !pte.is_valid() {
-                return None;
             }
             ppn = pte.ppn();
         }
@@ -289,14 +306,20 @@ impl PageTable {
     }
     /// Create a mapping from `vpn` to `ppn`.
     pub fn map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, flags: PTEFlags) {
-        // if flags.contains(PTEFlags::U) {
-        //     log::debug!("map {:?} to {:?} with {}", vpn, ppn, flags.readable_flags());
-        // }
-        // if DEBUG_FLAG.load(core::sync::atomic::Ordering::Relaxed) != 0 {}
         let pte = self.find_pte_create(vpn).unwrap();
         assert!(!pte.is_valid(), "vpn {:?} is mapped before mapping", vpn);
-        // *pte = PageTableEntry::new(ppn, flags | PTEFlags::V);
         *pte = PageTableEntry::new(ppn, flags | PTEFlags::V | PTEFlags::A | PTEFlags::D);
+    }
+    /// Remap a mapping from `vpn` to `ppn`.
+    /// 由上层调用者保证vpn已经被映射
+    pub fn remap(&mut self, vpn: VirtPageNum, flags: PTEFlags) {
+        let pte = self.find_pte(vpn).unwrap();
+        assert!(
+            pte.is_valid(),
+            "vpn {:?} is not mapped before remapping",
+            vpn
+        );
+        *pte = PageTableEntry::new(pte.ppn(), flags | PTEFlags::V | PTEFlags::A | PTEFlags::D);
     }
     pub fn unmap(&mut self, vpn: VirtPageNum) {
         let pte = self.find_pte(vpn).unwrap();

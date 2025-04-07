@@ -71,11 +71,9 @@ static DEBUG_FLAG: AtomicU8 = AtomicU8::new(0);
 #[no_mangle]
 #[cfg(target_arch = "riscv64")]
 pub fn rust_main(_hart_id: usize, dtb_address: usize) -> ! {
-    use arch::config::KERNEL_BASE;
     use arch::trap::{self, TrapContext};
     use riscv::register::sstatus;
     use task::{add_initproc, run_tasks, TaskContext};
-    use virtio_drivers::device;
     pub fn show_context_size() {
         log::info!(
             "size of trap context: {}",
@@ -90,7 +88,7 @@ pub fn rust_main(_hart_id: usize, dtb_address: usize) -> ! {
     clear_bss();
     println!("hello world!");
     logging::init();
-    arch::mm::init();
+    mm::init();
     trap::init();
     // 允许S mode访问U mode的页面
     //  S mode下会访问User的堆
@@ -129,7 +127,7 @@ pub fn rust_main() -> ! {
     clear_bss();
     logging::init();
     bootstrap_init();
-    arch::mm::init();
+    mm::init();
     pci::init();
     trap::init();
     add_initproc();

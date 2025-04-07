@@ -4,8 +4,10 @@ use core::fmt::{Debug, Formatter};
 
 use alloc::fmt;
 
-use super::page_table::PageTableEntry;
-use crate::arch::config::{KERNEL_BASE, PAGE_SIZE_BITS};
+use crate::arch::config::{KERNEL_BASE, PAGE_SIZE, PAGE_SIZE_BITS};
+use crate::arch::mm::PageTableEntry;
+
+use core::ops::{Add, Sub};
 
 #[repr(C)]
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -13,7 +15,6 @@ pub struct PhysAddr(pub usize);
 
 impl From<usize> for PhysAddr {
     fn from(addr: usize) -> Self {
-        // Self(addr & ((1 << PA_WIDTH_SV39) - 1))
         Self(addr)
     }
 }
@@ -114,6 +115,7 @@ impl StepByOne for PhysPageNum {
 
 // 注意通过ppn获取对应物理页帧仍然是使用虚拟地址, 内核虚拟地址空间偏移KERNEL_BASE(0xffff_ffc0_0000_0000)
 // 映射关系是在entry.asm中设置的
+// riscv64对内核虚拟地址空间进行了偏移, 而loongarch64是直接映射
 impl PhysPageNum {
     /// Get `PageTableEntry` on `PhysPageNum`
     pub fn get_pte_array(&self) -> &'static mut [PageTableEntry] {
@@ -144,7 +146,6 @@ pub struct VirtPageNum(pub usize);
 
 impl From<usize> for VirtPageNum {
     fn from(addr: usize) -> Self {
-        // Self(addr & ((1 << VPN_WIDTH_SV39) - 1))
         Self(addr)
     }
 }
@@ -170,26 +171,26 @@ impl StepByOne for VirtPageNum {
 
 impl Debug for VirtAddr {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_fmt(format_args!("VA:{:#x}", self.0))
+        f.write_fmt(format_args!("va: {:#x}", self.0))
     }
 }
 impl Debug for VirtPageNum {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_fmt(format_args!("VPN:{:#x}", self.0))
+        f.write_fmt(format_args!("vpn: {:#x}", self.0))
     }
 }
 impl Debug for PhysAddr {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_fmt(format_args!("PA:{:#x}", self.0))
+        f.write_fmt(format_args!("pa: {:#x}", self.0))
     }
 }
 impl Debug for PhysPageNum {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_fmt(format_args!("PPN:{:#x}", self.0))
+        f.write_fmt(format_args!("ppn: {:#x}", self.0))
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq)]
 pub struct SimpleRange<T>
 where
     T: StepByOne + Copy + PartialEq + PartialOrd + Debug,
@@ -205,6 +206,7 @@ where
         assert!(start <= end, "start {:?} > end {:?}!", start, end);
         Self { l: start, r: end }
     }
+    #[inline(always)]
     pub fn get_start(&self) -> T {
         self.l
     }
@@ -270,5 +272,15 @@ pub type VPNRange = SimpleRange<VirtPageNum>;
 impl VPNRange {
     pub fn contains_vpn(self, other: VirtPageNum) -> bool {
         self.get_start() <= other && other < self.get_end()
+    }
+}
+
+impl Debug for VPNRange {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        f.write_fmt(format_args!(
+            "{:#x}, {:#x}",
+            self.get_start().0,
+            self.get_end().0
+        ))
     }
 }

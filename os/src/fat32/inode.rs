@@ -110,11 +110,11 @@ impl FAT32Inode {
 
 impl InodeTrait for FAT32Inode {
     fn read<'a>(&'a self, offset: usize, buf: &'a mut [u8]) -> usize {
-        self.file.lock().read(buf, offset)
+        self.file.write().read(buf, offset)
     }
 
     fn write<'a>(&'a self, _offset: usize, _buf: &'a [u8]) -> usize {
-        self.file.lock().write(_buf, _offset)
+        self.file.write().write(_buf, _offset)
     }
 
     fn mknod(
@@ -159,8 +159,8 @@ impl InodeTrait for FAT32Inode {
     fn load_children_from_disk(&self, this: Arc<dyn InodeTrait>) {
         assert_eq!(self.meta.mode, InodeMode::FileDIR);
         let meta = self.meta.clone();
-        let mut meta_inner = meta.inner.lock();
-        let mut content = self.file.lock();
+        let mut meta_inner = meta.inner.write();
+        let mut content = self.file.write();
         let fat = Arc::clone(&content.fat);
         let mut dentry_content = FAT32DentryContent::new(&mut content);
         while let Some(dentry) = FAT32DirEntry::read_dentry(&mut dentry_content) {
@@ -177,6 +177,6 @@ impl InodeTrait for FAT32Inode {
     }
 
     fn clear(&self) {
-        self.file.lock().clear();
+        self.file.write().clear();
     }
 }

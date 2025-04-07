@@ -7,8 +7,9 @@ use super::{
     String, Tid,
 };
 use crate::{
-    arch::{mm::MemorySet, trap::TrapContext},
+    arch::trap::TrapContext,
     fs::{fdtable::FdTable, file::FileOp, path::Path, FileOld, Stdin, Stdout},
+    mm::MemorySet,
     mutex::SpinNoIrqLock,
     // syscall::CloneFlags,
     task::{
@@ -148,6 +149,7 @@ impl Task {
         task
     }
 
+    #[cfg(target_arch = "loongarch64")]
     pub fn kernel_clone(self: &Arc<Self>, flags: CloneFlags) -> Arc<Self> {
         let tid = tid_alloc();
         let exit_code = AtomicI32::new(0);
@@ -192,7 +194,101 @@ impl Task {
             // Todo: execve可能有问题
             memory_set = self.memory_set.clone()
         } else {
-            // memory_set = Arc::new(SpinNoIrqLock::new(MemorySet::from_existed_user_lazily(
+            memory_set = Arc::new(SpinNoIrqLock::new(MemorySet::from_existed_user_lazily(
+                // memory_set = Arc::new(SpinNoIrqLock::new(MemorySet::from_existed_user(
+                &self.memory_set.lock(),
+            )));
+        }
+        // 申请新的内核栈并写入trap_cx内容
+        kstack = self.trap_context_clone();
+        // 更新task_cx
+        kstack -= core::mem::size_of::<TaskContext>();
+        let kstack = KernelStack(kstack);
+        if flags.contains(CloneFlags::CLONE_FILES) {
+            fd_table = self.fd_table.clone()
+        } else {
+            fd_table = FdTable::from_existed_user(&self.fd_table);
+        }
+        let task = Arc::new(Self {
+            kstack,
+            tid,
+            tgid,
+            status,
+            parent,
+            children,
+            exit_code,
+            thread_group,
+            memory_set,
+            fd_table,
+            root,
+            pwd,
+        });
+        if !flags.contains(CloneFlags::CLONE_THREAD) {
+            self.add_child(task.clone());
+        }
+        task.op_thread_group_mut(|tg| tg.add(task.clone()));
+        // 在内核栈中加入task_cx
+        write_task_cx(task.clone());
+        log::info!(
+            "[kernel_clone] task{}, kstack: {:#x}",
+            task.tid(),
+            task.kstack()
+        );
+        log::info!(
+            "[kernel_clone] task{}, strong_count {}",
+            task.tid(),
+            Arc::strong_count(&task)
+        ); // 未加入调度器理论为 2
+        log::info!("[kernel_clone] task{} create sucessfully!", task.tid());
+
+        task
+    }
+
+    #[cfg(target_arch = "riscv64")]
+    pub fn kernel_clone(self: &Arc<Self>, flags: CloneFlags) -> Arc<Self> {
+        let tid = tid_alloc();
+        let exit_code = AtomicI32::new(0);
+        let status = SpinNoIrqLock::new(TaskStatus::Ready);
+        let tgid;
+        let mut kstack;
+        let parent;
+        let children;
+        let thread_group;
+        let memory_set;
+        let fd_table;
+        let root;
+        let pwd;
+        log::info!(
+            "[kernel_clone] current_task pid: {}, new_task pid: {}",
+            self.tid(),
+            tid
+        );
+        if flags.contains(CloneFlags::SIGCHLD) {
+            // ToDo:
+        }
+        // 创建线程
+        if flags.contains(CloneFlags::CLONE_THREAD) {
+            tgid = SpinNoIrqLock::new(TidHandle(self.tgid()));
+            parent = self.parent.clone();
+            children = self.children.clone();
+            thread_group = self.thread_group.clone();
+            root = self.root.clone();
+            pwd = self.pwd.clone()
+        }
+        // 创建进程
+        else {
+            tgid = SpinNoIrqLock::new(TidHandle(tid.0));
+            parent = Arc::new(SpinNoIrqLock::new(Some(Arc::downgrade(self))));
+            children = Arc::new(SpinNoIrqLock::new(BTreeMap::new()));
+            thread_group = Arc::new(SpinNoIrqLock::new(ThreadGroup::new()));
+            // 深拷贝Path, 但共享底层的Dentry和VfsMount
+            root = clone_path(&self.root);
+            pwd = clone_path(&self.pwd);
+        }
+        if flags.contains(CloneFlags::CLONE_VM) {
+            // Todo: execve可能有问题
+            memory_set = self.memory_set.clone()
+        } else {
             memory_set = Arc::new(SpinNoIrqLock::new(MemorySet::from_existed_user(
                 &self.memory_set.lock(),
             )));

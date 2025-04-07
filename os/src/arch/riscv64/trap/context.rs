@@ -3,10 +3,8 @@ use core::arch::asm;
 use alloc::vec::Vec;
 use riscv::register::sstatus::{self, Sstatus, SPP};
 
-use crate::{
-    arch::config::PAGE_SIZE_BITS,
-    arch::mm::{frame_alloc, map_temp},
-};
+use crate::mm::frame_alloc;
+use crate::{arch::config::PAGE_SIZE_BITS, arch::mm::map_temp};
 
 /// Trap Context
 /// 内核栈对齐到16字节

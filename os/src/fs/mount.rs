@@ -120,11 +120,11 @@ pub fn get_mount_by_path(path: Path) -> Option<Arc<Mount>> {
 //  3. 创建根目录的Mount
 pub fn do_ext4_mount(block_device: Arc<dyn BlockDevice>) -> Arc<Path> {
     let ext4_fs = Ext4FileSystem::open(block_device.clone());
-    let root_inode = Arc::new(Ext4Inode::new_root(
+    let root_inode = Ext4Inode::new_root(
         block_device.clone(),
         ext4_fs.clone(),
         &ext4_fs.block_groups[0],
-    ));
+    );
     ext4_list_apps(root_inode.clone());
     let root_dentry = Dentry::new("".to_string(), None, 0, root_inode.clone());
     root_dentry.inner.lock().parent = Some(Arc::downgrade(&root_dentry));

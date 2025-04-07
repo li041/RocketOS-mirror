@@ -5,6 +5,7 @@ use alloc::{string::ToString, sync::Arc};
 use dentry::{insert_dentry, Dentry, DENTRY_CACHE};
 use inode::InodeOp;
 use mount::{add_mount, Mount};
+use spin::RwLock;
 // use alloc::sync::Arc;
 pub use stdio::{Stdin, Stdout};
 
@@ -34,7 +35,7 @@ pub mod super_block;
 pub mod uio;
 
 // 文件系统的锁先使用SpinNoIrqLock, Todo: 改成RwLock
-pub type FSMutex<T> = SpinNoIrqLock<T>;
+pub type FSMutex<T> = RwLock<T>;
 // Todo: 这里动态初始化一个FS_block_size
 lazy_static! {
     pub static ref FS_BLOCK_SIZE: usize = 4096;

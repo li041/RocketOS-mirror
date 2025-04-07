@@ -1,5 +1,6 @@
 // Sizes
-pub const MEMORY_SIZE: usize = 0x1000_0000;
+// loongarch64内核地址空间是直接映射的, 物理地址和虚拟地址是一样的
+pub const KERNEL_BASE: usize = 0;
 pub const USER_HEAP_SIZE: usize = PAGE_SIZE * 20;
 pub const SYSTEM_TASK_LIMIT: usize = 128;
 pub const DEFAULT_FD_LIMIT: usize = 128;
@@ -18,6 +19,7 @@ pub const KSTACK_PG_NUM_SHIFT: usize = 2usize.trailing_zeros() as usize;
 /// mm
 pub const KERNEL_STACK_SIZE: usize = PAGE_SIZE << KSTACK_PG_NUM_SHIFT;
 pub const KERNEL_HEAP_SIZE: usize = PAGE_SIZE * 0x3000;
+pub const USER_MAX_VA: usize = 0x0000_003f_ffff_ffff; // 256GB
 /// 用户栈大小: 两页
 pub const USER_STACK_SIZE: usize = PAGE_SIZE << 4;
 
@@ -66,8 +68,6 @@ pub const SUC_DMW_VESG: usize = 8;
 pub const MEMORY_HIGH_BASE: usize = HIGH_BASE_ZERO;
 pub const MEMORY_HIGH_BASE_VPN: usize = MEMORY_HIGH_BASE >> PAGE_SIZE_BITS;
 pub const USER_STACK_BASE: usize = TASK_SIZE - PAGE_SIZE | LA_START;
-pub const MEMORY_START: usize = 0x0000_0000_9000_0000;
-pub const MEMORY_END: usize = MEMORY_SIZE + MEMORY_START;
 
 pub const SV39_SPACE: usize = 1 << 39;
 pub const USR_SPACE_LEN: usize = SV39_SPACE >> 2;
@@ -85,7 +85,6 @@ pub const MMAP_BASE: usize = 0xFFFF_FF80_0000_0000;
 pub const MMAP_END: usize = 0xFFFF_FFFF_FFFF_0000;
 pub const SKIP_NUM: usize = 1;
 
-pub const DISK_IMAGE_BASE: usize = 0x800_0000 + MEMORY_START;
 pub const BUFFER_CACHE_NUM: usize = 256 * 1024 * 1024 / 2048 * 4 / 2048;
 
 pub static mut CLOCK_FREQ: usize = 0;

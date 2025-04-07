@@ -13,7 +13,7 @@ impl FileOp for Stdin {
         self
     }
     fn read<'a>(&'a self, buf: &'a mut [u8]) -> usize {
-        assert_eq!(buf.len(), 1);
+        // assert_eq!(buf.len(), 1);
         // busy loop
         let mut c: usize;
         loop {

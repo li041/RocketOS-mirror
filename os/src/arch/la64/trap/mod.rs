@@ -3,10 +3,11 @@ use core::arch::global_asm;
 use crate::{
     arch::{
         config::PAGE_SIZE_BITS,
-        mm::{PageTable, VirtAddr},
+        mm::PageTable,
         tlbrelo::{TLBRELo0, TLBRELo1},
         Interrupt, TLBRBadV, TLBREHi, PGDL, PWCL, TLBRERA,
     },
+    mm::VirtAddr,
     syscall::syscall,
     task::{current_task, yield_current_task},
 };
@@ -40,6 +41,24 @@ pub fn init() {
         .write();
 }
 
+#[derive(PartialEq)]
+pub enum PageFaultCause {
+    LOAD,
+    STORE,
+    EXEC,
+}
+
+impl From<Trap> for PageFaultCause {
+    fn from(e: Trap) -> Self {
+        match e {
+            Trap::Exception(Exception::PageInvalidLoad) => PageFaultCause::LOAD,
+            Trap::Exception(Exception::PageInvalidStore) => PageFaultCause::STORE,
+            Trap::Exception(Exception::PageInvalidFetch) => PageFaultCause::EXEC,
+            _ => unreachable!(),
+        }
+    }
+}
+
 /// 需要页对齐
 #[link_section = ".text.trap_handler"]
 #[no_mangle]
@@ -54,9 +73,6 @@ pub fn trap_handler(cx: &mut TrapContext) {
             ) as usize;
         }
         Trap::Exception(Exception::PagePrivilegeIllegal)
-        | Trap::Exception(Exception::PageInvalidFetch)
-        | Trap::Exception(Exception::PageInvalidStore)
-        | Trap::Exception(Exception::PageInvalidLoad)
         | Trap::Exception(Exception::PageModifyFault)
         | Trap::Exception(Exception::PageNonReadableFault)
         | Trap::Exception(Exception::PageNonExecutableFault) => {
@@ -68,15 +84,6 @@ pub fn trap_handler(cx: &mut TrapContext) {
             page_table.dump_all_user_mapping();
             page_table.dump_with_va(badv);
 
-            // log::error!(
-            //     "[page_fault] {:?}, {:?}, {:?}, {:?}, {:?}, {:?}",
-            //     TLBRERA::read(),
-            //     TLBRBadV::read(),
-            //     TLBREHi::read(),
-            //     TLBRELo0::read(),
-            //     TLBRELo1::read(),
-            //     PWCL::read(),
-            // );
             log::error!(
                 "[page_fault] pid: {}, type: {:?}, badv: {:#x}",
                 task.tid(),
@@ -84,6 +91,25 @@ pub fn trap_handler(cx: &mut TrapContext) {
                 badv
             );
             panic!("page fault");
+        }
+        Trap::Exception(Exception::PageInvalidFetch)
+        | Trap::Exception(Exception::PageInvalidStore)
+        | Trap::Exception(Exception::PageInvalidLoad) => {
+            let badv = register::BadV::read().get_vaddr();
+            log::error!("page fault at {:#x}", badv);
+            let va = VirtAddr::from(badv);
+            let cause = PageFaultCause::from(cause);
+            current_task().op_memory_set_mut(|memory_set| {
+                if let Err(e) = memory_set.handle_recoverable_page_fault(va, cause) {
+                        memory_set.page_table.dump_all_user_mapping();
+                        panic!(
+                            "Unrecoverble page fault in application, bad addr = {:#x}, scause = {:?}, era = {:#x}",
+                            badv,
+                            register::EStat::read().cause(),
+                            ERA::read().get_pc()
+                        );
+                }
+            });
         }
         // Trap::Exception(Exception::InstructionNonDefined)
         // | Trap::Exception(Exception::InstructionPrivilegeIllegal) => {

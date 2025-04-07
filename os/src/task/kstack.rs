@@ -1,7 +1,7 @@
 //! 用户的内核栈分配
 use crate::{
     arch::config::PAGE_SIZE,
-    arch::mm::{MapPermission, KERNEL_SPACE},
+    mm::{MapPermission, VPNRange, VirtAddr, KERNEL_SPACE},
 };
 
 use super::id::kid_alloc;
@@ -25,12 +25,13 @@ pub fn kstack_alloc() -> usize {
         kstack_top,
         kstack_bottom
     );
-
-    KERNEL_SPACE.lock().insert_framed_area_va(
-        kstack_bottom.into(),
-        kstack_top.into(),
-        MapPermission::R | MapPermission::W,
+    let vpn_range = VPNRange::new(
+        VirtAddr::from(kstack_bottom).floor(),
+        VirtAddr::from(kstack_top).ceil(),
     );
+    KERNEL_SPACE
+        .lock()
+        .insert_framed_area(vpn_range, MapPermission::R | MapPermission::W);
     kstack_top
 }
 
@@ -42,7 +43,7 @@ impl Drop for KernelStack {
         let kstack_bottom = kstack_top - KSTACK_SIZE;
         KERNEL_SPACE
             .lock()
-            .remove_area_with_start_vpn(kstack_bottom.into());
+            .remove_area_with_start_vpn(VirtAddr::from(kstack_bottom).floor());
     }
 }
 

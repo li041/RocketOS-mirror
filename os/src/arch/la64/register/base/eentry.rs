@@ -1,4 +1,4 @@
-use crate::arch::mm::VirtPageNum;
+use crate::mm::VirtPageNum;
 
 impl_define_csr!(EEntry, "Exception Entry Base Address CSR\n\
                           This register is used to configure the entry base address for general exceptions and interrupts.");
