@@ -20,6 +20,10 @@ impl FileOp for Stdin {
             c = console_getchar();
             // opensbi returns usize::MAX if no char available
             if c == usize::MAX {
+                // 此处对ioctl要读取的参数进行了fake
+                if buf.len() != 1 {
+                    break;
+                }
                 yield_current_task();
                 continue;
             } else {

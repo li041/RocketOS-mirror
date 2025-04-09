@@ -15,6 +15,7 @@ mod mm;
 pub mod mutex;
 // mod sched;
 mod arch;
+mod signal;
 
 mod drivers;
 

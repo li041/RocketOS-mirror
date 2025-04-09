@@ -13,11 +13,23 @@ pub struct TrapContext {
 }
 
 impl TrapContext {
-    pub fn set_sp(&mut self, sp: usize) {
-        self.r[3] = sp;
+    pub fn get_sp(&self) -> usize {
+        self.r[3]
+    }
+    pub fn set_ra(&mut self, ra: usize) {
+        self.r[1] = ra;
     }
     pub fn set_tp(&mut self, tp: usize) {
         self.r[2] = tp;
+    }
+    pub fn set_sp(&mut self, sp: usize) {
+        self.r[3] = sp;
+    }
+    pub fn set_a0(&mut self, a0: usize) {
+        self.r[4] = a0;
+    }
+    pub fn set_pc(&mut self, pc: usize) {
+        self.era = pc;
     }
     /// 初始化app的TrapContext
     /// argc, argv_base, envp_base, auxv_base分别放在r[4](a0), r[5], r[6], r[7]

@@ -12,7 +12,7 @@ use riscv::register::{
 };
 
 use crate::{
-    arch::mm::PageTable, mm::VirtAddr, syscall::syscall, task::{current_task, yield_current_task}
+    arch::mm::PageTable, mm::VirtAddr, signal::handle_signal, syscall::syscall, task::{current_task, yield_current_task}
 };
 
 use super::timer::set_next_trigger;
@@ -151,6 +151,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
             );
         }
     }
+    handle_signal();
     return;
 }
 

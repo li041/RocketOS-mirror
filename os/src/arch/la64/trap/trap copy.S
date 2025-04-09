@@ -1,13 +1,5 @@
 # SAVE数据保存寄存器在用户态时保存用户的内核栈指针
-# 2025-04-06 更改
-# 由于用户态下会更新tp寄存器的值，因此在-8(sp)的位置保存了内核tp
-#             0  ----------------------
-#             |                       |
-#             |     trap_context      |
-#             |                       |   r2(tp) 保存用户tp
-#  [sp] -> 34*8 -----------------------
-#             |     kernel_tp         | 
-#          35*8 -----------------------
+
 
 .altmacro
 .macro SAVE_GP n
@@ -37,8 +29,7 @@ __trap_from_user:
     addi.d $sp, $sp, -34*8
     # 保存通用寄存器
     st.d $r1, $sp, 1*8
-    # 先保存用户tp
-    st.d $r2, $sp, 2*8
+    # skip tp(r2), 应用程序不使用它
     # skip sp(r3), 我们稍后保存它
     .set n, 4
     .rept 28
@@ -58,8 +49,7 @@ __trap_from_user:
     st.d $t2, $sp, 3*8
     # trap_handler第一个参数是TrapContext在内核栈上的地址, 通过a0传递
     add.d $a0, $sp, $zero
-    # 载入内核tp
-    ld.d $r2, $sp, -1*8
+
     # 设置例外入口地址
     la $t0, __trap_from_user
     csrwr $t0, CSR_EENTRY
@@ -84,17 +74,13 @@ __return_to_user:
     csrwr $t2, CSR_SAVE0
     # 现在SAVE0指向用户栈
     ld.d $r1, $sp, 1*8
-    # 跳过内核tp
+    # skip tp(r2), 应用程序不使用它
     # skip sp(r3), 我们稍后load它
     .set n, 4
     .rept 28
         LOAD_GP %n
         .set n, n+1 
     .endr
-    # 保存内核tp
-    st.d $r2, $sp, -1*8
-    # 恢复用户tp
-    ld.d $r2, $sp, 2*8
     # release TrapContext on kernel stack
     addi.d $sp, $sp, 34*8
     # 交换sp和SAVE0的值

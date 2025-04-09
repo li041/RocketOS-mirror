@@ -12,6 +12,7 @@ user/target/*
 
 testsuits-for-oskernel/*
 img/*
+!img/Makefile
 
 kernel-qemu
 sbi-qemu

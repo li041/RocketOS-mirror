@@ -46,6 +46,8 @@ use lazy_static::lazy_static;
 #[allow(unused)]
 extern "C" {
     fn stext();
+    fn strampoline();
+    fn etrampoline();
     fn etext();
     fn srodata();
     fn erodata();
@@ -140,6 +142,36 @@ impl MemorySet {
             MapArea::new(
                 VPNRange::new(
                     VirtAddr::from(stext as usize).floor(),
+                    VirtAddr::from(strampoline as usize).ceil(),
+                ),
+                MapType::Linear,
+                MapPermission::R | MapPermission::X | MapPermission::G,
+                None,
+                0,
+            ),
+            None,
+            0,
+        );
+
+        memory_set.push_with_offset(
+            MapArea::new(
+                VPNRange::new(
+                    VirtAddr::from(strampoline as usize).floor(),
+                    VirtAddr::from(etrampoline as usize).ceil(),
+                ),
+                MapType::Linear,
+                MapPermission::R | MapPermission::X | MapPermission::U,
+                None,
+                0,
+            ),
+            None,
+            0,
+        );
+
+        memory_set.push_with_offset(
+            MapArea::new(
+                VPNRange::new(
+                    VirtAddr::from(etrampoline as usize).floor(),
                     VirtAddr::from(etext as usize).ceil(),
                 ),
                 MapType::Linear,
@@ -150,11 +182,7 @@ impl MemorySet {
             None,
             0,
         );
-        // // add U flag for sigreturn trampoline
-        // memory_set.page_table.update_flags(
-        //     VirtAddr::from(sigreturn_trampoline as usize).floor(),
-        //     PTEFlags::R | PTEFlags::X | PTEFlags::U,
-        // );
+
         log::trace!("mapping .rodata section");
         memory_set.push_with_offset(
             MapArea::new(
@@ -254,16 +282,31 @@ impl MemorySet {
 
     /// return (user_memory_set, satp, ustack_top, entry_point, aux_vec)
     /// Todo: elf_data是完整的, 还要lazy_allocation?
-    pub fn from_elf(elf_data: &[u8]) -> (Self, usize, usize, usize, Vec<AuxHeader>) {
+    pub fn from_elf(mut elf_data: Vec<u8>, argv: &mut Vec<String>) -> (Self, usize, usize, usize, Vec<AuxHeader>) {
         #[cfg(target_arch = "riscv64")]
         let mut memory_set = Self::from_global();
         #[cfg(target_arch = "loongarch64")]
         let mut memory_set = Self::new_bare();
 
+        // 处理 .sh 文件
+        if argv.len() > 0 {
+            let file_name = &argv[0];
+            if file_name.ends_with(".sh") {
+                let prepend_args = vec![
+                    String::from("busybox"),
+                    String::from("sh")
+                ];
+                argv.splice(0..0, prepend_args);
+                if let Ok(busybox) = path_openat("/busybox", 0, AT_FDCWD, 0) {
+                    elf_data = busybox.read_all()
+                }
+            }
+        }
+
         // 创建`TaskContext`时使用
         let pgtbl_ppn = memory_set.page_table.token();
         // map program segments of elf, with U flag
-        let elf = xmas_elf::ElfFile::new(elf_data).unwrap();
+        let elf = xmas_elf::ElfFile::new(&elf_data).unwrap();
         let elf_header = elf.header;
         let magic = elf_header.pt1.magic;
         assert_eq!(magic, [0x7f, 0x45, 0x4c, 0x46], "invalid elf!");
@@ -500,6 +543,13 @@ impl MemorySet {
     }
     pub fn from_existed_user_lazily(user_memory_set: &MemorySet) -> Self {
         let page_table = PageTable::from_existed_user(&user_memory_set.page_table);
+        user_memory_set.areas.iter().for_each(|(_, area)| {
+            log::error!(
+                "[MemorySet::from_existed_user_lazily] area: {:#x} {:#x}",
+                area.vpn_range.get_start().0,
+                area.vpn_range.get_end().0
+            );
+        });
         MemorySet {
             brk: user_memory_set.brk,
             heap_bottom: user_memory_set.heap_bottom,
@@ -523,7 +573,12 @@ impl MemorySet {
     }
     /// map_offset: the offset in the first page
     /// 在data不为None时, map_offset才有意义, 是data在第一个页中的偏移
-    fn push_with_offset(&mut self, mut map_area: MapArea, data: Option<&[u8]>, map_offset: usize) {
+    pub fn push_with_offset(
+        &mut self,
+        mut map_area: MapArea,
+        data: Option<&[u8]>,
+        map_offset: usize,
+    ) {
         map_area.map(&mut self.page_table);
         if let Some(data) = data {
             map_area.copy_data_private(&mut self.page_table, data, map_offset);
@@ -786,6 +841,9 @@ impl MemorySet {
             );
             return Err(EFAULT);
         }
+        self.areas.iter().for_each(|(vpn, area)| {
+            log::error!("[handle_lazy_allocation_area] area: {:#x?}", area.vpn_range,);
+        });
         panic!("empty areas");
     }
 }

@@ -2,6 +2,7 @@
 use crate::ext4::inode::Ext4Inode;
 use crate::mm::Page;
 use crate::mutex::SpinNoIrqLock;
+use log::SetLoggerError;
 use spin::RwLock;
 
 use super::dentry::{Dentry, LinuxDirent64};
@@ -56,6 +57,7 @@ pub trait InodeOp: Any + Send + Sync {
     fn getattr(&self) -> Kstat;
     fn get_link(&self) -> String;
     fn get_inode_num(&self) -> usize;
+    fn get_size(&self) -> usize;
 }
 
 // pub struct InodeMeta {

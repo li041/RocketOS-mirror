@@ -24,12 +24,24 @@ pub struct TrapContext {
 }
 
 impl TrapContext {
+    pub fn get_sp(&self) -> usize {
+        self.x[2]
+    }
+    pub fn set_ra(&mut self, ra: usize) {
+        self.x[1] = ra;
+    }
     /// set stack pointer to x_2 reg (sp)
     pub fn set_sp(&mut self, sp: usize) {
         self.x[2] = sp;
     }
     pub fn set_tp(&mut self, tp: usize) {
         self.x[4] = tp;
+    }
+    pub fn set_a0(&mut self, a0: usize) {
+        self.x[10] = a0;
+    }
+    pub fn set_pc(&mut self, pc: usize) {
+        self.sepc = pc;
     }
     /// init app context
     /// argc, argv_base, envp_base, auxv_base分别放在x[10], x[11], x[12], x[13]

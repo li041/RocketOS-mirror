@@ -24,7 +24,7 @@ pub fn sys_clone(
     _chilren_tid_ptr: usize,
 ) -> isize {
     // ToDo: 更新错误检验
-    log::error!("[sys_clone] flags: {}, stack_ptr: {}", flags, stack_ptr);
+    log::error!("[sys_clone] flags: {:x}, stack_ptr: {:x}", flags, stack_ptr);
     let flags = match CloneFlags::from_bits(flags as u32) {
         None => {
             log::error!("clone flags is None: {}", flags);

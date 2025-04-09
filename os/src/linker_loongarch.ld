@@ -10,10 +10,9 @@ SECTIONS
         *(.text.entry)
         . = ALIGN(4K);
         strampoline = .;
-        *(.text.trampoline);
+        KEEP(*(.text.trampoline));
         . = ALIGN(4K);
-        ssignaltrampoline = .;
-        KEEP(*(.text.signaltrampoline));
+        etrampoline = .;
         . = ALIGN(4K);
         srfill = .;
         KEEP(*(.text.__rfill));
