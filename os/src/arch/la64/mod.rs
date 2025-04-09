@@ -9,6 +9,7 @@ pub mod serial;
 pub mod switch;
 pub mod timer;
 mod tlb;
+pub mod trampoline;
 pub mod trap;
 pub mod virtio_blk;
 

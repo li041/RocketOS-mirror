@@ -81,12 +81,12 @@ endif
 # gdb
 ifeq ($(ARCH), riscv64)
     GDB_CLIENT := riscv64-unknown-elf-gdb
-    GDB_ARGS := -ex 'file target/riscv64gc-unknown-none-elf/debug/os' \
+    GDB_ARGS := -ex 'file target/riscv64gc-unknown-none-elf/$(MODE)/os' \
         		-ex 'set arch riscv:rv64' \
 			    -ex 'target remote localhost:1234'
 else ifeq ($(ARCH), loongarch64)
     GDB_CLIENT := loongarch64-linux-gnu-gdb
-    GDB_ARGS := -ex 'file target/loongarch64-unknown-none/debug/os' \
+    GDB_ARGS := -ex 'file target/loongarch64-unknown-none/$(MODE)/os' \
                 -ex 'target remote localhost:1234'
 else
     $(error "Unsupported architecture: $(ARCH), Use riscv64 or loongarch64")

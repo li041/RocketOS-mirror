@@ -292,12 +292,12 @@ impl Ext4InodeDisk {
     /// 由上层调用者保证: 未命中页缓存时才调用
     /// 从内存中的extent tree中找到对应的extent, 如果没有从磁盘加载
     /// logical_start_block: 逻辑块号(例. 文件的前4096字节对于ext4就是逻辑块号0的内容)
-    fn find_extent(
+    fn lookup_extent(
         &self,
         logical_start_block: u32,
         block_device: Arc<dyn BlockDevice>,
         ext4_block_size: usize,
-    ) -> Result<Ext4Extent, &'static str> {
+    ) -> Option<Ext4Extent> {
         let current_block = logical_start_block;
 
         // 获取根节点的extent_header
@@ -317,7 +317,7 @@ impl Ext4InodeDisk {
                     .read(0, |header: &Ext4ExtentHeader| header.clone());
             } else {
                 // 未找到对应的索引节点
-                return Err("extent not found");
+                return None;
             }
         }
         // 当前节点是叶子节点
@@ -333,17 +333,17 @@ impl Ext4InodeDisk {
                 //     start_block,
                 //     end_block
                 // );
-                return Ok(*extent);
+                return Some(*extent);
             }
         }
-        return Err("extent not found");
+        return None;
     }
     /// 更新 extent 结构，加入新的逻辑块
     /// Todo: 未实现, 没有考虑索引节点分裂
     /// 仅修改在内存中ext4结构体
     /// 上层调用者保证:
     ///     1. 调用modify_inode将inode结构体写回到block_cache
-    pub fn update_extent(
+    pub fn insert_extent(
         &mut self,
         logical_block_num: u32,
         physical_block_num: u64, // 物理块号
@@ -379,7 +379,7 @@ impl Ext4InodeDisk {
         }
 
         // 2. 遍历叶子节点，查找合适的 extent合并
-        let extents = self.extents(&extent_header);
+        let mut extents = self.extents(&extent_header);
 
         for (i, extent) in extents.iter().enumerate() {
             let lend_block = extent.logical_block + extent.len as u32;
@@ -398,21 +398,26 @@ impl Ext4InodeDisk {
                 }
             }
         }
+
         // 情况 2: 插入新的 extent, 情况0已经保证了有位置可插入
         let new_extent = Ext4Extent::new(
             logical_block_num,
             blocks_count as u16,
             physical_block_num as usize,
         );
+
+        // 没有合并, 插入新extent, 并按logical_block排序
+        extents.push(new_extent);
+        extents.sort_by_key(|extent| extent.logical_block);
+
         let extent_header_ptr = self.block.as_ptr() as *mut Ext4ExtentHeader;
+        // 写回内存
         unsafe {
             (*extent_header_ptr).entries += 1;
-            let extent_ptr = self
-                .block
-                .as_ptr()
-                .add(12 * (*extent_header_ptr).entries as usize)
-                as *mut Ext4Extent;
-            extent_ptr.write(new_extent);
+            for (i, extent) in extents.iter().enumerate() {
+                let extent_ptr = self.block.as_ptr().add(12 + i * 12) as *mut Ext4Extent;
+                extent_ptr.write(*extent);
+            }
         }
         Ok(())
     }
@@ -559,13 +564,10 @@ impl Ext4Inode {
                 page = page_cache;
             } else if page_offset == 0 && self.inner.read().inode_on_disk.has_inline_data() {
                 // 页缓存未命中, 先查看是否是inline_data, 再看是否在查到的PhysicalBlockRange中
-
                 // 第一次读, 且有inline data
                 log::warn!("[Ext4Inode::read] has inline data",);
                 let inline_data_len = self.inner.read().inode_on_disk.size_lo as usize;
                 let copy_len = (rbuf_len).min(inline_data_len - offset);
-                let (fs_block_id, inner_offset) = self.ino_2_blockid_and_offset();
-                // Todo:
                 //创建inline page cache
                 self.address_space.new_inline_page_cache(
                     page_offset,
@@ -580,31 +582,46 @@ impl Ext4Inode {
             } else {
                 // 不是inline data, 先从页缓存中读取
                 if let Some(extent) = &current_extent {
+                    // 先查看现有的extent, 是否在查到的PhysicalBlockRange中
                     if (extent.logical_block + extent.len as u32) as usize > page_offset {
                         // 命中extent读取, 知道对应的物理块号
                         fs_block_id = extent.physical_start_block() + page_offset
                             - extent.logical_block as usize;
                     } else {
                         // 未命中, 从inode中读取extent
-                        let extent = self.inner.write().inode_on_disk.find_extent(
+                        // Todo: 处理空洞, 这里不能是?
+                        let extent = self.inner.write().inode_on_disk.lookup_extent(
                             page_offset as u32,
                             self.block_device.clone(),
                             self.ext4_fs.upgrade().unwrap().block_size(),
-                        )?;
-                        fs_block_id = extent.physical_start_block() + page_offset
-                            - extent.logical_block as usize;
-                        current_extent = Some(extent);
+                        );
+                        if let Some(extent) = extent {
+                            // 重新计算物理块号
+                            fs_block_id = extent.physical_start_block() + page_offset
+                                - extent.logical_block as usize;
+                            current_extent = Some(extent);
+                        } else {
+                            fs_block_id = 0;
+                            current_extent = None;
+                        }
                     }
                 } else {
                     // 未命中, 从inode中读取extent
-                    let extent = self.inner.write().inode_on_disk.find_extent(
+                    // Todo: 处理空洞, 这里不能是?
+                    let extent = self.inner.write().inode_on_disk.lookup_extent(
                         page_offset as u32,
                         self.block_device.clone(),
                         self.ext4_fs.upgrade().unwrap().block_size(),
-                    )?;
-                    fs_block_id =
-                        extent.physical_start_block() + page_offset - extent.logical_block as usize;
-                    current_extent = Some(extent);
+                    );
+                    if let Some(extent) = extent {
+                        // 重新计算物理块号
+                        fs_block_id = extent.physical_start_block() + page_offset
+                            - extent.logical_block as usize;
+                        current_extent = Some(extent);
+                    } else {
+                        fs_block_id = 0;
+                        current_extent = None;
+                    }
                 }
                 page = self.address_space.new_page_cache(
                     page_offset,
@@ -650,7 +667,6 @@ impl Ext4Inode {
                 // 页缓存未命中, 先查看是否是inline_data, 再看是否在查到的PhysicalBlockRange中
                 log::warn!("[Ext4Inode::read] has inline data",);
                 let inline_data_len = self.inner.read().inode_on_disk.size_lo as usize;
-                let (fs_block_id, inner_offset) = self.ino_2_blockid_and_offset();
                 // 创建inline page cache
                 let page = self.address_space.new_inline_page_cache(
                     offset,
@@ -661,12 +677,12 @@ impl Ext4Inode {
             }
             // 不是inline data page
             // 从inode中读取extent
-            let extent = self.inner.write().inode_on_disk.find_extent(
+            let extent = self.inner.write().inode_on_disk.lookup_extent(
                 offset as u32,
                 self.block_device.clone(),
                 self.ext4_fs.upgrade().unwrap().block_size(),
             );
-            if let Ok(extent) = extent {
+            if let Some(extent) = extent {
                 let fs_block_id =
                     extent.physical_start_block() + offset - extent.logical_block as usize;
                 Some(self.address_space.new_page_cache(
@@ -793,20 +809,20 @@ impl Ext4Inode {
         block_device: Arc<dyn BlockDevice>,
         ext4_block_size: usize,
     ) -> Ext4Extent {
-        match self.inner.write().inode_on_disk.find_extent(
+        match self.inner.write().inode_on_disk.lookup_extent(
             logical_start_block,
             block_device.clone(),
             ext4_block_size,
         ) {
-            Ok(extent) => extent,
-            Err(_) => {
+            Some(extent) => extent,
+            None=> {
                 // 创建新的extent
                 let new_block_num = self.alloc_block();
                 let new_extent = Ext4Extent::new(logical_start_block, 1, new_block_num);
                 self.inner
                     .write()
                     .inode_on_disk
-                    .update_extent(
+                    .insert_extent(
                         logical_start_block,
                         new_extent.physical_start_block() as u64,
                         1,
@@ -1009,7 +1025,7 @@ impl Ext4Inode {
         // 写回Block_Cache
         self.write(0, &buf);
     }
-    pub fn update_extent(
+    pub fn insert_extent(
         &self,
         logical_block_num: u32,
         physical_block_num: u64,
@@ -1017,7 +1033,7 @@ impl Ext4Inode {
         block_device: Arc<dyn BlockDevice>,
         ext4_block_size: usize,
     ) -> Result<(), &'static str> {
-        self.inner.write().inode_on_disk.update_extent(
+        self.inner.write().inode_on_disk.insert_extent(
             logical_block_num,
             physical_block_num,
             blocks_count,

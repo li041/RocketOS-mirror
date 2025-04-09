@@ -116,7 +116,6 @@ pub fn blocking_and_run_next() {
         crate::task::processor::PROCESSOR
             .lock()
             .switch_to(next_task);
-
         unsafe {
             switch::__switch(next_task_kernel_stack);
         }

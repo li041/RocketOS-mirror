@@ -20,6 +20,7 @@ use task::{
     sys_clone, sys_execve, sys_get_time, sys_getpid, sys_getppid, sys_nanosleep, sys_waitpid,
     sys_yield,
 };
+use signal::{sys_kill, sys_rt_sigaction, sys_rt_sigpending, sys_rt_sigprocmask, sys_rt_sigreturn, sys_rt_sigsuspend, sys_rt_sigtimedwait, sys_tgkill, sys_tkill};
 use util::{sys_times, sys_uname};
 
 use crate::fs::{
@@ -32,6 +33,7 @@ mod fs;
 mod mm;
 mod task;
 mod util;
+mod signal;
 
 const SYSCALL_GETCWD: usize = 17;
 const SYSCALL_DUP: usize = 23;
@@ -59,6 +61,17 @@ const SYSCALL_SET_TID_ADDRESS: usize = 96;
 const SYSCALL_SET_ROBUST_LIST: usize = 99;
 const SYSCALL_NANOSLEEP: usize = 101;
 const SYSCALL_YIELD: usize = 124;
+const SYSCALL_KILL: usize = 129;
+const SYSCALL_TKILL: usize = 130;
+const SYSCALL_TGKILL: usize = 131;
+const SYSCALL_SIGALTSTACK: usize = 132;
+const SYSCALL_RT_SIGSUSPEND: usize = 133;
+const SYSCALL_RT_SIGACTION: usize = 134;
+const SYSCALL_RT_SIGPROCMASK: usize = 135;
+const SYSCALL_RT_SIGPENDING: usize = 136;
+const SYSCALL_RT_SIGTIMEDWAIT: usize = 137;
+const SYSCALL_RT_SIGQUEUEINFO: usize = 138;
+const SYSCALL_RT_SIGRETURN: usize = 139; 
 const SYSCALL_TIMES: usize = 153;
 const SYSCALL_UNAME: usize = 160;
 const SYSCALL_GET_TIME: usize = 169;
@@ -129,6 +142,17 @@ pub fn syscall(
         SYSCALL_EXIT => sys_exit(a0 as i32),
         SYSCALL_NANOSLEEP => sys_nanosleep(a0),
         SYSCALL_YIELD => sys_yield(),
+        SYSCALL_KILL => sys_kill(a0 as isize, a1 as i32),
+        SYSCALL_TKILL => sys_tkill(a0 as isize, a1 as i32),
+        SYSCALL_TGKILL => sys_tgkill(a0 as isize, a1 as isize, a2 as i32),
+        //SYSCALL_SIGALTSTACK => sys_sigaltstack()
+        //SYSCALL_RT_SIGSUSPEND => sys_rt_sigsuspend(a0),
+        SYSCALL_RT_SIGACTION => sys_rt_sigaction(a0 as i32, a1, a2),
+        SYSCALL_RT_SIGPROCMASK => sys_rt_sigprocmask(a0, a1, a2),
+        SYSCALL_RT_SIGPENDING => sys_rt_sigpending(a0),
+        //SYSCALL_RT_SIGTIMEDWAIT => sys_rt_sigtimedwait(a0, a1, a2),
+        //SYSCALL_RT_SIGQUEUEINFO => sys_rt_sigqueueinfo(),
+        SYSCALL_RT_SIGRETURN => sys_rt_sigreturn(),
         SYSCALL_TIMES => sys_times(a0),
         SYSCALL_UNAME => sys_uname(a0),
         SYSCALL_GET_TIME => sys_get_time(a0),

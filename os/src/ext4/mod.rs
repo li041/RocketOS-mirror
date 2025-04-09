@@ -236,7 +236,7 @@ impl InodeOp for Ext4Inode {
             });
         // 更新inode的extent tree
         new_inode
-            .update_extent(
+            .insert_extent(
                 0,
                 new_block_num as u64,
                 1,
@@ -292,5 +292,8 @@ impl InodeOp for Ext4Inode {
     }
     fn get_inode_num(&self) -> usize {
         self.inode_num
+    }
+    fn get_size(&self) -> usize {
+        self.inner.read().inode_on_disk.get_size() as usize
     }
 }

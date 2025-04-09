@@ -9,6 +9,7 @@ pub mod switch;
 pub mod timer;
 pub mod trap;
 pub mod virtio_blk;
+pub mod trampoline;
 
 pub use virtio_blk::VirtIOBlock;
 

@@ -544,7 +544,7 @@ pub fn sys_umount2(target: *const u8, flags: i32) -> isize {
 const EBADF: isize = 9;
 /// op是与设备相关的操作码, arg_ptr是指向参数的指针(untyped pointer, 由设备决定)
 pub fn sys_ioctl(fd: usize, op: usize, _arg_ptr: usize) -> isize {
-    log::error!("[sys_ioctl] fd: {}, op: {}, arg_ptr: {}", fd, op, _arg_ptr);
+    log::error!("[sys_ioctl] fd: {}, op: {:x}, arg_ptr: {:x}", fd, op, _arg_ptr);
     log::warn!("sys_ioctl Unimplemented");
     let task = current_task();
     let file = task.fd_table().get_file(fd);

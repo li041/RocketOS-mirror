@@ -14,22 +14,29 @@ ARCH ?= riscv64
 
 all: clean run
 
-# 需要在./img文件夹下准备初赛测例，并将其命名为pre.img
-pre: 
-	@cd ./img && make pre
+pre2024: 
+	@cd ./img && make pre2024
 	make run
 
-final:
-	@cd ./img && make final
+pre2025:
+	@cd ./img && make pre2025
 	make run
 
-test:
-	@cd ./img && make test
+custom:
+	@cd ./img && make custom
 	make run
 
 run:
 	@cd ./user && make build ARCH=$(ARCH)
 	@cd ./os && make run ARCH=$(ARCH)
+
+gdbserver: 
+	@cd ./user && make build
+	@cd ./os && make gdbserver
+
+gdbclient:
+	@cd ./user && make build
+	@cd ./os && make gdbclient
 
 clean:
 	@cd ./os && make clean

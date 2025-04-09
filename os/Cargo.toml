@@ -34,3 +34,6 @@ fdt = "0.1.5"
 
 [target.riscv64gc-unknown-none-elf.dependencies]
 riscv = { git = "https://github.com/rcore-os/riscv", features = ["inline-asm"] }
+
+[profile.release]
+debug = true

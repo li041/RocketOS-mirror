@@ -1,37 +1,27 @@
 use super::{
-    aux::{AuxHeader, AT_EXECFN, AT_NULL, AT_RANDOM},
-    context::TaskContext,
-    id::{tid_alloc, TidHandle},
-    kstack::{get_stack_top_by_sp, kstack_alloc, KernelStack},
-    scheduler::switch_to_next_task,
-    String, Tid,
+    aux::{AuxHeader, AT_EXECFN, AT_NULL, AT_RANDOM}, context::TaskContext, id::{tid_alloc, TidHandle}, kstack::{get_stack_top_by_sp, kstack_alloc, KernelStack}, remove_task, scheduler::switch_to_next_task, String, Tid
 };
 use crate::{
-    arch::trap::TrapContext,
-    fs::{fdtable::FdTable, file::FileOp, path::Path, FileOld, Stdin, Stdout},
-    mm::MemorySet,
-    mutex::SpinNoIrqLock,
-    // syscall::CloneFlags,
-    task::{
-        aux,
-        context::write_task_cx,
-        kstack,
-        scheduler::{add_task, remove_thread_group, SCHEDULER},
-        INITPROC,
-    },
+    arch::{mm::copy_to_user, trap::TrapContext}, fs::{fdtable::FdTable, file::FileOp, path::Path, FileOld, Stdin, Stdout}, mm::{MapArea, MapPermission, MapType, MemorySet, VPNRange, VirtAddr}, mutex::{SpinNoIrq, SpinNoIrqLock}, signal::{SiField, Sig, SigHandler, SigInfo, SigPending, SigSet, SignalStack, UContext}, task::{
+        aux, context::write_task_cx, kstack, manager::TASK_MANAGER, scheduler::{add_task, remove_thread_group, SCHEDULER}, INITPROC
+    }
 };
 use alloc::{
-    collections::btree_map::BTreeMap,
-    sync::{Arc, Weak},
-    vec,
-    vec::Vec,
+    collections::btree_map::BTreeMap, sync::{Arc, Weak}, vec::Vec, vec,
 };
 use bitflags::bitflags;
-use core::{assert_ne, sync::atomic::AtomicI32};
+use xmas_elf::sections::NoteHeader;
+use core::{any::Any, assert_ne, future::{pending, Pending}, mem, sync::atomic::{AtomicI32, AtomicUsize}};
 
-const INIT_PROC_PID: usize = 0;
+pub const INIT_PROC_PID: usize = 0;
+
+extern "C" {
+    fn strampoline();
+    fn etrampoline();
+}
 
 /// tp寄存器指向Task结构体
+/// ToDo: 阻塞与唤醒
 #[repr(C)]
 pub struct Task {
     // 不变量
@@ -59,6 +49,9 @@ pub struct Task {
     root: Arc<SpinNoIrqLock<Arc<Path>>>,
     pwd: Arc<SpinNoIrqLock<Arc<Path>>>,
     // ToDo: 信号处理
+    sig_pending: SpinNoIrqLock<SigPending>,                 // 待处理信号
+    sig_handler: Arc<SpinNoIrqLock<SigHandler>>,            // 信号处理函数
+    sig_stack: SpinNoIrqLock<Option<SignalStack>>,          // 额外信号栈
     // Todo: 进程组
     // ToDo：运行时间(调度相关)
     // ToDo: 多核启动
@@ -95,12 +88,15 @@ impl Task {
             fd_table: FdTable::new(),
             root: Arc::new(SpinNoIrqLock::new(Path::zero_init())),
             pwd: Arc::new(SpinNoIrqLock::new(Path::zero_init())),
+            sig_pending: SpinNoIrqLock::new(SigPending::new()),
+            sig_handler: Arc::new(SpinNoIrqLock::new(SigHandler::new())),
+            sig_stack: SpinNoIrqLock::new(None),
         }
     }
 
     /// 初始化地址空间, 将 `TrapContext` 与 `TaskContext` 压入内核栈中
     pub fn initproc(elf_data: &[u8], root_path: Arc<Path>) -> Arc<Self> {
-        let (memory_set, pgdl_ppn, user_sp, entry_point, _aux_vec) = MemorySet::from_elf(elf_data);
+        let (memory_set, pgdl_ppn, user_sp, entry_point, _aux_vec) = MemorySet::from_elf(elf_data.to_vec(), &mut Vec::<String>::new());
         let tid = tid_alloc();
         let tgid = SpinNoIrqLock::new(TidHandle(tid.0));
         // 申请内核栈
@@ -125,13 +121,16 @@ impl Task {
             exit_code: AtomicI32::new(0),
             memory_set: Arc::new(SpinNoIrqLock::new(memory_set)),
             fd_table: FdTable::new(),
-            // Todo
             root: Arc::new(SpinNoIrqLock::new(root_path.clone())),
             pwd: Arc::new(SpinNoIrqLock::new(root_path)),
+            sig_pending: SpinNoIrqLock::new(SigPending::new()),
+            sig_handler: Arc::new(SpinNoIrqLock::new(SigHandler::new())),
+            sig_stack: SpinNoIrqLock::new(None),
         });
         // 向线程组中添加该进程
         task.thread_group.lock().add(task.clone());
         add_task(task.clone());
+        TASK_MANAGER.add(&task);
         // 令tp寄存器指向主线程内核栈顶
         let task_ptr = Arc::as_ptr(&task) as usize;
         let task_context = TaskContext::app_init_task_context(task_ptr, pgdl_ppn);
@@ -149,7 +148,6 @@ impl Task {
         task
     }
 
-    #[cfg(target_arch = "loongarch64")]
     pub fn kernel_clone(self: &Arc<Self>, flags: CloneFlags) -> Arc<Self> {
         let tid = tid_alloc();
         let exit_code = AtomicI32::new(0);
@@ -163,13 +161,18 @@ impl Task {
         let fd_table;
         let root;
         let pwd;
-        log::info!(
+        let sig_handler;
+        let sig_pending;
+        let sig_stack;
+        log::trace!(
             "[kernel_clone] current_task pid: {}, new_task pid: {}",
-            self.tid(),
-            tid
+            self.tid(), tid
         );
-        if flags.contains(CloneFlags::SIGCHLD) {
-            // ToDo:
+        // 是否与父进程共享信号处理器
+        if flags.contains(CloneFlags::CLONE_SIGHAND) {
+            sig_handler = self.sig_handler.clone();
+        } else {
+            sig_handler = Arc::new(SpinNoIrqLock::new(self.op_sig_handler_mut(|handler| handler.clone())))
         }
         // 创建线程
         if flags.contains(CloneFlags::CLONE_THREAD) {
@@ -195,7 +198,6 @@ impl Task {
             memory_set = self.memory_set.clone()
         } else {
             memory_set = Arc::new(SpinNoIrqLock::new(MemorySet::from_existed_user_lazily(
-                // memory_set = Arc::new(SpinNoIrqLock::new(MemorySet::from_existed_user(
                 &self.memory_set.lock(),
             )));
         }
@@ -209,6 +211,10 @@ impl Task {
         } else {
             fd_table = FdTable::from_existed_user(&self.fd_table);
         }
+        // 初始化其他未初始化属性
+        sig_pending = SpinNoIrqLock::new(SigPending::new());
+        sig_stack = SpinNoIrqLock::new(None);
+        // 创建新任务
         let task = Arc::new(Self {
             kstack,
             tid,
@@ -222,6 +228,9 @@ impl Task {
             fd_table,
             root,
             pwd,
+            sig_handler,
+            sig_pending,
+            sig_stack,
         });
         if !flags.contains(CloneFlags::CLONE_THREAD) {
             self.add_child(task.clone());
@@ -229,112 +238,14 @@ impl Task {
         task.op_thread_group_mut(|tg| tg.add(task.clone()));
         // 在内核栈中加入task_cx
         write_task_cx(task.clone());
+        TASK_MANAGER.add(&task);
         log::info!(
-            "[kernel_clone] task{}, kstack: {:#x}",
+            "[kernel_clone] task{}, kstack: {:#x}, strong_count {}",
             task.tid(),
-            task.kstack()
-        );
-        log::info!(
-            "[kernel_clone] task{}, strong_count {}",
-            task.tid(),
+            task.kstack(),
             Arc::strong_count(&task)
-        ); // 未加入调度器理论为 2
-        log::info!("[kernel_clone] task{} create sucessfully!", task.tid());
-
-        task
-    }
-
-    #[cfg(target_arch = "riscv64")]
-    pub fn kernel_clone(self: &Arc<Self>, flags: CloneFlags) -> Arc<Self> {
-        let tid = tid_alloc();
-        let exit_code = AtomicI32::new(0);
-        let status = SpinNoIrqLock::new(TaskStatus::Ready);
-        let tgid;
-        let mut kstack;
-        let parent;
-        let children;
-        let thread_group;
-        let memory_set;
-        let fd_table;
-        let root;
-        let pwd;
-        log::info!(
-            "[kernel_clone] current_task pid: {}, new_task pid: {}",
-            self.tid(),
-            tid
-        );
-        if flags.contains(CloneFlags::SIGCHLD) {
-            // ToDo:
-        }
-        // 创建线程
-        if flags.contains(CloneFlags::CLONE_THREAD) {
-            tgid = SpinNoIrqLock::new(TidHandle(self.tgid()));
-            parent = self.parent.clone();
-            children = self.children.clone();
-            thread_group = self.thread_group.clone();
-            root = self.root.clone();
-            pwd = self.pwd.clone()
-        }
-        // 创建进程
-        else {
-            tgid = SpinNoIrqLock::new(TidHandle(tid.0));
-            parent = Arc::new(SpinNoIrqLock::new(Some(Arc::downgrade(self))));
-            children = Arc::new(SpinNoIrqLock::new(BTreeMap::new()));
-            thread_group = Arc::new(SpinNoIrqLock::new(ThreadGroup::new()));
-            // 深拷贝Path, 但共享底层的Dentry和VfsMount
-            root = clone_path(&self.root);
-            pwd = clone_path(&self.pwd);
-        }
-        if flags.contains(CloneFlags::CLONE_VM) {
-            // Todo: execve可能有问题
-            memory_set = self.memory_set.clone()
-        } else {
-            memory_set = Arc::new(SpinNoIrqLock::new(MemorySet::from_existed_user(
-                &self.memory_set.lock(),
-            )));
-        }
-        // 申请新的内核栈并写入trap_cx内容
-        kstack = self.trap_context_clone();
-        // 更新task_cx
-        kstack -= core::mem::size_of::<TaskContext>();
-        let kstack = KernelStack(kstack);
-        if flags.contains(CloneFlags::CLONE_FILES) {
-            fd_table = self.fd_table.clone()
-        } else {
-            fd_table = FdTable::from_existed_user(&self.fd_table);
-        }
-        let task = Arc::new(Self {
-            kstack,
-            tid,
-            tgid,
-            status,
-            parent,
-            children,
-            exit_code,
-            thread_group,
-            memory_set,
-            fd_table,
-            root,
-            pwd,
-        });
-        if !flags.contains(CloneFlags::CLONE_THREAD) {
-            self.add_child(task.clone());
-        }
-        task.op_thread_group_mut(|tg| tg.add(task.clone()));
-        // 在内核栈中加入task_cx
-        write_task_cx(task.clone());
-        log::info!(
-            "[kernel_clone] task{}, kstack: {:#x}",
-            task.tid(),
-            task.kstack()
-        );
-        log::info!(
-            "[kernel_clone] task{}, strong_count {}",
-            task.tid(),
-            Arc::strong_count(&task)
-        ); // 未加入调度器理论为 2
-        log::info!("[kernel_clone] task{} create sucessfully!", task.tid());
-
+        );  // 未加入调度器理论为 2
+        log::trace!("[kernel_clone] task{} create sucessfully!", task.tid());
         task
     }
 
@@ -342,20 +253,34 @@ impl Task {
     pub fn kernel_execve(
         self: &Arc<Self>,
         elf_data: &[u8],
-        args_vec: Vec<String>,
+        mut args_vec: Vec<String>,
         envs_vec: Vec<String>,
     ) {
         // 创建地址空间
-        let (memory_set, _satp, ustack_top, entry_point, aux_vec) = MemorySet::from_elf(elf_data);
+        let (mut memory_set, _satp, ustack_top, entry_point, aux_vec) 
+            = MemorySet::from_elf(elf_data.to_vec(), &mut args_vec);
         // 更新页表
         memory_set.activate();
-        // let pos = 0x30_0000_0000 as usize;
-        // unsafe { if need_dl {log::error!("[sys_mmap] pos : {:?}", core::slice::from_raw_parts_mut(pos as *mut u8, 64));} }
+        #[cfg(target_arch = "loongarch64")]
+        memory_set.push_with_offset(
+            MapArea::new(
+                VPNRange::new(
+                    VirtAddr::from(strampoline as usize).floor(),
+                    VirtAddr::from(etrampoline as usize).ceil(),
+                ),
+                MapType::Linear,
+                MapPermission::R | MapPermission::X | MapPermission::U,
+                None,
+                0,
+            ),
+            None,
+            0,
+        );
         // 初始化用户栈, 压入args和envs
         // ToDo：待完善
         let argc = args_vec.len();
         let (argv_base, envp_base, auxv_base, ustack_top) =
-            init_user_stack(&args_vec, &envs_vec, aux_vec, ustack_top);
+            init_user_stack(&memory_set, &args_vec, &envs_vec, aux_vec, ustack_top);
         log::info!(
             "[kernel_execve] entry_point: {:x}, user_sp: {:x}, page_table: {:x}",
             entry_point,
@@ -363,15 +288,7 @@ impl Task {
             memory_set.token()
         );
         // 关闭所有线程组其他进程
-        self.op_thread_group_mut(|tg| {
-            for thread in tg.iter() {
-                // 跳过当前线程
-                if thread.tid() == self.tid() {
-                    continue;
-                }
-                kernel_exit(thread, 0);
-            }
-        });
+        self.close_thread();
         // 如果当前任务为从线程, 则将线程组中所有任务从调度器中移除
         if !self.is_main_thread() {
             remove_thread_group(self.tgid());
@@ -381,7 +298,7 @@ impl Task {
         // 更新trap_cx
         let kstack_top = get_stack_top_by_sp(self.kstack());
         let trap_cx_ptr = (kstack_top - core::mem::size_of::<TrapContext>()) as *mut TrapContext;
-        let trap_cx = TrapContext::app_init_trap_context(
+        let mut trap_cx = TrapContext::app_init_trap_context(
             entry_point,
             ustack_top,
             argc,
@@ -389,6 +306,7 @@ impl Task {
             envp_base,
             auxv_base,
         );
+        trap_cx.set_tp(Arc::as_ptr(&self) as usize);
         unsafe {
             *trap_cx_ptr = trap_cx;
         }
@@ -401,6 +319,8 @@ impl Task {
         });
         // Todo: FdTable相关
         self.reset_fd_table();
+        // 重置信号处理器
+        self.op_sig_handler_mut(|handler| handler.reset());
 
         log::info!(
             "[kernel_execve] current_task ThreadGroup len {}",
@@ -416,12 +336,9 @@ impl Task {
         log::info!("[kernel_execve] execve complete!");
     }
 
+    // 判断当前任务是否为主线程
     pub fn is_main_thread(&self) -> bool {
         self.tid() == self.tgid()
-    }
-
-    pub fn alloc_fd(&mut self, file: Arc<dyn FileOp + Send + Sync>) -> usize {
-        self.fd_table.alloc_fd(file)
     }
 
     // 向当前任务中添加新的子任务
@@ -429,9 +346,23 @@ impl Task {
         self.children.lock().try_insert(task.tid(), task);
     }
 
+    // 关闭线程组所有其他线程（保留当前进程）
+    pub fn close_thread(&self) {
+        self.op_thread_group_mut(|tg| {
+            for thread in tg.iter() {
+                // 跳过当前线程
+                if thread.tid() == self.tid() {
+                    continue;
+                }
+                remove_task(thread.tid());
+                kernel_exit(thread, 0);
+            }
+        });
+    }
+
     // 复制当前内核栈trap_context内容到新内核栈中（用于kernel_clone)
     // 返回新内核栈当前指针位置（KernelStack）
-    fn trap_context_clone(&self) -> usize {
+    fn trap_context_clone(self: &Arc<Self>) -> usize {
         let src_kstack_top = get_stack_top_by_sp(self.kstack());
         let dst_kstack_top = kstack_alloc();
         log::info!(
@@ -446,7 +377,13 @@ impl Task {
         unsafe {
             dst_trap_cx_ptr.write(src_trap_cx_ptr.read());
         }
+        let dst_trap_cx_tp_ptr = (dst_trap_cx_ptr as usize + 4 * core::mem::size_of::<usize>()) as *mut usize;
+        unsafe { dst_trap_cx_tp_ptr.write(Arc::as_ptr(self) as usize) };
         dst_trap_cx_ptr as usize
+    }
+
+    pub fn alloc_fd(&mut self, file: Arc<dyn FileOp + Send + Sync>) -> usize {
+        self.fd_table.alloc_fd(file)
     }
 
     // 重置文件打开表
@@ -483,6 +420,13 @@ impl Task {
     pub fn fd_table(&self) -> Arc<FdTable> {
         self.fd_table.clone()
     }
+    pub fn mask(&self) -> SigSet {
+        self.sig_pending.lock().mask
+    }
+    // 注意：这里将sigstack取出
+    pub fn sigstack(&self) -> Option<SignalStack> {
+        self.sig_stack.lock().take()
+    }
 
     /*********************************** setter *************************************/
     pub fn set_tgid(&self, tgid: Tid) {
@@ -500,6 +444,9 @@ impl Task {
     }
     pub fn set_parent(&self, parent: Arc<Task>) {
         *self.parent.lock() = Some(Arc::downgrade(&parent));
+    }
+    pub fn set_sigstack(&self, sigstack: SignalStack) {
+        *self.sig_stack.lock() = Some(sigstack)
     }
 
     /*********************************** operator *************************************/
@@ -520,6 +467,15 @@ impl Task {
     }
     pub fn op_thread_group_mut<T>(&self, f: impl FnOnce(&mut ThreadGroup) -> T) -> T {
         f(&mut self.thread_group.lock())
+    }
+    pub fn op_sig_pending_mut<T>(&self, f: impl FnOnce(&mut SigPending)-> T) -> T {
+        f(&mut self.sig_pending.lock())
+    }
+    pub fn op_sig_handler<T>(&self, f: impl FnOnce(&SigHandler) -> T) -> T {
+        f(&self.sig_handler.lock())
+    }
+    pub fn op_sig_handler_mut<T>(&self, f: impl FnOnce(&mut SigHandler)-> T) -> T {
+        f(&mut self.sig_handler.lock())
     }
     /******************************** 任务状态判断 **************************************/
     pub fn is_ready(&self) -> bool {
@@ -554,7 +510,8 @@ impl Task {
 /// 2. 修改task_status为Zombie
 /// 3. 修改exit_code
 /// 4. 托孤给initproc
-/// 5. 将当前进程的fd_table清空, memory_set回收, children清空
+/// 5. 将当前进程的fd_table清空, memory_set回收, children清空, sigpending清空
+/// 6. 向父进程发送SIGCHLD
 pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
     log::error!(
         "[kernel_exit] Task {} exit with exit_code {:?} ...",
@@ -587,6 +544,22 @@ pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
     });
     // 清空文件描述符表
     task.fd_table().clear();
+    // 清空信号
+    task.op_sig_pending_mut(|pending|{
+        pending.clear();
+    });
+    // 向父进程发送SIGCHID
+    task.op_parent(|parent|{
+        if let Some(parent) = parent {
+            parent.upgrade().unwrap().receive_siginfo(
+                SigInfo{
+                    signo: Sig::SIGCHLD.raw(),
+                    code: SigInfo::CLD_EXITED,
+                    fields: SiField::kill { tid: task.tid() },
+                }, false);
+        }
+    });
+    TASK_MANAGER.remove(task.tid());
     drop(task);
 }
 
@@ -602,16 +575,20 @@ fn clone_path(old_path: &Arc<SpinNoIrqLock<Arc<Path>>>) -> Arc<SpinNoIrqLock<Arc
 // argv_base, envp_base, auxv_base, user_sp
 // 压入顺序从高地址到低地址: envp, argv, platform, random bytes, auxs, envp[], argv[], argc
 fn init_user_stack(
+    memory_set: &MemorySet,
     args_vec: &[String],
     envs_vec: &[String],
     mut auxs_vec: Vec<AuxHeader>,
     mut user_sp: usize,
 ) -> (usize, usize, usize, usize) {
-    fn push_strings_to_stack(strings: &[String], stack_ptr: &mut usize) -> Vec<usize> {
+    fn push_strings_to_stack(memory_set: &MemorySet, strings: &[String], stack_ptr: &mut usize) -> Vec<usize> {
         let mut addresses = vec![0; strings.len()];
         for (i, string) in strings.iter().enumerate() {
             *stack_ptr -= string.len() + 1; // '\0'
             *stack_ptr -= *stack_ptr % core::mem::size_of::<usize>(); // 按照usize对齐
+            #[cfg(target_arch = "loongarch64")]
+            let ptr = (memory_set.translate_va_to_pa(VirtAddr::from(*stack_ptr)).unwrap()) as *mut u8;
+            #[cfg(target_arch = "riscv64")]
             let ptr = *stack_ptr as *mut u8;
             unsafe {
                 ptr.copy_from(string.as_ptr(), string.len());
@@ -622,9 +599,12 @@ fn init_user_stack(
         addresses
     }
 
-    fn push_pointers_to_stack(pointers: &[usize], stack_ptr: &mut usize) -> usize {
+    fn push_pointers_to_stack(memory_set: &MemorySet, pointers: &[usize], stack_ptr: &mut usize) -> usize {
         let len = (pointers.len() + 1) * core::mem::size_of::<usize>(); // +1 for null terminator
         *stack_ptr -= len;
+        #[cfg(target_arch = "loongarch64")]
+        let base = memory_set.translate_va_to_pa(VirtAddr::from(*stack_ptr)).unwrap();
+        #[cfg(target_arch = "riscv64")]
         let base = *stack_ptr;
         unsafe {
             for (i, &ptr) in pointers.iter().enumerate() {
@@ -636,9 +616,12 @@ fn init_user_stack(
         base
     }
 
-    fn push_aux_headers_to_stack(aux_headers: &[AuxHeader], stack_ptr: &mut usize) -> usize {
+    fn push_aux_headers_to_stack(memory_set: &MemorySet, aux_headers: &[AuxHeader], stack_ptr: &mut usize) -> usize {
         let len = aux_headers.len() * core::mem::size_of::<AuxHeader>();
         *stack_ptr -= len;
+        #[cfg(target_arch = "loongarch64")]
+        let base = memory_set.translate_va_to_pa(VirtAddr::from(*stack_ptr)).unwrap();
+        #[cfg(target_arch = "riscv64")]
         let base = *stack_ptr;
         unsafe {
             for (i, header) in aux_headers.iter().enumerate() {
@@ -656,17 +639,24 @@ fn init_user_stack(
     );
 
     // Push environment variables to the stack
-    let envp = push_strings_to_stack(envs_vec, &mut user_sp);
+    let envp = push_strings_to_stack(memory_set, envs_vec,  &mut user_sp);
 
     // Push arguments to the stack
-    let argv = push_strings_to_stack(args_vec, &mut user_sp);
+    let argv = push_strings_to_stack(memory_set, args_vec, &mut user_sp);
 
     // Push platform string to the stack
+    #[cfg(target_arch = "riscv64")]
     let platform = "RISC-V64";
+    #[cfg(target_arch = "loongarch64")]
+    let platform = "loongarch64";
+    
     user_sp -= platform.len() + 1;
     user_sp -= user_sp % core::mem::size_of::<usize>();
+    #[cfg(target_arch = "loongarch64")]
+    let ptr = (memory_set.translate_va_to_pa(VirtAddr::from(user_sp)).unwrap()) as *mut u8;
+    #[cfg(target_arch = "riscv64")]
+    let ptr = user_sp as *mut u8;
     unsafe {
-        let ptr = user_sp as *mut u8;
         ptr.copy_from(platform.as_ptr(), platform.len());
         *((ptr as usize + platform.len()) as *mut u8) = 0;
     }
@@ -690,18 +680,22 @@ fn init_user_stack(
         aux_type: AT_NULL,
         value: 0,
     });
-    let auxv_base = push_aux_headers_to_stack(&auxs_vec, &mut user_sp);
-
+    let auxv_base = push_aux_headers_to_stack(&memory_set,&auxs_vec, &mut user_sp);
+    
     // Push environment pointers to the stack
-    let envp_base = push_pointers_to_stack(&envp, &mut user_sp);
+    let envp_base = push_pointers_to_stack(&memory_set,&envp, &mut user_sp);
 
     // Push argument pointers to the stack
-    let argv_base = push_pointers_to_stack(&argv, &mut user_sp);
+    let argv_base = push_pointers_to_stack(&memory_set,&argv, &mut user_sp);
 
     // Push argc (number of arguments)
-    user_sp -= core::mem::size_of::<usize>();
+    user_sp -= core::mem::size_of::<usize>(); 
+    #[cfg(target_arch = "loongarch64")]
+    let user_sp_pa = (memory_set.translate_va_to_pa(VirtAddr::from(user_sp.clone())).unwrap()) as *mut u8;
+    #[cfg(target_arch = "riscv64")]
+    let user_sp_pa = user_sp as *mut u8;
     unsafe {
-        *(user_sp as *mut usize) = args_vec.len();
+        *(user_sp_pa as *mut usize) = args_vec.len();
     }
 
     (argv_base, envp_base, auxv_base, user_sp)
