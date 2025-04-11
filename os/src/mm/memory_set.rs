@@ -130,11 +130,11 @@ impl MemorySet {
         let mut memory_set = Self::new_bare();
 
         // 映射内核
-        log::info!(".text [{:#x}, {:#x})", stext as usize, etext as usize);
-        log::info!(".rodata [{:#x}, {:#x})", srodata as usize, erodata as usize);
-        log::info!(".data [{:#x}, {:#x})", sdata as usize, edata as usize);
+        log::info!(".text\t[{:#x}, {:#x})", stext as usize, etext as usize);
+        log::info!(".rodata\t[{:#x}, {:#x})", srodata as usize, erodata as usize);
+        log::info!(".data\t[{:#x}, {:#x})", sdata as usize, edata as usize);
         log::info!(
-            ".bss [{:#x}, {:#x})",
+            ".bss\t[{:#x}, {:#x})",
             sbss_with_stack as usize,
             ebss as usize
         );
@@ -396,16 +396,16 @@ impl MemorySet {
             value: entry_point,
         });
 
-        log::info!("[from_elf] AT_PHDR: {:#x}", ph_va);
-        log::info!("[from_elf] AT_PAGESZ: {}", PAGE_SIZE);
-        log::info!("[from_elf] AT_PHENT: {}", ph_entsize);
-        log::info!("[from_elf] AT_PHNUM: {}", ph_count);
-        log::info!("[from_elf] AT_ENTRY: {:#x}", entry_point);
-        log::info!("[from_elf] AT_BASE: {:#x}", DL_INTERP_OFFSET);
+        log::info!("[from_elf] AT_PHDR:\t{:#x}", ph_va);
+        log::info!("[from_elf] AT_PAGESZ:\t{}", PAGE_SIZE);
+        log::info!("[from_elf] AT_PHENT:\t{}", ph_entsize);
+        log::info!("[from_elf] AT_PHNUM:\t{}", ph_count);
+        log::info!("[from_elf] AT_ENTRY:\t{:#x}", entry_point);
+        log::info!("[from_elf] AT_BASE:\t{:#x}", DL_INTERP_OFFSET);
 
         // 需要动态链接
         if need_dl {
-            log::info!("[from_elf] need dynamic link");
+            log::warn!("[from_elf] need dynamic link");
             // 获取动态链接器的路径
             let section = elf.find_section_by_name(".interp").unwrap();
             let mut interpreter = String::from_utf8(section.raw_data(&elf).to_vec()).unwrap();
@@ -479,7 +479,7 @@ impl MemorySet {
                 }
             }
         } else {
-            log::info!("[from_elf] static link");
+            log::warn!("[from_elf] static link");
         }
 
         // 映射用户栈
@@ -882,7 +882,7 @@ impl MemorySet {
                         if area.vpn_range.contains_vpn(vpn) {
                             let data_frame = area.pages.get(&vpn).unwrap();
                             if Arc::strong_count(data_frame) == 1 {
-                                log::warn!("arc strong count == 1");
+                                log::warn!("[pre_handle_cow] arc strong count == 1");
                                 let mut flags = pte.flags();
                                 flags.remove(PTEFlags::COW);
                                 flags.insert(PTEFlags::W);
@@ -944,7 +944,7 @@ impl MemorySet {
                         // 根据VPN找到对应的data_frame, 并查看Arc的引用计数
                         if Arc::strong_count(data_frame) == 1 {
                             // 直接修改pte
-                            log::warn!("arc strong count == 1");
+                            log::warn!("[handle_recoverable_page_fault] arc strong count == 1");
                             let mut flags = pte.flags();
                             flags.remove(PTEFlags::COW);
                             flags.insert(PTEFlags::W);

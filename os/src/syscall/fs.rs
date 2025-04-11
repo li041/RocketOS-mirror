@@ -29,7 +29,6 @@ use crate::{
 
 use crate::arch::mm::{copy_from_user, copy_from_user_mut, copy_to_user};
 
-// #[cfg(target_arch = "riscv64")]
 pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
     let task = current_task();
     let file = task.fd_table().get_file(fd);

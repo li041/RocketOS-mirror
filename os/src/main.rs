@@ -81,11 +81,11 @@ pub fn rust_main(_hart_id: usize, dtb_address: usize) -> ! {
     use task::{add_initproc, run_tasks, TaskContext};
     use xmas_elf::sections;
     pub fn show_context_size() {
-        log::info!(
+        log::error!(
             "size of trap context: {}",
             core::mem::size_of::<TrapContext>()
         );
-        log::info!(
+        log::error!(
             "size of task context: {}",
             core::mem::size_of::<TaskContext>()
         )
