@@ -41,6 +41,14 @@ pub fn handle_signal() {
             log::warn!("[handle_signal] handle SA_RESTART");
         }
 
+        #[cfg(target_arch = "loongarch64")]
+        if action.flags.contains(SigActionFlag::SA_RESTART) {
+            // 回到用户调用ecall的指令
+            trap_cx.set_pc(trap_cx.era - 4);
+            trap_cx.restore_a0();   // 从last_a0中恢复a0
+            log::warn!("[handle_signal] handle SA_RESTART");
+        }
+
         //log::info!("[handle_signal] kstack_top: {:x}", kstack);
         // 非用户定义
         if !action.is_user() {

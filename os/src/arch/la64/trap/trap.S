@@ -1,13 +1,22 @@
 # SAVE数据保存寄存器在用户态时保存用户的内核栈指针
 # 2025-04-06 更改
 # 由于用户态下会更新tp寄存器的值，因此在-8(sp)的位置保存了内核tp
+# 2025-04-11 更改
+# 由于clone会产生新的子进程，新子进程的tp无法在-8(sp)的位置保存，因此将trap_context更新
+# 注：last-a0保存原先用户传递参数（用于signal处理SA_RESTART），只在__trap_from_user中保存即可，由handle_signal来恢复
+#
 #             0  ----------------------
-#             |                       |
-#             |     trap_context      |
-#             |                       |   r2(tp) 保存用户tp
-#  [sp] -> 34*8 -----------------------
-#             |     kernel_tp         | 
-#          35*8 -----------------------
+#             |      ketnal_tp        |
+#             |-----------------------|
+#             |       last-a0         |   
+#             |-----------------------|
+#             |         sepc          |
+#             |-----------------------|
+#             |       sstatus         | 
+#             |-----------------------| 
+#             |       r0 ~ r31        | r[2](tp) 保存用户tp
+#  [sp] -> 36*8 -----------------------
+
 
 .altmacro
 .macro SAVE_GP n
@@ -34,7 +43,7 @@ __trap_from_user:
     # 此时sp->内核栈, SAVE0->用户栈
     # 在内核栈上保存用户的上下文
     # todo: 这里TrapContext还没确定好, 先用32GR+sstaus+sepc
-    addi.d $sp, $sp, -34*8
+    addi.d $sp, $sp, -36*8
     # 保存通用寄存器
     st.d $r1, $sp, 1*8
     # 先保存用户tp
@@ -56,10 +65,12 @@ __trap_from_user:
     # 从SAVE0读取内核栈并保存到内核栈
     csrrd $t2, CSR_SAVE0
     st.d $t2, $sp, 3*8
+    # 保存用户a0参数到last_a0
+    st.d $a0, $sp, 34*8
     # trap_handler第一个参数是TrapContext在内核栈上的地址, 通过a0传递
     add.d $a0, $sp, $zero
-    # 载入内核tp
-    ld.d $r2, $sp, -1*8
+    # 从kernel_tp中载入内核tp
+    ld.d $r2, $sp, 35*8
     # 设置例外入口地址
     la $t0, __trap_from_user
     csrwr $t0, CSR_EENTRY
@@ -91,12 +102,12 @@ __return_to_user:
         LOAD_GP %n
         .set n, n+1 
     .endr
-    # 保存内核tp
-    st.d $r2, $sp, -1*8
+    # 保存内核tp到kernel_tp
+    st.d $r2, $sp, 35*8
     # 恢复用户tp
     ld.d $r2, $sp, 2*8
     # release TrapContext on kernel stack
-    addi.d $sp, $sp, 34*8
+    addi.d $sp, $sp, 36*8
     # 交换sp和SAVE0的值
     csrwr $sp, CSR_SAVE0
     # 现在sp指向的是用户栈, SAVE0指向的是内核栈, 然后返回到用户态

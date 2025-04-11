@@ -8,7 +8,7 @@ use super::{
     String, Tid,
 };
 use crate::{
-    arch::{mm::copy_to_user, trap::{context::{get_trap_context, save_trap_context}, TrapContext}},
+    arch::{mm::copy_to_user, trap::{context::{dump_trap_context, get_trap_context, save_trap_context}, TrapContext}},
     fs::{fdtable::FdTable, file::FileOp, path::Path, FileOld, Stdin, Stdout},
     mm::{MapArea, MapPermission, MapType, MemorySet, VPNRange, VirtAddr},
     mutex::{SpinNoIrq, SpinNoIrqLock},
@@ -317,6 +317,7 @@ impl Task {
             MemorySet::from_elf(elf_data.to_vec(), &mut args_vec);
         // 更新页表
         memory_set.activate();
+        
         #[cfg(target_arch = "loongarch64")]
         memory_set.push_with_offset(
             MapArea::new(

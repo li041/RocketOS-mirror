@@ -197,6 +197,7 @@ pub fn sys_rt_sigaction(signum: i32, act: usize, oldact: usize) -> isize {
 /// 如果 set 为 NULL，则信号掩码不变（即忽略 how），但信号掩码的当前值仍然返回到 oldset（如果它不为 NULL）。
 /// EFAULT set 或 oldset 参数指向进程分配的地址空间之外。 EINVAL how 中指定的值无效，或者内核不支持在 sigsetsize 中传递的大小。
 pub fn sys_rt_sigprocmask(how: usize, set: usize, oldset: usize) -> isize {
+    log::trace!("[sys_rt_sigprocmask] enter sigprocmask");
     const SIG_BLOCK: usize = 0;
     const SIG_UNBLOCK: usize = 1;
     const SIG_SETMASK: usize = 2;
@@ -307,9 +308,7 @@ pub fn sys_rt_sigreturn() -> isize {
         // 更新栈顶trapcontext
         trap_cx.r = sig_context.r;
         trap_cx.era = sig_context.era;
-        unsafe {
-            trap_cx_ptr.write(trap_cx);
-        }
+        save_trap_context(&task, trap_cx);
         // 恢复mask
         task.op_sig_pending_mut(|pending| {
             pending.mask = sig_context.mask;
