@@ -11,7 +11,7 @@ use crate::{
 
 use super::{register, Exception, TIClr, Trap, ERA};
 
-mod context;
+pub mod context;
 pub mod timer;
 
 use alloc::task;

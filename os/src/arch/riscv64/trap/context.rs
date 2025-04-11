@@ -52,7 +52,7 @@ impl TrapContext {
         self.kernel_tp = kernel_tp;
     }
     pub fn restore_a0(&mut self) {
-        self.last_a0 = self.x[10];
+        self.x[10] = self.last_a0;
     }
 
     /// init app context
