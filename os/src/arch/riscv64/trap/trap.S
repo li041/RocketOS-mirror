@@ -4,13 +4,21 @@
 
 # 2025-03-31 更改
 # 由于用户态下会更新tp寄存器的值，因此在-8(sp)的位置保存了内核tp
+# 2025-04-11 更改
+# 由于clone会产生新的子进程，新子进程的tp无法在-8(sp)的位置保存，因此将trap_context更新
+# 注：last-a0保存原先用户传递参数（用于signal处理SA_RESTART），只在__trap_from_user中保存即可，由handle_signal来恢复
+#
 #             0  ----------------------
-#             |                       |
-#             |     trap_context      |
-#             |                       |   x[4](tp) 保存用户tp
-#  [sp] -> 34*8 -----------------------
-#             |     kernel_tp         | 
-#          35*8 -----------------------
+#             |      ketnal_tp        |
+#             |-----------------------|
+#             |       last-a0         |   
+#             |-----------------------|
+#             |         sepc          |
+#             |-----------------------|
+#             |       sstatus         | 
+#             |-----------------------| 
+#             |       x0 ~ x31        | x[4](tp) 保存用户tp
+#  [sp] -> 36*8 -----------------------
 
 .altmacro
 .macro SAVE_GP n
@@ -29,7 +37,7 @@ __trap_from_user:
     # 交换sp和sscratch的值
     csrrw sp, sscratch, sp
     # 在内核栈上保存用户的上下文 
-    addi sp, sp, -34*8
+    addi sp, sp, -36*8
     # save general-purpose registers
     sd x1, 1*8(sp)
     # skip sp(x2), we will save it later
@@ -50,10 +58,12 @@ __trap_from_user:
     # read user stack from sscratch and save it on the kernel stack
     csrr t2, sscratch
     sd t2, 2*8(sp)
+    # 保存用户a0参数到last_a0
+    sd a0, 34*8(sp)
     # 第一个参数是TrapContext在内核栈上的地址, 通过a0传递
     mv a0, sp
-    # 载入内核tp
-    ld tp, -8(sp)
+    # 从kernel_tp中载入内核tp
+    ld tp, 35*8(sp)
     # 注意要在保存上下文后设置stvec
     # 设置stvec为Mode(0~1 bits) Direct, 基地址为__trap_from_kernel
     la t0, __trap_from_user
@@ -89,12 +99,12 @@ __return_to_user:
         LOAD_GP %n
         .set n, n+1
     .endr
-    # 保存内核tp
-    sd x4, -8(sp)
+    # 保存内核tp到kernel_tp
+    sd x4, 35*8(sp)
     # 恢复用户tp
     ld x4, 4*8(sp)
     # release TrapContext on kernel stack
-    addi sp, sp, 34*8
+    addi sp, sp, 36*8
     csrrw sp, sscratch, sp
     # 现在sp指向的是用户栈, sscratch指向的是内核栈, 然后返回到用户态
     # 置sstatus的SPP位为0, 表示返回到用户态

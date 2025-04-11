@@ -1,13 +1,16 @@
 use core::arch::asm;
 
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use riscv::register::sstatus::{self, Sstatus, SPP};
 
 use crate::mm::frame_alloc;
+use crate::task::{get_stack_top_by_sp, Task};
 use crate::{arch::config::PAGE_SIZE_BITS, arch::mm::map_temp};
 
 /// Trap Context
 /// 内核栈对齐到16字节
+/// 2025-04-11 向trap_context中添加了kernel_tp字段, 为保持对齐, 顺便塞了一个last-a0来帮助signal实现SA_RESTART 
 #[repr(C)]
 #[repr(align(16))]
 pub struct TrapContext {
@@ -21,6 +24,8 @@ pub struct TrapContext {
     /// CSR sepc
     /// 用于保存当前的异常指令地址. 在la中时ERA
     pub sepc: usize,
+    pub last_a0: usize,
+    pub kernel_tp: usize,  // 将内核tp放在栈顶，也许会有助于debug
 }
 
 impl TrapContext {
@@ -43,6 +48,13 @@ impl TrapContext {
     pub fn set_pc(&mut self, pc: usize) {
         self.sepc = pc;
     }
+    pub fn set_kernel_tp(&mut self, kernel_tp: usize) {
+        self.kernel_tp = kernel_tp;
+    }
+    pub fn restore_a0(&mut self) {
+        self.last_a0 = self.x[10];
+    }
+
     /// init app context
     /// argc, argv_base, envp_base, auxv_base分别放在x[10], x[11], x[12], x[13]
     pub fn app_init_trap_context(
@@ -64,9 +76,93 @@ impl TrapContext {
             x: gerneal_regs,
             sstatus,
             sepc: entry, // entry point of app
+            last_a0: 0,
+            kernel_tp: 0,
         };
         cx.set_sp(ustack_top); // app's user stack pointer
         cx // return initial Trap Context of app
+    }
+}
+
+// 获取某一任务的trap_context
+// 注: 除非是只想读，否则建议立即成对的调用save_trap_context
+pub fn get_trap_context(task: &Arc<Task>) -> TrapContext {
+    log::warn!("[get_trap_context] task{} fetch trap_cx", task.tid());
+    let task_kstack_top = get_stack_top_by_sp(task.kstack());
+    log::warn!("[get_trap_context] kstack top: {:#x}", task_kstack_top);
+    let trap_cx_ptr = task_kstack_top - core::mem::size_of::<TrapContext>();
+    let trap_cx_ptr = trap_cx_ptr as *mut TrapContext;
+    log::warn!("[get_trap_context] trap_cx_ptr: {:x}", trap_cx_ptr as usize);
+    unsafe { trap_cx_ptr.read_volatile() }
+}
+
+// 保存trap_context到某个任务的内核栈
+pub fn save_trap_context(task: &Arc<Task>, cx: TrapContext) {
+    log::warn!("[save_trap_context] task{} write trap_cx", task.tid());
+    let task_kstack_top = get_stack_top_by_sp(task.kstack());
+    log::warn!("[save_trap_context] kstack top: {:#x}", task_kstack_top);
+    let trap_cx_ptr = task_kstack_top - core::mem::size_of::<TrapContext>();
+    let trap_cx_ptr = trap_cx_ptr as *mut TrapContext;
+    log::warn!("[save_trap_context] trap_cx_ptr: {:#x}", trap_cx_ptr as usize);
+    unsafe { trap_cx_ptr.write_volatile(cx) }
+}
+
+#[allow(unused)]
+pub fn dump_trap_context(task: &Arc<Task>) {
+    let task_kstack_top = get_stack_top_by_sp(task.kstack());
+    let trap_cx_ptr = task_kstack_top - core::mem::size_of::<TrapContext>();
+    let trap_cx_ptr = trap_cx_ptr as *mut TrapContext;
+    let trap_cx = unsafe { trap_cx_ptr.read_volatile() };
+    log::error!("task {} trapcontext dump:", task.tid());
+    log::error!("kstack top:\t{:x}", task_kstack_top);
+    log::error!("trap_cx_ptr:\t{:x}", trap_cx_ptr as usize);
+    log::error!("trap_cx size:\t{:x}", core::mem::size_of::<TrapContext>());
+    log::error!("------------- task {} Dump -------------", task.tid());
+    for (i, val) in trap_cx.x.iter().enumerate() {
+        log::error!("{}:\t\t{:#018x}", reg_name(i), val);
+    }
+    log::error!("sstatus:\t{:#018x}", trap_cx.sstatus.bits());
+    log::error!("sepc:\t\t{:#018x}", trap_cx.sepc);
+    log::error!("last_a0:\t{:#018x}", trap_cx.last_a0);
+    log::error!("kernel_tp:\t{:#018x}", trap_cx.kernel_tp);
+    log::error!("------------- task {} Dump -------------", task.tid());
+}
+
+pub fn reg_name(i: usize) -> &'static str {
+    match i {
+        0  => "zero",
+        1  => "ra",
+        2  => "sp",
+        3  => "gp",
+        4  => "tp",
+        5  => "t0",
+        6  => "t1",
+        7  => "t2",
+        8  => "s0/fp",
+        9  => "s1",
+        10 => "a0",
+        11 => "a1",
+        12 => "a2",
+        13 => "a3",
+        14 => "a4",
+        15 => "a5",
+        16 => "a6",
+        17 => "a7",
+        18 => "s2",
+        19 => "s3",
+        20 => "s4",
+        21 => "s5",
+        22 => "s6",
+        23 => "s7",
+        24 => "s8",
+        25 => "s9",
+        26 => "s10",
+        27 => "s11",
+        28 => "t3",
+        29 => "t4",
+        30 => "t5",
+        31 => "t6",
+        _ => "invalid",
     }
 }
 
@@ -85,6 +181,8 @@ pub fn trap_cx_test() {
         x: regs,
         sstatus: sstatus,
         sepc: 0x114,
+        last_a0: 0,
+        kernel_tp: 0,
     };
     unsafe {
         // write_addr.write(cx);

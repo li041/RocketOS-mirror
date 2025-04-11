@@ -1,6 +1,7 @@
 use core::sync::atomic::{compiler_fence, Ordering};
 
 use crate::arch::mm::copy_from_user;
+use crate::arch::trap::context::get_trap_context;
 use crate::fs::file::OpenFlags;
 use crate::task::CloneFlags;
 use crate::{
@@ -18,7 +19,7 @@ use crate::{
 use alloc::sync::Arc;
 use bitflags::bitflags;
 
-#[cfg(target_arch = "riscv64")]
+
 pub fn sys_clone(
     flags: u32,
     stack_ptr: usize,
@@ -36,78 +37,17 @@ pub fn sys_clone(
         Some(flag) => flag,
     };
     let task = current_task();
-    let new_task = task.kernel_clone(flags);
-    let new_tid = new_task.tid();
-    // 设定进程返回值
-    let new_kstack = new_task.kstack();
-    let new_trap_cx_ptr = (new_kstack + core::mem::size_of::<TaskContext>()) as *mut TrapContext;
-    unsafe {
-        // 设定子任务返回值为0，令tp指向该任务结构
-        // ToDo: 检验用户栈指针
-        if stack_ptr != 0 {
-            (*new_trap_cx_ptr).x[2] = stack_ptr;
-        }
-        (*new_trap_cx_ptr).x[4] = Arc::as_ptr(&new_task) as usize;
-        (*new_trap_cx_ptr).x[10] = 0;
-    }
-    log::info!(
-        "[sys_clone]: strong_count: {}",
-        Arc::strong_count(&new_task),
-    );
-    // ToDo: 更新信号检验
+    let new_task = task.kernel_clone(flags, stack_ptr);
+    let new_task_tid = new_task.tid();
     add_task(new_task);
-    new_tid as isize
-}
-
-#[cfg(target_arch = "loongarch64")]
-pub fn sys_clone(
-    flags: u32,
-    stack_ptr: usize,
-    _parent_tid_ptr: usize,
-    _tls_ptr: usize,
-    _chilren_tid_ptr: usize,
-) -> isize {
-    // debug
-    log::error!("[sys_clone] flags: {}, stack_ptr: {}", flags, stack_ptr);
-    // ToDo: 更新错误检验
-    let flags = match CloneFlags::from_bits(flags as u32) {
-        None => {
-            log::error!("clone flags is None: {}", flags);
-            return 22;
-        }
-        Some(flag) => flag,
-    };
-    let task = current_task();
-    let new_task = task.kernel_clone(flags);
-    let new_tid = new_task.tid();
-    // 设定进程返回值
-    let new_kstack = new_task.kstack();
-    let new_trap_cx_ptr = (new_kstack + core::mem::size_of::<TaskContext>()) as *mut TrapContext;
-    unsafe {
-        // 设定子任务返回值为0，令tp指向该任务结构
-        // ToDo: 检验用户栈指针
-        if stack_ptr != 0 {
-            (*new_trap_cx_ptr).r[3] = stack_ptr;
-        }
-        (*new_trap_cx_ptr).r[2] = Arc::as_ptr(&new_task) as usize;
-        (*new_trap_cx_ptr).r[4] = 0;
-    }
-    log::info!(
-        "[sys_clone]: strong_count: {}",
-        Arc::strong_count(&new_task),
-    );
-    // ToDo: 更新信号检验
-    add_task(new_task);
-    new_tid as isize
+    new_task_tid as isize
 }
 
 pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> isize {
     let path = c_str_to_string(path);
-    log::error!(
+    log::info!(
         "[sys_execve] path: {}, args: {:?}, envs: {:?}",
-        path,
-        args,
-        envs
+        path, args, envs
     );
     // argv[0]是应用程序的名字
     // 后续元素是用户在命令行中输入的参数
@@ -160,6 +100,9 @@ pub fn sys_yield() -> isize {
 pub fn sys_exit(exit_code: i32) -> ! {
     kernel_exit(current_task(), exit_code);
     remove_task(current_task().tid());
+    log::warn!( "[sys_exit] task {} exit with code {}",
+        current_task().tid(), exit_code
+    );
     // 切换任务
     switch_to_next_task();
     panic!("Unreachable in sys_exit");

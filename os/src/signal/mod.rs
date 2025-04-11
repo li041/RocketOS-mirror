@@ -12,7 +12,7 @@ pub use sigStack::*;
 pub use sigStruct::*;
 
 use crate::{
-    arch::{mm::copy_to_user, trap::TrapContext}, mm::VirtAddr, task::{current_task, get_stack_top_by_sp, kernel_exit, remove_task, switch_to_next_task, Task}
+    arch::{mm::copy_to_user, trap::{context::{get_trap_context, save_trap_context}, TrapContext}}, mm::VirtAddr, task::{current_task, get_stack_top_by_sp, kernel_exit, remove_task, switch_to_next_task, Task}
 };
 
 // 1. 检查是否有信号触发
@@ -30,10 +30,17 @@ pub fn handle_signal() {
         let old_mask = task.mask();
         log::info!("[handle_signal] task{} is handling signal {}",task.tid(), sig.raw());
         let action = task.op_sig_handler(|handler| handler.get(sig));
-        let kstack = get_stack_top_by_sp(task.kstack());
-        let trap_cx_ptr = (kstack - core::mem::size_of::<TrapContext>()) as *mut TrapContext;
-        let mut trap_cx = unsafe { trap_cx_ptr.read() };
+        let mut trap_cx = get_trap_context(&task);
         
+        // Todo: 中断处理，测试
+        #[cfg(target_arch = "riscv64")]
+        if action.flags.contains(SigActionFlag::SA_RESTART) {
+            // 回到用户调用ecall的指令
+            trap_cx.set_pc(trap_cx.sepc - 4);
+            trap_cx.restore_a0();   // 从last_a0中恢复a0
+            log::warn!("[handle_signal] handle SA_RESTART");
+        }
+
         //log::info!("[handle_signal] kstack_top: {:x}", kstack);
         // 非用户定义
         if !action.is_user() {
@@ -47,7 +54,6 @@ pub fn handle_signal() {
         }
         // 用户定义
         else {
-            // Todo:RA_RESTART
             // 不包含SA_NODEFER时需要在信号掩码中防止重复sig
             log::warn!("[handle_signal] {:?} Using user signal handlers", sig);
             log::info!(
@@ -153,7 +159,7 @@ pub fn handle_signal() {
             log::info!("[handle_signal] ra = {:x}", sigreturn_trampoline as usize);
             log::info!("[handle_signal] user stack = {:x}", user_sp);
             log::info!("[handle_signal] sa_handler = {:x}", action.sa_handler);
-            unsafe { trap_cx_ptr.write(trap_cx) };
+            save_trap_context(&task, trap_cx);
         }
         break;
     }

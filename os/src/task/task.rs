@@ -8,7 +8,7 @@ use super::{
     String, Tid,
 };
 use crate::{
-    arch::{mm::copy_to_user, trap::TrapContext},
+    arch::{mm::copy_to_user, trap::{context::{get_trap_context, save_trap_context}, TrapContext}},
     fs::{fdtable::FdTable, file::FileOp, path::Path, FileOld, Stdin, Stdout},
     mm::{MapArea, MapPermission, MapType, MemorySet, VPNRange, VirtAddr},
     mutex::{SpinNoIrq, SpinNoIrqLock},
@@ -23,10 +23,7 @@ use crate::{
     },
 };
 use alloc::{
-    collections::btree_map::BTreeMap,
-    sync::{Arc, Weak},
-    vec,
-    vec::Vec,
+    collections::btree_map::BTreeMap, sync::{Arc, Weak}, task, vec::Vec, vec
 };
 use bitflags::bitflags;
 use core::{
@@ -93,7 +90,7 @@ impl core::fmt::Debug for Task {
 
 impl Drop for Task {
     fn drop(&mut self) {
-        log::info!("task {} dropped", self.tid());
+        log::error!("task {} dropped", self.tid());
     }
 }
 
@@ -154,27 +151,27 @@ impl Task {
             sig_stack: SpinNoIrqLock::new(None),
         });
         // 向线程组中添加该进程
-        task.thread_group.lock().add(task.clone());
+        task.thread_group.lock().add(task.tid(), Arc::downgrade(&task));
         add_task(task.clone());
         TASK_MANAGER.add(&task);
-        // 令tp寄存器指向主线程内核栈顶
+        // 令tp与kernel_tp指向主线程内核栈顶
         let task_ptr = Arc::as_ptr(&task) as usize;
+        trap_context.set_tp(task_ptr);
+        trap_context.set_kernel_tp(task_ptr);
+        log::info!("[Initproc] Init-tp:\t{:x}", task_ptr);
         let task_context = TaskContext::app_init_task_context(task_ptr, pgdl_ppn);
         // 将TrapContext和TaskContext压入内核栈
-        trap_context.set_tp(task_ptr);
         unsafe {
             trap_cx_ptr.write(trap_context);
             task_cx_ptr.write(task_context);
         }
-        log::info!("Task: {:p}", &task);
-        log::info!("Task kstack: {:p}", &task.kstack);
-        log::info!("[Initproc] kstack: {:#x}", kstack);
-        log::info!("Initproc complete!");
-
+        log::info!("[Initproc] Init-sp:\t{:#x}", kstack);
+        log::error!("[Initproc] Initproc complete!");
         task
     }
 
-    pub fn kernel_clone(self: &Arc<Self>, flags: CloneFlags) -> Arc<Self> {
+    // 从父进程复制子进程的核心逻辑实现
+    pub fn kernel_clone(self: &Arc<Self>, flags: CloneFlags, ustack_ptr: usize) -> Arc<Self> {
         let tid = tid_alloc();
         let exit_code = AtomicI32::new(0);
         let status = SpinNoIrqLock::new(TaskStatus::Ready);
@@ -190,21 +187,21 @@ impl Task {
         let sig_handler;
         let sig_pending;
         let sig_stack;
-        log::trace!(
-            "[kernel_clone] current_task pid: {}, new_task pid: {}",
-            self.tid(),
-            tid
-        );
+        log::info!("[kernel_clone] task{} ready to clone ...", self.tid());
+
         // 是否与父进程共享信号处理器
         if flags.contains(CloneFlags::CLONE_SIGHAND) {
+            log::info!("[kernel_clone] handle CLONE_SIGHAND");
             sig_handler = self.sig_handler.clone();
         } else {
             sig_handler = Arc::new(SpinNoIrqLock::new(
                 self.op_sig_handler_mut(|handler| handler.clone()),
             ))
         }
+
         // 创建线程
         if flags.contains(CloneFlags::CLONE_THREAD) {
+            log::info!("[kernel_clone] handle CLONE_THREAD");
             tgid = SpinNoIrqLock::new(TidHandle(self.tgid()));
             parent = self.parent.clone();
             children = self.children.clone();
@@ -214,6 +211,7 @@ impl Task {
         }
         // 创建进程
         else {
+            log::info!("[kernel_clone] child task{} is a process", tid);
             tgid = SpinNoIrqLock::new(TidHandle(tid.0));
             parent = Arc::new(SpinNoIrqLock::new(Some(Arc::downgrade(self))));
             children = Arc::new(SpinNoIrqLock::new(BTreeMap::new()));
@@ -222,24 +220,29 @@ impl Task {
             root = clone_path(&self.root);
             pwd = clone_path(&self.pwd);
         }
+
         if flags.contains(CloneFlags::CLONE_VM) {
-            // Todo: execve可能有问题
+            log::info!("[kernel_clone] handle CLONE_VM");
             memory_set = self.memory_set.clone()
         } else {
             memory_set = Arc::new(SpinNoIrqLock::new(MemorySet::from_existed_user_lazily(
                 &self.memory_set.lock(),
             )));
         }
-        // 申请新的内核栈并写入trap_cx内容
+
+        // 申请新的内核栈并复制父进程trap_cx内容
         kstack = self.trap_context_clone();
         // 更新task_cx
         kstack -= core::mem::size_of::<TaskContext>();
         let kstack = KernelStack(kstack);
+
         if flags.contains(CloneFlags::CLONE_FILES) {
+            log::info!("[kernel_clone] handle CLONE_FILES");
             fd_table = self.fd_table.clone()
         } else {
             fd_table = FdTable::from_existed_user(&self.fd_table);
         }
+
         // 初始化其他未初始化属性
         sig_pending = SpinNoIrqLock::new(SigPending::new());
         sig_stack = SpinNoIrqLock::new(None);
@@ -261,20 +264,43 @@ impl Task {
             sig_pending,
             sig_stack,
         });
-        if !flags.contains(CloneFlags::CLONE_THREAD) {
+        log::info!("[kernel_clone] child task{} created", task.tid());
+
+        // 向任务管理器注册新任务（不是调度器）
+        TASK_MANAGER.add(&task);
+        // 向父进程添加子进程
+        if task.is_process() {
             self.add_child(task.clone());
+        } 
+        // 向线程组添加子进程 （包括当前任务为进程的情况）
+        task.op_thread_group_mut(|tg| 
+            tg.add(task.tid(), Arc::downgrade(&task)));
+   
+        // 更新子进程的trap_cx
+        let mut trap_cx = get_trap_context(&task);
+        if ustack_ptr != 0 {
+            // ToDo: 检验用户栈指针
+            trap_cx.set_sp(ustack_ptr);
         }
-        task.op_thread_group_mut(|tg| tg.add(task.clone()));
+        // 设定子任务返回值为0，令kernel_tp保存该任务结构
+        trap_cx.set_kernel_tp(Arc::as_ptr(&task) as usize);
+        trap_cx.set_a0(0);
+        save_trap_context(&task, trap_cx);
+        log::info!("[kernel_clone] child task{} trap_cx updated", task.tid());
+
         // 在内核栈中加入task_cx
         write_task_cx(task.clone());
-        TASK_MANAGER.add(&task);
-        log::info!(
-            "[kernel_clone] task{}, kstack: {:#x}, strong_count {}",
-            task.tid(),
-            task.kstack(),
-            Arc::strong_count(&task)
-        ); // 未加入调度器理论为 2
-        log::trace!("[kernel_clone] task{} create sucessfully!", task.tid());
+        log::info!("[kernel_clone] child task{} task_cx updated", task.tid());
+        log::info!("[kernel_clone] task{}-tp:\t{:x}", task.tid(), Arc::as_ptr(&task) as usize);
+        log::info!("[kernel_clone] task{}-sp:\t{:x}", task.tid(), task.kstack());
+
+        let strong_count = Arc::strong_count(&task);
+        if strong_count == 2 
+           { log::info!("[kernel_clone] strong_count:\t{}", strong_count);} 
+        else // 未加入调度器理论引用计数为 2
+            { log::error!("[kernel_clone] strong_count:\t{}", strong_count);} 
+        
+        log::info!("[kernel_clone] task{} clone complete!", self.tid());
         task
     }
 
@@ -285,6 +311,7 @@ impl Task {
         mut args_vec: Vec<String>,
         envs_vec: Vec<String>,
     ) {
+        log::info!("[kernel_execve] task{} do execve ...", self.tid());
         // 创建地址空间
         let (mut memory_set, _satp, ustack_top, entry_point, aux_vec) =
             MemorySet::from_elf(elf_data.to_vec(), &mut args_vec);
@@ -305,8 +332,8 @@ impl Task {
             None,
             0,
         );
+
         // 初始化用户栈, 压入args和envs
-        // ToDo：待完善
         let argc = args_vec.len();
         let (argv_base, envp_base, auxv_base, ustack_top) =
             init_user_stack(&memory_set, &args_vec, &envs_vec, aux_vec, ustack_top);
@@ -316,17 +343,21 @@ impl Task {
             ustack_top,
             memory_set.token()
         );
+
         // 关闭所有线程组其他进程
         self.close_thread();
         // 如果当前任务为从线程, 则将线程组中所有任务从调度器中移除
-        if !self.is_main_thread() {
+        if !self.is_process() {
             remove_thread_group(self.tgid());
         }
+        log::info!("[kernel_execve] task{} close thread_group", self.tid());
+        // 将当前线程升级为主线程
+        self.set_tgid(self.tid());
+        log::info!("[kernel_execve] task{} become a process", self.tid());
+
         // 更新地址空间
         self.op_memory_set_mut(|m| *m = memory_set);
         // 更新trap_cx
-        let kstack_top = get_stack_top_by_sp(self.kstack());
-        let trap_cx_ptr = (kstack_top - core::mem::size_of::<TrapContext>()) as *mut TrapContext;
         let mut trap_cx = TrapContext::app_init_trap_context(
             entry_point,
             ustack_top,
@@ -336,47 +367,45 @@ impl Task {
             auxv_base,
         );
         trap_cx.set_tp(Arc::as_ptr(&self) as usize);
-        unsafe {
-            *trap_cx_ptr = trap_cx;
-        }
-        // 将当前线程升级为主线程
-        self.set_tgid(self.tid());
+        save_trap_context(&self, trap_cx);
+        log::info!("[kernel_execve] task{} trap_cx updated", self.tid());
         // 重建线程组
         self.op_thread_group_mut(|tg| {
             *tg = ThreadGroup::new();
-            tg.add(self.clone());
+            tg.add(self.tid(), Arc::downgrade(&self));
         });
+        log::info!("[kernel_execve] task{} thread_group rebuild", self.tid());
         self.do_close_on_exec();
+        log::info!("[kernel_execve] task{} fd_table reset", self.tid());
         // 重置信号处理器
         self.op_sig_handler_mut(|handler| handler.reset());
+        log::info!("[kernel_execve] task{} handler reset", self.tid());
 
-        log::info!(
-            "[kernel_execve] current_task ThreadGroup len {}",
-            self.op_thread_group_mut(|tg| tg.len())
-        );
-        log::info!(
-            "[kernel_execve] current_task tid:{}, tgid:{}, kstack:{:#x}, strong_count:{}",
-            self.tid(),
-            self.tgid(),
-            self.kstack(),
-            Arc::strong_count(&self)
-        ); // 理论为3(sys_exec一个，children一个， processor一个)
-        log::info!("[kernel_execve] execve complete!");
+        log::info!("[kernel_execve] task{}-tgid:\t{:x}", self.tid(), self.tgid());
+        log::info!("[kernel_execve] task{}-tp:\t{:x}", self.tid(), Arc::as_ptr(&self) as usize);
+        log::info!("[kernel_execve] task{}-sp:\t{:x}", self.tid(), self.kstack());
+
+        let strong_count = Arc::strong_count(&self);
+        if strong_count == 3 
+            { log::info!("[kernel_execve] strong_count:\t{}", strong_count);} 
+        else // 理论为3(sys_exec一个，children一个， processor一个)
+            { log::error!("[kernel_execve] strong_count:\t{}", strong_count)}
+
+        log::info!("[kernel_execve] task{} execve complete!", self.tid());
     }
 
-    // 判断当前任务是否为主线程
-    pub fn is_main_thread(&self) -> bool {
+    // 判断当前任务是否为进程
+    pub fn is_process(&self) -> bool {
         self.tid() == self.tgid()
     }
 
     // 向当前任务中添加新的子任务
     pub fn add_child(&self, task: Arc<Task>) {
-        self.children.lock().try_insert(task.tid(), task);
+        self.children.lock().insert(task.tid(), task);
     }
     pub fn remove_child_task(&self, tid: Tid) {
         self.children.lock().remove(&tid);
     }
-
     // 关闭线程组所有其他线程（保留当前进程）
     pub fn close_thread(&self) {
         self.op_thread_group_mut(|tg| {
@@ -396,11 +425,8 @@ impl Task {
     fn trap_context_clone(self: &Arc<Self>) -> usize {
         let src_kstack_top = get_stack_top_by_sp(self.kstack());
         let dst_kstack_top = kstack_alloc();
-        log::info!(
-            "[trap_context_clone] src_kstack_top: {:#x}, dst_kstack_top: {:#x}",
-            src_kstack_top,
-            dst_kstack_top
-        );
+        log::info!("[trap_context_clone] src_kstack_top:\t{:#x}", src_kstack_top);
+        log::info!("[trap_context_clone] dst_kstack_top:\t{:#x}", dst_kstack_top);
         let src_trap_cx_ptr =
             (src_kstack_top - core::mem::size_of::<TrapContext>()) as *const TrapContext;
         let dst_trap_cx_ptr =
@@ -408,9 +434,6 @@ impl Task {
         unsafe {
             dst_trap_cx_ptr.write(src_trap_cx_ptr.read());
         }
-        let dst_trap_cx_tp_ptr =
-            (dst_trap_cx_ptr as usize + 4 * core::mem::size_of::<usize>()) as *mut usize;
-        unsafe { dst_trap_cx_tp_ptr.write(Arc::as_ptr(self) as usize) };
         dst_trap_cx_ptr as usize
     }
 
@@ -545,22 +568,19 @@ impl Task {
 /// 5. 将当前进程的fd_table清空, memory_set回收, children清空, sigpending清空
 /// 6. 向父进程发送SIGCHLD
 pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
-    log::error!(
-        "[kernel_exit] Task {} exit with exit_code {:?} ...",
-        task.tid(),
-        exit_code
-    );
+    log::error!("[kernel_exit] Task{} ready to exit ...", task.tid(),);
     assert_ne!(
-        task.tid(),
-        INIT_PROC_PID,
+        task.tid(), INIT_PROC_PID,
         "[kernel_exit] Initproc process exit with exit_code {:?} ...",
         task.exit_code()
     );
     // 从线程组中移除
     task.op_thread_group_mut(|tg| tg.remove(task.clone()));
+    log::info!("[kernel_exit] Task{} removed from thread-group", task.tid(),);
     // 设置当前任务为僵尸态
     task.set_zombie();
-    // 设置推出码
+    log::warn!("[kernel_exit] Task{} become zombie", task.tid());
+    // 设置退出码
     task.set_exit_code(exit_code);
     // 托孤
     task.op_children_mut(|children| {
@@ -574,12 +594,15 @@ pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
     task.op_memory_set_mut(|mem| {
         mem.recycle_data_pages();
     });
+    log::info!("[kernel_exit] Task{} memset_area clear", task.tid());
     // 清空文件描述符表
     task.fd_table().clear();
+    log::info!("[kernel_exit] Task{} fd_table clear", task.tid());
     // 清空信号
     task.op_sig_pending_mut(|pending| {
         pending.clear();
     });
+    log::info!("[kernel_exit] Task{} sig_pending clear", task.tid());
     // 向父进程发送SIGCHID
     task.op_parent(|parent| {
         if let Some(parent) = parent {
@@ -594,6 +617,7 @@ pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
         }
     });
     TASK_MANAGER.remove(task.tid());
+    log::error!("[kernel_exit] Task{} clear the resource", task.tid(),);
     drop(task);
 }
 
@@ -775,8 +799,8 @@ impl ThreadGroup {
         self.member.len()
     }
 
-    pub fn add(&mut self, task: Arc<Task>) {
-        self.member.insert(task.tid(), Arc::downgrade(&task));
+    pub fn add(&mut self, tid: Tid, task: Weak<Task>) {
+        self.member.insert(tid, task);
     }
 
     pub fn remove(&mut self, task: Arc<Task>) {

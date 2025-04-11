@@ -11,6 +11,7 @@
 
 # ARCH ?= loongarch64
 ARCH ?= riscv64
+MODE ?= debug
 
 all: clean run
 
@@ -27,8 +28,8 @@ custom:
 	make run
 
 run: clean
-	@cd ./user && make build ARCH=$(ARCH)
-	@cd ./os && make run ARCH=$(ARCH)
+	@cd ./user && make build ARCH=$(ARCH) MODE=$(MODE)
+	@cd ./os && make run ARCH=$(ARCH) MODE=$(MODE)
 
 gdbserver: 
 	@cd ./user && make build
