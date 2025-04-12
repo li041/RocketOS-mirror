@@ -1,15 +1,12 @@
 use super::{
     dentry::{insert_dentry, lookup_dcache_with_absolute_path, Dentry},
-    file::{File, O_CREAT},
+    file::{File, OpenFlags},
     inode::InodeOp,
     mount::VfsMount,
     path::Path,
     Stdin, FS_BLOCK_SIZE,
 };
-use crate::{
-    fs::{file::O_NOFOLLOW, AT_FDCWD},
-    task::current_task,
-};
+use crate::{fs::AT_FDCWD, task::current_task};
 use alloc::{
     string::{String, ToString},
     sync::Arc,
@@ -156,7 +153,7 @@ impl Nameidata {
 /// 认为符号链接的目标路径不含dot和dot-dot
 pub fn open_last_lookups(
     nd: &mut Nameidata,
-    flags: usize,
+    flags: OpenFlags,
     mode: usize,
 ) -> Result<Arc<File>, isize> {
     const MAX_SYMLINK_DEPTH: usize = 40;
@@ -199,7 +196,7 @@ pub fn open_last_lookups(
         let dentry = lookup_dentry(nd);
         if !dentry.is_negative() {
             if dentry.is_symlink() {
-                if flags & O_NOFOLLOW != 0 {
+                if flags.contains(OpenFlags::O_NOFOLLOW) {
                     return Err(-ELOOP);
                 }
                 // 解析符号链接
@@ -226,7 +223,7 @@ pub fn open_last_lookups(
         }
 
         // 文件不存在，若 `O_CREAT` 设置，则创建文件
-        if flags & O_CREAT != 0 {
+        if flags.contains(OpenFlags::O_CREAT) {
             assert!(nd.depth == nd.path_segments.len() - 1);
             let dir_inode = nd.dentry.get_inode();
             let new_dentry = Dentry::negative(
@@ -250,7 +247,12 @@ pub fn open_last_lookups(
 /// 根据路径查找inode, 如果不存在, 则根据flags创建
 /// path可以是绝对路径或相对路径
 /// Todo: 符号链接
-pub fn path_openat(path: &str, flags: usize, dfd: i32, mode: usize) -> Result<Arc<File>, isize> {
+pub fn path_openat(
+    path: &str,
+    flags: OpenFlags,
+    dfd: i32,
+    mode: usize,
+) -> Result<Arc<File>, isize> {
     // 解析路径的目录部分，遇到最后一个组件时停止
     // Todo: 正常有符号链接的情况下, 这里应该是一个循环
     let mut nd = Nameidata::new(path, dfd);

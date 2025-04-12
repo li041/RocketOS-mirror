@@ -6,6 +6,8 @@ use alloc::string::ToString;
 use xmas_elf::header::parse_header;
 
 use crate::arch::timer::TimeSpec;
+use crate::fs::fdtable::FdFlags;
+use crate::fs::file::OpenFlags;
 use crate::fs::kstat::Statx;
 use crate::fs::pipe::make_pipe;
 use crate::{
@@ -39,12 +41,6 @@ pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
         // let ret = file.read(unsafe { core::slice::from_raw_parts_mut(buf, len) });
         let mut ker_buf = vec![0u8; len];
         let read_len = file.read(&mut ker_buf);
-        log::error!(
-            "ker_buf: {:?}, len: {:#x}, read_len: {:#x}",
-            ker_buf,
-            len,
-            read_len
-        );
         let ker_buf_ptr = ker_buf.as_ptr();
         assert!(ker_buf_ptr != core::ptr::null());
         // 写回用户空间
@@ -142,12 +138,15 @@ pub fn sys_writev(fd: usize, iov: *const IoVec, iovcnt: usize) -> isize {
     total_written
 }
 
+/// 注意Fd_flags并不会在dup中继承
 pub fn sys_dup(oldfd: usize) -> isize {
     let task = current_task();
-    let file = task.fd_table().get_file(oldfd);
-    if let Some(file) = file {
-        let file = file.clone();
-        let newfd = task.fd_table().alloc_fd(file);
+    // let file = task.fd_table().get_file(oldfd);
+    let fd_entry = task.fd_table().get_fdentry(oldfd);
+    if let Some(fd_entry) = fd_entry {
+        let newfd = task
+            .fd_table()
+            .alloc_fd(fd_entry.get_file(), FdFlags::empty());
         newfd as isize
     } else {
         -1
@@ -156,21 +155,26 @@ pub fn sys_dup(oldfd: usize) -> isize {
 
 /// 如果`oldfd == newfd`, 则不进行任何操作, 返回`newfd`
 /// 如果`newfd`已经打开, 则关闭`newfd`, 再分配, 关闭newfd中出现的错误不会影响sys_dup2
-pub fn sys_dup2(oldfd: usize, newfd: usize) -> isize {
+///
+pub fn sys_dup3(oldfd: usize, newfd: usize, flags: i32) -> isize {
     let task = current_task();
+    let flags = OpenFlags::from_bits(flags).unwrap();
     if oldfd == newfd {
         return newfd as isize;
     }
-    let file = task.fd_table().get_file(oldfd);
-    if let Some(file) = file {
-        let file = file.clone();
+    let fd_entry = task.fd_table().get_fdentry(oldfd);
+    if let Some(fd_entry) = fd_entry {
         let fd_table = task.fd_table();
         fd_table.close(newfd);
-        if fd_table.insert(newfd, file).is_some() {
+        if fd_table
+            .insert(newfd, fd_entry.get_file(), FdFlags::from(&flags))
+            .is_some()
+        {
             log::warn!("sys_dup2: newfd {} already opened", newfd);
         }
-        newfd as isize
+        return newfd as isize;
     } else {
+        log::error!("sys_dup2: oldfd {} not opened", oldfd);
         -1
     }
 }
@@ -249,9 +253,10 @@ pub fn sys_linkat(
 
 /// mode是直接传递给ext4_create, 由其处理(仅当O_CREAT设置时有效, 指定inode的权限)
 /// flags影响文件的打开, 在flags中指定O_CREAT, 则创建文件
-pub fn sys_openat(dirfd: i32, pathname: *const u8, flags: usize, mode: usize) -> isize {
+pub fn sys_openat(dirfd: i32, pathname: *const u8, flags: i32, mode: usize) -> isize {
+    let flags = OpenFlags::from_bits(flags).unwrap();
     log::info!(
-        "[sys_openat] dirfd: {}, pathname: {:?}, flags: {}, mode: {}",
+        "[sys_openat] dirfd: {}, pathname: {:?}, flags: {:?}, mode: {}",
         dirfd,
         pathname,
         flags,
@@ -260,10 +265,9 @@ pub fn sys_openat(dirfd: i32, pathname: *const u8, flags: usize, mode: usize) ->
     let task = current_task();
     let path = c_str_to_string(pathname);
     if let Ok(file) = path_openat(&path, flags, dirfd, mode) {
-        let fd = task.fd_table().alloc_fd(file);
+        let fd_flags = FdFlags::from(&flags);
+        let fd = task.fd_table().alloc_fd(file, fd_flags);
         log::info!("[sys_openat] success to open file: {}, fd: {}", path, fd);
-        // Debug Ok
-        // ext4_list_apps(current_task().get_root().dentry.get_inode());
         return fd as isize;
     } else {
         log::info!("[sys_openat] fail to open file: {}", path);
@@ -300,7 +304,7 @@ pub fn sys_mkdirat(dirfd: isize, pathname: *const u8, mode: usize) -> isize {
 /// 返回的是绝对路径
 pub fn sys_getcwd(buf: *mut u8, buf_size: usize) -> isize {
     // glibc getcwd(3) says that if buf is NULL, it will allocate a buffer
-    // let cwd = current_task().inner.lock().cwd.clone();
+    log::info!("[sys_getcwd] buf: {:?}, buf_size: {}", buf, buf_size);
     let mut cwd = current_task().pwd().dentry.absolute_path.clone();
     // 特殊处理根目录, 因为根目录的路径是空字符串
     if cwd.is_empty() {
@@ -484,12 +488,15 @@ pub fn sys_chdir(pathname: *const u8) -> isize {
 }
 
 // Todo: 直接往用户地址空间写入, 没有检查
-pub fn sys_pipe2(fdset: *const u8) -> isize {
+pub fn sys_pipe2(fdset: *const u8, flags: i32) -> isize {
+    let flags = OpenFlags::from_bits(flags).unwrap();
+    log::info!("[sys_pipe2] fdset: {:?}, flags: {:?}", fdset, flags);
     let task = current_task();
     let pipe_pair = make_pipe();
     let fd_table = task.fd_table();
-    let fd1 = fd_table.alloc_fd(pipe_pair.0.clone());
-    let fd2 = fd_table.alloc_fd(pipe_pair.1.clone());
+    let fd_flags = FdFlags::from(&flags);
+    let fd1 = fd_table.alloc_fd(pipe_pair.0.clone(), fd_flags);
+    let fd2 = fd_table.alloc_fd(pipe_pair.1.clone(), fd_flags);
     let pipe = [fd1 as i32, fd2 as i32];
     let fdset_ptr = fdset as *mut [i32; 2];
     // unsafe {
@@ -515,6 +522,65 @@ pub fn sys_close(fd: usize) -> isize {
     }
 }
 
+// Defined in <bits/fcntl-linux.h>
+#[derive(Debug, Eq, PartialEq, Clone, Copy, Default)]
+#[allow(non_camel_case_types)]
+pub enum FcntlOp {
+    F_DUPFD = 0,
+    F_DUPFD_CLOEXEC = 1030,
+    F_GETFD = 1,
+    F_SETFD = 2,
+    F_GETFL = 3,
+    F_SETFL = 4,
+    #[default]
+    F_UNIMPL,
+}
+
+impl TryFrom<i32> for FcntlOp {
+    type Error = ();
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(FcntlOp::F_DUPFD),
+            1030 => Ok(FcntlOp::F_DUPFD_CLOEXEC),
+            1 => Ok(FcntlOp::F_GETFD),
+            2 => Ok(FcntlOp::F_SETFD),
+            3 => Ok(FcntlOp::F_GETFL),
+            4 => Ok(FcntlOp::F_SETFL),
+            _ => Err(()),
+        }
+    }
+}
+
+pub fn sys_fcntl(fd: i32, op: i32, arg: usize) -> isize {
+    log::info!("[sys_fcntl] fd: {}, op: {}, arg: {}", fd, op, arg);
+    let task = current_task();
+    let file = task.fd_table().get_file(fd as usize);
+    let op = FcntlOp::try_from(op).unwrap_or(FcntlOp::F_UNIMPL);
+    let fd_flags = FdFlags::from(&op);
+    if let Some(file) = file {
+        match op {
+            FcntlOp::F_DUPFD => {
+                // let newfd = task.fd_table().alloc_fd(file.clone(), FdFlags::empty());
+                let newfd = task
+                    .fd_table()
+                    .alloc_fd_above_lower_bound(file.clone(), fd_flags, arg);
+                return newfd as isize;
+            }
+            FcntlOp::F_DUPFD_CLOEXEC => {
+                let newfd = task
+                    .fd_table()
+                    .alloc_fd_above_lower_bound(file.clone(), fd_flags, arg);
+                return newfd as isize;
+            }
+            _ => {
+                log::warn!("[sys_fcntl] Unimplemented");
+                return -1;
+            }
+        }
+    }
+    -1
+}
+
 pub fn sys_utimensat(dirfd: i32, pathname: *const u8, times: *const TimeSpec, flags: i32) -> isize {
     log::info!(
         "[sys_utimensat] dirfd: {}, pathname: {:?}, times: {:?}, flags: {}",
@@ -523,6 +589,7 @@ pub fn sys_utimensat(dirfd: i32, pathname: *const u8, times: *const TimeSpec, fl
         times,
         flags
     );
+    log::warn!("[sys_utimensat] Unimplemented");
     0
 }
 
@@ -607,3 +674,5 @@ pub fn sys_faccessat(fd: usize, pathname: *const u8, mode: i32, flags: i32) -> i
         }
     }
 }
+
+/* fake end */
