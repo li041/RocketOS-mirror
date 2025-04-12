@@ -1,3 +1,5 @@
+use core::fmt::Debug;
+
 use crate::{
     arch::{
         config::{MMAP_MIN_ADDR, PAGE_SIZE, PAGE_SIZE_BITS},
@@ -92,7 +94,7 @@ impl From<MmapProt> for MapPermission {
 bitflags! {
     /// determines whether updates to the mapping are visible to other processes mapping the same region, and whether
     /// updates are carried through to the underlying file.
-    #[derive(Debug, Clone, Copy)]
+    #[derive(Clone, Copy)]
     pub struct MmapFlags: u32 {
         /// MAP_SHARED
         const MAP_SHARED = 0x01;
@@ -107,6 +109,30 @@ bitflags! {
         /// Todo: 未实现
         const MAP_DENYWRITE = 0x800;
         const MAP_POPULATE = 0x8000;
+    }
+}
+impl Debug for MmapFlags {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut flags = Vec::new();
+        if self.contains(MmapFlags::MAP_SHARED) {
+            flags.push("MAP_SHARED");
+        }
+        if self.contains(MmapFlags::MAP_PRIVATE) {
+            flags.push("MAP_PRIVATE");
+        }
+        if self.contains(MmapFlags::MAP_FIXED) {
+            flags.push("MAP_FIXED");
+        }
+        if self.contains(MmapFlags::MAP_ANONYMOUS) {
+            flags.push("MAP_ANONYMOUS");
+        }
+        if self.contains(MmapFlags::MAP_DENYWRITE) {
+            flags.push("MAP_DENYWRITE");
+        }
+        if self.contains(MmapFlags::MAP_POPULATE) {
+            flags.push("MAP_POPULATE");
+        }
+        write!(f, "{:?}", flags)
     }
 }
 
@@ -337,6 +363,26 @@ pub fn sys_mprotect(addr: usize, size: usize, prot: i32) -> isize {
     return found;
 }
 
+pub fn sys_mremap(
+    old_address: usize,
+    old_size: usize,
+    new_size: usize,
+    flags: i32,
+    new_address: usize,
+) {
+    log::info!(
+        "sys_mremap: old_address: {:#x}, old_size: {:#x}, new_size: {:#x}, flags: {:#x}, new_address: {:#x}",
+        old_address,
+        old_size,
+        new_size,
+        flags,
+        new_address
+    );
+    // old_address必须页对齐
+    if old_address % PAGE_SIZE != 0 {
+        return;
+    }
+}
 // Todo:
 pub fn sys_madvise(addr: usize, len: usize, advice: i32) -> isize {
     log::info!(

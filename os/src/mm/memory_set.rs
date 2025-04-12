@@ -4,6 +4,7 @@ use core::{arch::asm, ops::Range, usize};
 use super::{address::StepByOne, area::MapArea, VPNRange};
 use crate::{
     arch::mm::{sfence_vma_vaddr, PTEFlags, PageTable, PageTableEntry},
+    fs::{fdtable::FdFlags, file::OpenFlags},
     mm::{
         area::{MapPermission, MapType},
         frame_alloc, FrameTracker, PhysAddr, PhysPageNum, VirtAddr, VirtPageNum,
@@ -298,7 +299,7 @@ impl MemorySet {
             if file_name.ends_with(".sh") {
                 let prepend_args = vec![String::from("busybox"), String::from("sh")];
                 argv.splice(0..0, prepend_args);
-                if let Ok(busybox) = path_openat("/busybox", 0, AT_FDCWD, 0) {
+                if let Ok(busybox) = path_openat("/busybox", OpenFlags::empty(), AT_FDCWD, 0) {
                     elf_data = busybox.read_all()
                 }
             }
@@ -418,7 +419,7 @@ impl MemorySet {
 
             for interp in interps.iter() {
                 // 加载动态链接器
-                if let Ok(interpreter) = path_openat(&interp, 0, AT_FDCWD, 0) {
+                if let Ok(interpreter) = path_openat(&interp, OpenFlags::empty(), AT_FDCWD, 0) {
                     log::info!("[from_elf] interpreter open success");
                     let interp_data = interpreter.read_all();
                     let interp_elf = xmas_elf::ElfFile::new(interp_data.as_slice()).unwrap();

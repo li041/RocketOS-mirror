@@ -346,8 +346,7 @@ impl Task {
             *tg = ThreadGroup::new();
             tg.add(self.clone());
         });
-        // Todo: FdTable相关
-        self.reset_fd_table();
+        self.do_close_on_exec();
         // 重置信号处理器
         self.op_sig_handler_mut(|handler| handler.reset());
 
@@ -415,13 +414,13 @@ impl Task {
         dst_trap_cx_ptr as usize
     }
 
-    pub fn alloc_fd(&mut self, file: Arc<dyn FileOp + Send + Sync>) -> usize {
-        self.fd_table.alloc_fd(file)
-    }
+    // pub fn alloc_fd(&mut self, file: Arc<dyn FileOp + Send + Sync>) -> usize {
+    //     self.fd_table.alloc_fd(file)
+    // }
 
-    // 重置文件打开表
-    fn reset_fd_table(&self) {
-        self.fd_table.reset();
+    // used by `kernel_execve`, 在execve时关闭设置FD_CLOEXEC标志的文件描述符
+    fn do_close_on_exec(&self) {
+        self.fd_table.do_close_on_exec();
     }
 
     /*********************************** getter *************************************/

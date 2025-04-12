@@ -26,7 +26,7 @@ pub struct FileInner {
     // pub dentry: Arc<Dentry>,
     pub path: Arc<Path>,
     pub inode: Arc<dyn InodeOp>,
-    pub flags: usize,
+    pub flags: OpenFlags,
 }
 
 // 不支持对文件执行ioctl操作
@@ -81,7 +81,7 @@ impl File {
 }
 
 impl File {
-    pub fn new(path: Arc<Path>, inode: Arc<dyn InodeOp>, flags: usize) -> Self {
+    pub fn new(path: Arc<Path>, inode: Arc<dyn InodeOp>, flags: OpenFlags) -> Self {
         Self {
             inner: SpinNoIrqLock::new(FileInner {
                 offset: 0,
@@ -168,9 +168,45 @@ impl FileOp for File {
     }
 }
 
-pub const O_RDONLY: usize = 0;
-pub const O_WRONLY: usize = 1;
-pub const O_RDWR: usize = 2;
-pub const O_CREAT: usize = 0x40;
-pub const O_DIRECTORY: usize = 0x10000;
-pub const O_NOFOLLOW: usize = 0x200000;
+// pub const O_RDONLY: usize = 0;
+// pub const O_WRONLY: usize = 1;
+// pub const O_RDWR: usize = 2;
+// pub const O_CREAT: usize = 0x40;
+// pub const O_DIRECTORY: usize = 0x10000;
+// pub const O_NOFOLLOW: usize = 0x200000;
+
+bitflags::bitflags! {
+    // Defined in <bits/fcntl-linux.h>.
+    // File access mode (O_RDONLY, O_WRONLY, O_RDWR).
+    // The file creation flags are O_CLOEXEC, O_CREAT, O_DIRECTORY, O_EXCL,
+    // O_NOCTTY, O_NOFOLLOW, O_TMPFILE, and O_TRUNC.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct OpenFlags: i32 {
+        // reserve 3 bits for the access mode
+        // NOTE: bitflags do not encourage zero bit flag, we should not directly check `O_RDONLY`
+        // const O_RDONLY      = 0;
+        const O_WRONLY      = 1;
+        const O_RDWR        = 2;
+        const O_ACCMODE     = 3;
+        /// If pathname does not exist, create it as a regular file.
+        const O_CREAT       = 0o100;
+        const O_EXCL        = 0o200;
+        const O_NOCTTY      = 0o400;
+        const O_TRUNC       = 0o1000;
+        const O_APPEND      = 0o2000;
+        const O_NONBLOCK    = 0o4000;
+        const O_DSYNC       = 0o10000;
+        const O_SYNC        = 0o4010000;
+        const O_RSYNC       = 0o4010000;
+        const O_DIRECTORY   = 0o200000;
+        const O_NOFOLLOW    = 0o400000;
+        const O_CLOEXEC     = 0o2000000;
+
+        const O_ASYNC       = 0o20000;
+        const O_DIRECT      = 0o40000;
+        const O_LARGEFILE   = 0o100000;
+        const O_NOATIME     = 0o1000000;
+        const O_PATH        = 0o10000000;
+        const O_TMPFILE     = 0o20200000;
+    }
+}

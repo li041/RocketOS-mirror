@@ -64,6 +64,7 @@ impl Default for Tms {
 ///
 /// Todo?:
 pub fn sys_uname(uts: usize) -> isize {
+    log::info!("[sys_uname] uts: {:#x}", uts);
     let uts = uts as *mut Utsname;
     //Todo!: check validarity
     let utsname = Utsname::default();

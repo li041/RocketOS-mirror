@@ -1,6 +1,7 @@
 use core::sync::atomic::{compiler_fence, Ordering};
 
 use crate::arch::mm::copy_from_user;
+use crate::fs::file::OpenFlags;
 use crate::task::CloneFlags;
 use crate::{
     arch::mm::copy_to_user,
@@ -113,8 +114,8 @@ pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> is
     let mut args_vec = extract_cstrings(args);
     let envs_vec = extract_cstrings(envs);
     let task = current_task();
-    // flags = RDONLY = 0, 以只读方式打开文件
-    if let Ok(file) = path_openat(&path, 0, AT_FDCWD, 0) {
+    // OpenFlags::empty() = RDONLY = 0, 以只读方式打开文件
+    if let Ok(file) = path_openat(&path, OpenFlags::empty(), AT_FDCWD, 0) {
         let all_data = file.read_all();
         task.kernel_execve(all_data.as_slice(), args_vec, envs_vec);
         0
@@ -133,12 +134,14 @@ pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> is
 }
 
 pub fn sys_getpid() -> isize {
+    log::info!("[sys_getpid] pid: {}", current_task().tid());
     current_task().tid() as isize
 }
 
 // ToDo: 更新进程组
 // 获取父进程的pid
 pub fn sys_getppid() -> isize {
+    log::warn!("[sys_getppid] Uimplemented");
     let task = current_task();
     task.op_parent(|parent| parent.as_ref().unwrap().upgrade().unwrap().tid()) as isize
 }

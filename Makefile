@@ -26,7 +26,7 @@ custom:
 	@cd ./img && make custom
 	make run
 
-run:
+run: clean
 	@cd ./user && make build ARCH=$(ARCH)
 	@cd ./os && make run ARCH=$(ARCH)
 

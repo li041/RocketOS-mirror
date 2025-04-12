@@ -11,33 +11,37 @@
 //! submodules, and you should also implement syscalls this way.
 
 use fs::{
-    sys_chdir, sys_close, sys_dup, sys_dup2, sys_faccessat, sys_fstat, sys_fstatat, sys_getcwd,
-    sys_getdents64, sys_ioctl, sys_linkat, sys_mkdirat, sys_mount, sys_openat, sys_pipe2, sys_read,
-    sys_statx, sys_umount2, sys_unlinkat, sys_write, sys_writev,
+    sys_chdir, sys_close, sys_dup, sys_dup3, sys_faccessat, sys_fcntl, sys_fstat, sys_fstatat,
+    sys_getcwd, sys_getdents64, sys_ioctl, sys_linkat, sys_mkdirat, sys_mount, sys_openat,
+    sys_pipe2, sys_read, sys_statx, sys_umount2, sys_unlinkat, sys_write, sys_writev,
 };
 use mm::{sys_brk, sys_madvise, sys_mmap, sys_mprotect, sys_munmap};
+use signal::{
+    sys_kill, sys_rt_sigaction, sys_rt_sigpending, sys_rt_sigprocmask, sys_rt_sigreturn,
+    sys_rt_sigsuspend, sys_rt_sigtimedwait, sys_tgkill, sys_tkill,
+};
 use task::{
     sys_clone, sys_execve, sys_get_time, sys_getpid, sys_getppid, sys_nanosleep, sys_waitpid,
     sys_yield,
 };
-use signal::{sys_kill, sys_rt_sigaction, sys_rt_sigpending, sys_rt_sigprocmask, sys_rt_sigreturn, sys_rt_sigsuspend, sys_rt_sigtimedwait, sys_tgkill, sys_tkill};
 use util::{sys_times, sys_uname};
 
 use crate::fs::{
     kstat::{Stat, Statx},
     uio::IoVec,
 };
+pub use fs::FcntlOp;
 pub use mm::MmapFlags;
 pub use task::sys_exit;
 mod fs;
 mod mm;
+mod signal;
 mod task;
 mod util;
-mod signal;
 
 const SYSCALL_GETCWD: usize = 17;
 const SYSCALL_DUP: usize = 23;
-const SYSCALL_DUP2: usize = 24;
+const SYSCALL_DUP3: usize = 24;
 const SYSCALL_FCNTL: usize = 25;
 const SYSCALL_IOCTL: usize = 29;
 const SYSCALL_MKDIRAT: usize = 34;
@@ -73,7 +77,7 @@ const SYSCALL_RT_SIGPROCMASK: usize = 135;
 const SYSCALL_RT_SIGPENDING: usize = 136;
 const SYSCALL_RT_SIGTIMEDWAIT: usize = 137;
 const SYSCALL_RT_SIGQUEUEINFO: usize = 138;
-const SYSCALL_RT_SIGRETURN: usize = 139; 
+const SYSCALL_RT_SIGRETURN: usize = 139;
 const SYSCALL_TIMES: usize = 153;
 const SYSCALL_UNAME: usize = 160;
 const SYSCALL_GET_TIME: usize = 169;
@@ -82,6 +86,7 @@ const SYSCALL_GETPPID: usize = 173;
 const SYSCALL_GETUID: usize = 174;
 const SYSCALL_BRK: usize = 214;
 const SYSCALL_MUNMAP: usize = 215;
+const SYSCALL_MREMAP: usize = 216;
 const SYSCALL_FORK: usize = 220;
 const SYSCALL_EXEC: usize = 221;
 const SYSCALL_MMAP: usize = 222;
@@ -112,7 +117,8 @@ pub fn syscall(
     match syscall_id {
         SYSCALL_GETCWD => sys_getcwd(a0 as *mut u8, a1),
         SYSCALL_DUP => sys_dup(a0),
-        SYSCALL_DUP2 => sys_dup2(a0, a1),
+        SYSCALL_DUP3 => sys_dup3(a0, a1, a2 as i32),
+        SYSCALL_FCNTL => sys_fcntl(a0 as i32, a1 as i32, a2),
         SYSCALL_IOCTL => sys_ioctl(a0, a1, a2),
         SYSCALL_MKDIRAT => sys_mkdirat(a0 as isize, a1 as *const u8, a2),
         SYSCALL_UNLINKAT => sys_unlinkat(a0 as i32, a1 as *const u8, a2 as i32),
@@ -133,9 +139,9 @@ pub fn syscall(
         ),
         SYSCALL_FACCESSAT => sys_faccessat(a0 as usize, a1 as *const u8, a2 as i32, a3 as i32),
         SYSCALL_CHDIR => sys_chdir(a0 as *const u8),
-        SYSCALL_OPENAT => sys_openat(a0 as i32, a1 as *const u8, a2, a3),
+        SYSCALL_OPENAT => sys_openat(a0 as i32, a1 as *const u8, a2 as i32, a3),
         SYSCALL_CLOSE => sys_close(a0),
-        SYSCALL_PIPE2 => sys_pipe2(a0 as *mut u8),
+        SYSCALL_PIPE2 => sys_pipe2(a0 as *mut u8, a1 as i32),
         SYSCALL_GETDENTS64 => sys_getdents64(a0, a1 as *mut u8, a2),
         SYSCALL_READ => sys_read(a0, a1 as *mut u8, a2),
         SYSCALL_WRITE => sys_write(a0, a1 as *const u8, a2),
@@ -177,7 +183,7 @@ pub fn syscall(
             a4 as *mut Statx,
         ),
         _ => {
-            log::error!("Unsupported syscall_id: {}", syscall_id);
+            log::warn!("Unsupported syscall_id: {}", syscall_id);
             0
         } // panic!("Unsupported syscall_id: {}", syscall_id),
     }
