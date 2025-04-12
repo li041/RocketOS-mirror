@@ -1,4 +1,5 @@
 //! new
+use crate::arch::timer::TimeSpec;
 use crate::ext4::inode::Ext4Inode;
 use crate::mm::Page;
 use crate::mutex::SpinNoIrqLock;
@@ -7,6 +8,7 @@ use spin::RwLock;
 
 use super::dentry::{Dentry, LinuxDirent64};
 use super::kstat::Kstat;
+use super::uapi::{DevT, RenameFlags, StatFs};
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -43,12 +45,24 @@ pub trait InodeOp: Any + Send + Sync {
         unimplemented!();
     }
     // self是目录inode, name是新建文件的名字, mode是新建文件的类型
-    // fn mknod<'a>(&'a self, name: &str, mode: u16) -> Arc<Dentry>;
     // self是目录, Dentry是上层根据文件名新建的负目录项(已经建立了父子关系)
     // 上层调用者保证:
     //      1. 创建的文件名在目录中不存在
     //      2. Dentry的inode字段为None(负目录项)
     fn create<'a>(&'a self, negative_dentry: Arc<Dentry>, mode: u16) {
+        unimplemented!();
+    }
+    // 由上层调用者保证: 进行了类型 + ancestor + flags检查
+    // rename不会做任何检查, 只会直接修改目录项
+    // self是old_dir, 注意如果移到另一个目录, 需要修改数据块中的`..`
+    fn rename<'a>(
+        &'a self,
+        new_dir: Arc<dyn InodeOp>,
+        old_dentry: Arc<Dentry>,
+        new_dentry: Arc<Dentry>,
+        flags: RenameFlags,
+        should_mv: bool,
+    ) -> Result<(), &'static str> {
         unimplemented!();
     }
     // self是目录inode, old_dentry是旧的目录项, new_dentry是新的目录项, 他们指向同一个inode
@@ -70,6 +84,9 @@ pub trait InodeOp: Any + Send + Sync {
     fn mkdir<'a>(&'a self, dentry: Arc<Dentry>, mode: u16) {
         unimplemented!();
     }
+    fn mknod<'a>(&'a self, dentry: Arc<Dentry>, mode: u16, dev: DevT) {
+        unimplemented!();
+    }
     // 检查是否是目录, 且有子目录项可以用于lookup
     fn can_lookup(&self) -> bool {
         unimplemented!();
@@ -78,16 +95,44 @@ pub trait InodeOp: Any + Send + Sync {
     fn getdents(&self, offset: usize) -> (usize, Vec<LinuxDirent64>) {
         unimplemented!();
     }
+    // 上层fstat调用
     fn getattr(&self) -> Kstat {
         unimplemented!();
     }
     fn get_link(&self) -> String {
         unimplemented!();
     }
+    /* get/set属性方法 */
     fn get_inode_num(&self) -> usize {
         unimplemented!();
     }
     fn get_size(&self) -> usize {
+        unimplemented!();
+    }
+    fn get_mode(&self) -> u16 {
+        unimplemented!();
+    }
+    // (主设备号, 次设备号)
+    fn get_devt(&self) -> (u32, u32) {
+        unimplemented!();
+    }
+    /* 时间戳相关 */
+    fn get_atime(&self) -> TimeSpec {
+        unimplemented!();
+    }
+    fn set_atime(&self, atime: TimeSpec) {
+        unimplemented!();
+    }
+    fn get_mtime(&self) -> TimeSpec {
+        unimplemented!();
+    }
+    fn set_mtime(&self, mtime: TimeSpec) {
+        unimplemented!();
+    }
+    fn get_ctime(&self) -> TimeSpec {
+        unimplemented!();
+    }
+    fn set_ctime(&self, ctime: TimeSpec) {
         unimplemented!();
     }
 }

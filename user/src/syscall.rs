@@ -1,9 +1,12 @@
 use core::arch::asm;
 
+use alloc::ffi::CString;
+
 const SYSCALL_OPEN: usize = 56;
 const SYSCALL_CLOSE: usize = 57;
 const SYSCALL_READ: usize = 63;
 const SYSCALL_WRITE: usize = 64;
+const SYSCALL_DUP3: usize = 24;
 const SYSCALL_EXIT: usize = 93;
 const SYSCALL_YIELD: usize = 124;
 const SYSCALL_GET_TIME: usize = 169;
@@ -11,6 +14,7 @@ const SYSCALL_GETPID: usize = 172;
 const SYSCALL_FORK: usize = 220;
 const SYSCALL_EXECVE: usize = 221;
 const SYSCALL_WAITPID: usize = 260;
+const SYSCALL_PIPE2: usize = 59;
 
 #[cfg(target_arch = "riscv64")]
 fn syscall(id: usize, args: [usize; 6]) -> isize {
@@ -47,10 +51,17 @@ pub fn syscall(id: usize, args: [usize; 6]) -> isize {
     ret
 }
 
-pub fn sys_open(path: &str, flags: u32) -> isize {
+pub fn sys_open(dirfd: i32, path: &CString, flags: u32) -> isize {
     syscall(
         SYSCALL_OPEN,
-        [path.as_ptr() as usize, flags as usize, 0, 0, 0, 0],
+        [
+            dirfd as usize,
+            path.as_ptr() as usize,
+            flags as usize,
+            0,
+            0,
+            0,
+        ],
     )
 }
 
@@ -72,6 +83,10 @@ pub fn sys_write(fd: usize, buffer: &[u8]) -> isize {
     )
 }
 
+pub fn sys_dup3(oldfd: usize, newfd: usize, flags: i32) -> isize {
+    syscall(SYSCALL_DUP3, [oldfd, newfd, flags as usize, 0, 0, 0])
+}
+
 pub fn sys_exit(exit_code: i32) -> ! {
     syscall(SYSCALL_EXIT, [exit_code as usize, 0, 0, 0, 0, 0]);
     panic!("sys_exit never returns!");
@@ -91,6 +106,9 @@ pub fn sys_getpid() -> isize {
 
 pub fn sys_fork() -> isize {
     syscall(SYSCALL_FORK, [0, 0, 0, 0, 0, 0])
+}
+pub fn sys_pipe2(pipe: *mut i32, flags: i32) -> isize {
+    syscall(SYSCALL_PIPE2, [pipe as usize, flags as usize, 0, 0, 0, 0])
 }
 
 // pub fn sys_exec(path: &str) -> isize {

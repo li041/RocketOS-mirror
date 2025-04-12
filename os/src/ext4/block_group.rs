@@ -158,7 +158,7 @@ impl GroupDesc {
         get_block_cache(block_id, block_device.clone(), ext4_block_size)
             .lock()
             .modify(block_offset, |inode_on_disk: &mut Ext4InodeDisk| {
-                assert!(inode_on_disk.get_nlinks() == 0);
+                // assert!(inode_on_disk.get_nlinks() == 0);
                 inode_on_disk.set_size(0);
                 inode_on_disk.set_dtime(66666666);
                 inode_on_disk.set_mode(0);

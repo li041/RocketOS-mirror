@@ -160,9 +160,9 @@ impl InodeMeta {
             name: path.get_name(),
             path,
             inner: FSMutex::new(InodeMetaInner {
-                st_atim: TimeSpec::new(),
-                st_mtim: TimeSpec::new(),
-                st_ctim: TimeSpec::new(),
+                st_atim: TimeSpec::new_machine_time(),
+                st_mtim: TimeSpec::new_machine_time(),
+                st_ctim: TimeSpec::new_machine_time(),
                 parent,
                 children: BTreeMap::new(),
                 data_len,

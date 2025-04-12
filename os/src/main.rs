@@ -74,7 +74,7 @@ static DEBUG_FLAG: AtomicU8 = AtomicU8::new(0);
 pub fn rust_main(_hart_id: usize, dtb_address: usize) -> ! {
     use crate::utils::seconds_to_beijing_datetime;
     use arch::{
-        timer::read_goldfish_rtc,
+        timer::{read_rtc, NANOS_PER_SEC},
         trap::{self, TrapContext},
     };
     use riscv::register::sstatus;
@@ -96,7 +96,7 @@ pub fn rust_main(_hart_id: usize, dtb_address: usize) -> ! {
     logging::init();
     mm::init();
     trap::init();
-    let seconds = read_goldfish_rtc();
+    let seconds = read_rtc() / NANOS_PER_SEC;
     println!("rtc time: {:?}", seconds);
     println!("data time: {:?}", seconds_to_beijing_datetime(seconds));
 
@@ -127,7 +127,7 @@ pub fn rust_main() -> ! {
     use arch::{
         bootstrap_init,
         drivers::pci,
-        timer::{read_ls7a_rtc, time_test, LS7A_RTC_BASE},
+        timer::time_test,
         trap::{
             self,
             timer::{enable_timer_interrupt, set_next_trigger},

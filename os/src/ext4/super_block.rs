@@ -9,7 +9,7 @@ use crate::{
         self,
         block_cache::{self, BlockCache},
     },
-    fs::{super_block::FileSystemOp, FSMutex},
+    fs::{manager::FileSystemOp, FSMutex},
     mutex::SpinNoIrqLock,
 };
 
@@ -17,12 +17,12 @@ use super::{block_group, inode::Ext4Inode};
 
 pub struct Ext4SuperBlock {
     /* 基本信息 */
-    pub inodes_count: u32,             // inode总数
-    pub blocks_count_lo: u32,          // block总数(低32位)
-    pub reserved_blocks_count_lo: u32, // 保留的block总数(低32位)
-    pub first_data_block: u32,         // 第一个数据block的编号(总为1)
-    pub block_size: u32,               // block大小(bytes)
-    pub cluster_size: u32,             // cluster大小(多少个block)
+    pub inodes_count: u32,          // inode总数
+    pub blocks_count: u64,          // block总数(低32位 + 高32位)
+    pub reserved_blocks_count: u64, // 保留的block总数(低32位 + 高32位)
+    pub first_data_block: u32,      // 第一个数据block的编号(总为1)
+    pub block_size: u32,            // block大小(bytes)
+    pub cluster_size: u32,          // cluster大小(多少个block)
     /* 块组信息 */
     pub blocks_per_group: u32,   // 每个块组的block数
     pub clusters_per_group: u32, // 每个块组的cluster数
@@ -66,8 +66,8 @@ impl Ext4SuperBlock {
             / super_block.blocks_per_group;
         Self {
             inodes_count: super_block.inodes_count,
-            blocks_count_lo: super_block.blocks_count_lo,
-            reserved_blocks_count_lo: super_block.reserved_blocks_count_lo,
+            blocks_count: super_block.block_count(),
+            reserved_blocks_count: super_block.reserved_blocks_count(),
             first_data_block: super_block.first_data_block,
             block_size: 1024 << super_block.log_block_size,
             cluster_size: 1 << super_block.log_cluster_size,
@@ -266,6 +266,12 @@ impl Ext4SuperBlockDisk {
     // 单位为块
     pub fn cluster_size(&self) -> usize {
         1 << self.log_cluster_size
+    }
+    pub fn block_count(&self) -> u64 {
+        (self.blocks_count_lo as u64 | ((self.block_count_hi as u64) << 32))
+    }
+    pub fn reserved_blocks_count(&self) -> u64 {
+        self.reserved_blocks_count_lo as u64 | ((self.reserved_blocks_count_hi as u64) << 32)
     }
     pub fn block_group_count(&self) -> usize {
         (((self.blocks_count_lo as u64 | ((self.block_count_hi as u64) << 32))

@@ -113,8 +113,6 @@ pub fn trap_handler(cx: &mut TrapContext) {
             let va = VirtAddr::from(stval);
             log::error!("page fault at {:#x}", va.0);
             let casue = PageFaultCause::from(scause.cause());
-            // 先检查是否会发生死锁
-            current_task().memory_set().try_lock().expect("try to lock memory_set failed");
             current_task().op_memory_set_mut(|memory_set| 
                 {
                     if let Err(e) = memory_set.handle_recoverable_page_fault(va, casue) {

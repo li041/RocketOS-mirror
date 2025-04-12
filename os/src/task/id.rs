@@ -1,16 +1,15 @@
 //! id allocator
 use super::Tid;
-use crate::mutex::SpinNoIrqLock;
+// use crate::mutex::Mutex;
 use alloc::vec::Vec;
 use core::fmt::Display;
 use lazy_static::lazy_static;
+use spin::Mutex;
 
 // 进程（线程）号分配器
 lazy_static! {
-    pub static ref TID_ALLOCATOR: SpinNoIrqLock<IdAllocator> =
-        SpinNoIrqLock::new(IdAllocator::new());
-    pub static ref KID_ALLOCATOR: SpinNoIrqLock<IdAllocator> =
-        SpinNoIrqLock::new(IdAllocator::new());
+    pub static ref TID_ALLOCATOR: Mutex<IdAllocator> = Mutex::new(IdAllocator::new());
+    pub static ref KID_ALLOCATOR: Mutex<IdAllocator> = Mutex::new(IdAllocator::new());
 }
 
 /// 申请内核栈号
@@ -49,7 +48,7 @@ impl IdAllocator {
 
     pub fn dealloc(&mut self, id: usize) {
         assert!(id < self.next);
-        if !self.recycled.contains(&id){
+        if !self.recycled.contains(&id) {
             self.recycled.push(id);
         }
     }

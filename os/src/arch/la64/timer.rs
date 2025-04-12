@@ -17,12 +17,22 @@ pub struct TimeSpec {
 }
 
 impl TimeSpec {
-    pub fn new() -> Self {
+    pub fn new_machine_time() -> Self {
         // new a time spec with machine time
         let current_time = get_time_ms();
         Self {
             sec: current_time / 1000,
             nsec: (current_time % 1000) * 1000000,
+        }
+    }
+    pub fn new_wall_time() -> Self {
+        let base = LS7A_RTC_BASE as *mut u32;
+        let rtc_ticks = unsafe { read_volatile(base.byte_add(SYS_RTCREAD0) as *const u32) as u64 };
+        let sec = rtc_ticks / LS7A_RTC_FREQ; // 转换为秒
+        let nsec = (rtc_ticks % LS7A_RTC_FREQ) * 1000000000 / LS7A_RTC_FREQ; // 转换为纳秒
+        TimeSpec {
+            sec: sec as usize,
+            nsec: nsec as usize,
         }
     }
 }
@@ -141,7 +151,8 @@ const LS7A_RTC_FREQ: u64 = 32768;
 /// # Returns
 /// 返回 (year, month, day, hour, minute, second) 的元组
 /// 如果 TOY 未启用，返回自 UTC 以来的秒数转换为时间
-pub unsafe fn read_ls7a_rtc(base: *mut u32) -> DateTime {
+pub unsafe fn read_rtc() -> DateTime {
+    let base = LS7A_RTC_BASE as *mut u32;
     // 读取控制寄存器
     let ctrl = read_volatile(base.byte_add(SYS_RTCCTRL) as *const u32);
     let toyen = (ctrl & RTC_CTRL_TOYEN_MASK) >> RTC_CTRL_TOYEN_SHIFT;
@@ -225,11 +236,11 @@ pub unsafe fn ls7a_rtc_enable(base: *mut u32) -> Result<(), &'static str> {
 }
 
 pub fn time_test() {
-    let time_befort = unsafe { read_ls7a_rtc(LS7A_RTC_BASE as *mut u32) };
+    let time_befort = unsafe { read_rtc() };
     println!("time before: {:?}", time_befort);
     unsafe {
         ls7a_rtc_enable(LS7A_RTC_BASE as *mut u32).expect("Failed to enable LS7A RTC");
     }
-    let time_after = unsafe { read_ls7a_rtc(LS7A_RTC_BASE as *mut u32) };
+    let time_after = unsafe { read_rtc() };
     println!("time after: {:?}", time_after);
 }

@@ -47,6 +47,9 @@ impl Ext4DirEntry {
     pub fn get_name(&self) -> String {
         String::from_utf8(self.name.clone()).unwrap()
     }
+    pub fn is_dir(&self) -> bool {
+        self.file_type == EXT4_DT_DIR
+    }
 }
 
 impl TryFrom<&[u8]> for Ext4DirEntry {

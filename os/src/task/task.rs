@@ -8,7 +8,13 @@ use super::{
     String, Tid,
 };
 use crate::{
-    arch::{mm::copy_to_user, trap::{context::{dump_trap_context, get_trap_context, save_trap_context}, TrapContext}},
+    arch::{
+        mm::copy_to_user,
+        trap::{
+            context::{dump_trap_context, get_trap_context, save_trap_context},
+            TrapContext,
+        },
+    },
     fs::{fdtable::FdTable, file::FileOp, path::Path, FileOld, Stdin, Stdout},
     mm::{MapArea, MapPermission, MapType, MemorySet, VPNRange, VirtAddr},
     mutex::{SpinNoIrq, SpinNoIrqLock},
@@ -23,7 +29,10 @@ use crate::{
     },
 };
 use alloc::{
-    collections::btree_map::BTreeMap, sync::{Arc, Weak}, task, vec::Vec, vec
+    collections::btree_map::BTreeMap,
+    sync::{Arc, Weak},
+    task, vec,
+    vec::Vec,
 };
 use bitflags::bitflags;
 use core::{
@@ -151,7 +160,9 @@ impl Task {
             sig_stack: SpinNoIrqLock::new(None),
         });
         // 向线程组中添加该进程
-        task.thread_group.lock().add(task.tid(), Arc::downgrade(&task));
+        task.thread_group
+            .lock()
+            .add(task.tid(), Arc::downgrade(&task));
         add_task(task.clone());
         TASK_MANAGER.add(&task);
         // 令tp与kernel_tp指向主线程内核栈顶
@@ -237,9 +248,10 @@ impl Task {
         let kstack = KernelStack(kstack);
 
         if flags.contains(CloneFlags::CLONE_FILES) {
-            log::info!("[kernel_clone] handle CLONE_FILES");
+            log::warn!("[kernel_clone] handle CLONE_FILES");
             fd_table = self.fd_table.clone()
         } else {
+            log::warn!("[kernel_clone] fd_table from_existed_user");
             fd_table = FdTable::from_existed_user(&self.fd_table);
         }
 
@@ -271,11 +283,10 @@ impl Task {
         // 向父进程添加子进程
         if task.is_process() {
             self.add_child(task.clone());
-        } 
+        }
         // 向线程组添加子进程 （包括当前任务为进程的情况）
-        task.op_thread_group_mut(|tg| 
-            tg.add(task.tid(), Arc::downgrade(&task)));
-   
+        task.op_thread_group_mut(|tg| tg.add(task.tid(), Arc::downgrade(&task)));
+
         // 更新子进程的trap_cx
         let mut trap_cx = get_trap_context(&task);
         if ustack_ptr != 0 {
@@ -291,15 +302,22 @@ impl Task {
         // 在内核栈中加入task_cx
         write_task_cx(task.clone());
         log::info!("[kernel_clone] child task{} task_cx updated", task.tid());
-        log::info!("[kernel_clone] task{}-tp:\t{:x}", task.tid(), Arc::as_ptr(&task) as usize);
+        log::info!(
+            "[kernel_clone] task{}-tp:\t{:x}",
+            task.tid(),
+            Arc::as_ptr(&task) as usize
+        );
         log::info!("[kernel_clone] task{}-sp:\t{:x}", task.tid(), task.kstack());
 
         let strong_count = Arc::strong_count(&task);
-        if strong_count == 2 
-           { log::info!("[kernel_clone] strong_count:\t{}", strong_count);} 
-        else // 未加入调度器理论引用计数为 2
-            { log::error!("[kernel_clone] strong_count:\t{}", strong_count);} 
-        
+        if strong_count == 2 {
+            log::info!("[kernel_clone] strong_count:\t{}", strong_count);
+        } else
+        // 未加入调度器理论引用计数为 2
+        {
+            log::error!("[kernel_clone] strong_count:\t{}", strong_count);
+        }
+
         log::info!("[kernel_clone] task{} clone complete!", self.tid());
         task
     }
@@ -317,7 +335,7 @@ impl Task {
             MemorySet::from_elf(elf_data.to_vec(), &mut args_vec);
         // 更新页表
         memory_set.activate();
-        
+
         #[cfg(target_arch = "loongarch64")]
         memory_set.push_with_offset(
             MapArea::new(
@@ -376,21 +394,36 @@ impl Task {
             tg.add(self.tid(), Arc::downgrade(&self));
         });
         log::info!("[kernel_execve] task{} thread_group rebuild", self.tid());
-        self.do_close_on_exec();
+        self.fd_table().do_close_on_exec();
         log::info!("[kernel_execve] task{} fd_table reset", self.tid());
         // 重置信号处理器
         self.op_sig_handler_mut(|handler| handler.reset());
         log::info!("[kernel_execve] task{} handler reset", self.tid());
 
-        log::info!("[kernel_execve] task{}-tgid:\t{:x}", self.tid(), self.tgid());
-        log::info!("[kernel_execve] task{}-tp:\t{:x}", self.tid(), Arc::as_ptr(&self) as usize);
-        log::info!("[kernel_execve] task{}-sp:\t{:x}", self.tid(), self.kstack());
+        log::info!(
+            "[kernel_execve] task{}-tgid:\t{:x}",
+            self.tid(),
+            self.tgid()
+        );
+        log::info!(
+            "[kernel_execve] task{}-tp:\t{:x}",
+            self.tid(),
+            Arc::as_ptr(&self) as usize
+        );
+        log::info!(
+            "[kernel_execve] task{}-sp:\t{:x}",
+            self.tid(),
+            self.kstack()
+        );
 
         let strong_count = Arc::strong_count(&self);
-        if strong_count == 3 
-            { log::info!("[kernel_execve] strong_count:\t{}", strong_count);} 
-        else // 理论为3(sys_exec一个，children一个， processor一个)
-            { log::error!("[kernel_execve] strong_count:\t{}", strong_count)}
+        if strong_count == 3 {
+            log::info!("[kernel_execve] strong_count:\t{}", strong_count);
+        } else
+        // 理论为3(sys_exec一个，children一个， processor一个)
+        {
+            log::error!("[kernel_execve] strong_count:\t{}", strong_count)
+        }
 
         log::info!("[kernel_execve] task{} execve complete!", self.tid());
     }
@@ -426,8 +459,14 @@ impl Task {
     fn trap_context_clone(self: &Arc<Self>) -> usize {
         let src_kstack_top = get_stack_top_by_sp(self.kstack());
         let dst_kstack_top = kstack_alloc();
-        log::info!("[trap_context_clone] src_kstack_top:\t{:#x}", src_kstack_top);
-        log::info!("[trap_context_clone] dst_kstack_top:\t{:#x}", dst_kstack_top);
+        log::info!(
+            "[trap_context_clone] src_kstack_top:\t{:#x}",
+            src_kstack_top
+        );
+        log::info!(
+            "[trap_context_clone] dst_kstack_top:\t{:#x}",
+            dst_kstack_top
+        );
         let src_trap_cx_ptr =
             (src_kstack_top - core::mem::size_of::<TrapContext>()) as *const TrapContext;
         let dst_trap_cx_ptr =
@@ -441,11 +480,6 @@ impl Task {
     // pub fn alloc_fd(&mut self, file: Arc<dyn FileOp + Send + Sync>) -> usize {
     //     self.fd_table.alloc_fd(file)
     // }
-
-    // used by `kernel_execve`, 在execve时关闭设置FD_CLOEXEC标志的文件描述符
-    fn do_close_on_exec(&self) {
-        self.fd_table.do_close_on_exec();
-    }
 
     /*********************************** getter *************************************/
 
@@ -571,7 +605,8 @@ impl Task {
 pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
     log::error!("[kernel_exit] Task{} ready to exit ...", task.tid(),);
     assert_ne!(
-        task.tid(), INIT_PROC_PID,
+        task.tid(),
+        INIT_PROC_PID,
         "[kernel_exit] Initproc process exit with exit_code {:?} ...",
         task.exit_code()
     );
@@ -583,6 +618,11 @@ pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
     log::warn!("[kernel_exit] Task{} become zombie", task.tid());
     // 设置退出码
     task.set_exit_code(exit_code);
+    log::error!(
+        "[kernel_exit] Task{} set exit_code to {}",
+        task.tid(),
+        task.exit_code()
+    );
     // 托孤
     task.op_children_mut(|children| {
         for task in children.values() {
@@ -709,7 +749,7 @@ fn init_user_stack(
         }
         base
     }
-    log::info!(
+    log::error!(
         "[init_user_stack] args: {:?}, envs: {:?}",
         args_vec,
         envs_vec

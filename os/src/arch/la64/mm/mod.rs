@@ -26,6 +26,7 @@ pub unsafe fn sfence_vma_vaddr(vaddr: usize) {
 
 // Todo: 支持page fault预处理
 pub fn copy_to_user<T: Copy>(to: *mut T, from: *const T, n: usize) -> Result<usize, &'static str> {
+    log::trace!("[copy_to_user]");
     if to.is_null() || from.is_null() {
         log::error!(
             "null pointer: to: {:#x}, from: {:#x}",
@@ -55,7 +56,6 @@ pub fn copy_to_user<T: Copy>(to: *mut T, from: *const T, n: usize) -> Result<usi
     });
     unsafe {
         let data = from_raw_parts(from as *const u8, n);
-        log::error!("copy data: {:?}, to_pa: {:#x}", data, to_pa);
     }
     // 执行复制
     unsafe {
@@ -100,6 +100,7 @@ pub fn copy_from_user_mut<'a, T: Copy>(
     from: *mut T,
     n: usize,
 ) -> Result<&'a mut [T], &'static str> {
+    log::trace!("[copy_from_user_mut]");
     if from.is_null() {
         return Err("null pointer");
     }

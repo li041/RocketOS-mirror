@@ -21,12 +21,20 @@ pub struct TimeSpec {
 }
 
 impl TimeSpec {
-    pub fn new() -> Self {
+    pub fn new_machine_time() -> Self {
         // new a time spec with machine time
         let current_time = get_time_ms();
         Self {
             sec: current_time / 1000,
             nsec: (current_time % 1000) * 1000000,
+        }
+    }
+    pub fn new_wall_time() -> Self {
+        // new a time spec with machine time
+        let current_time = read_rtc();
+        Self {
+            sec: (current_time / NANOS_PER_SEC) as usize,
+            nsec: (current_time % NANOS_PER_SEC) as usize,
         }
     }
 }
@@ -47,6 +55,14 @@ impl StatxTimeStamp {
         Self {
             sec: (current_time / 1000) as i64,
             nsec: ((current_time % 1000) * 1000000) as u32,
+        }
+    }
+    pub fn new_real() -> Self {
+        // new a time spec with wall time(自epoch以来的时间)
+        let current_time = read_rtc();
+        Self {
+            sec: (current_time / NANOS_PER_SEC) as i64,
+            nsec: (current_time % NANOS_PER_SEC) as u32,
         }
     }
 }
@@ -75,7 +91,7 @@ pub fn set_next_trigger() {
 const GOLDFISH_RTC_BASE: usize = 0x10_1000;
 const TIME_LOW: usize = 0x00;
 const TIME_HIGH: usize = 0x04;
-const NANOS_PER_SEC: u64 = 1_000_000_000;
+pub const NANOS_PER_SEC: u64 = 1_000_000_000;
 
 /**
  * Goldfish RTC 寄存器布局
@@ -83,7 +99,8 @@ const NANOS_PER_SEC: u64 = 1_000_000_000;
  * 基地址: 0x101000 (RISC-V virt 机器)
  * 大小: 36 字节
  */
-pub fn read_goldfish_rtc() -> u64 {
+/// 返回的是自Epoch以来的纳秒数
+pub fn read_rtc() -> u64 {
     let low = unsafe {
         core::ptr::read_volatile((KERNEL_BASE + GOLDFISH_RTC_BASE + TIME_LOW) as *const u32)
     } as u64;
@@ -92,6 +109,5 @@ pub fn read_goldfish_rtc() -> u64 {
         core::ptr::read_volatile((KERNEL_BASE + GOLDFISH_RTC_BASE + TIME_HIGH) as *const u32)
     } as u64;
     log::error!("high: {:#x}", high);
-    ((high << 32) | low) / NANOS_PER_SEC
+    (high << 32) | low
 }
-

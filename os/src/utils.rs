@@ -2,7 +2,7 @@ use core::fmt::Debug;
 
 use alloc::{string::String, vec::Vec};
 
-use crate::arch::config::PAGE_SIZE;
+use crate::arch::{config::PAGE_SIZE, timer::TimeSpec};
 
 #[cfg(target_arch = "riscv64")]
 /// 由caller保证ptr的合法性
@@ -130,6 +130,13 @@ impl Debug for DateTime {
             "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
             self.year, self.month, self.day, self.hour, self.minute, self.second
         )
+    }
+}
+
+impl From<&TimeSpec> for DateTime {
+    fn from(time: &TimeSpec) -> Self {
+        let seconds = time.sec as u64;
+        seconds_to_beijing_datetime(seconds)
     }
 }
 
