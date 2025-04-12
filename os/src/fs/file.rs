@@ -12,6 +12,7 @@ use super::{
     dentry::{Dentry, LinuxDirent64},
     inode::InodeOp,
     path::Path,
+    uapi::Whence,
 };
 
 // 普通文件
@@ -40,7 +41,13 @@ pub trait FileOp: Any + Send + Sync {
     fn read<'a>(&'a self, buf: &'a mut [u8]) -> usize {
         unimplemented!();
     }
+    fn read_all(&self) -> Vec<u8> {
+        unimplemented!();
+    }
     fn get_page(self: Arc<Self>, page_offset: usize) -> Result<Arc<Page>, &'static str> {
+        unimplemented!();
+    }
+    fn get_inode(&self) -> Arc<dyn InodeOp> {
         unimplemented!();
     }
     /// Write `UserBuffer` to file
@@ -48,7 +55,7 @@ pub trait FileOp: Any + Send + Sync {
         unimplemented!();
     }
     // move the file offset
-    fn seek(&self, offset: usize) {
+    fn seek(&self, offset: usize, whence: Whence) -> usize {
         unimplemented!();
     }
     // Get the file offset
@@ -61,6 +68,15 @@ pub trait FileOp: Any + Send + Sync {
     }
     // writable
     fn writable(&self) -> bool {
+        unimplemented!();
+    }
+    fn hang_up(&self) -> bool {
+        unimplemented!();
+    }
+    fn r_ready(&self) -> bool {
+        unimplemented!();
+    }
+    fn w_ready(&self) -> bool {
         unimplemented!();
     }
     fn ioctl(&self, _op: usize, _arg_ptr: usize) -> isize {
@@ -82,9 +98,14 @@ impl File {
 
 impl File {
     pub fn new(path: Arc<Path>, inode: Arc<dyn InodeOp>, flags: OpenFlags) -> Self {
+        let offset = if flags.contains(OpenFlags::O_APPEND) {
+            inode.get_size()
+        } else {
+            0
+        };
         Self {
             inner: SpinNoIrqLock::new(FileInner {
-                offset: 0,
+                offset,
                 path,
                 inode,
                 flags,
@@ -100,17 +121,6 @@ impl File {
         let offset = self.get_offset();
         let total_read = inode.read(offset, &mut buffer);
         self.add_offset(total_read);
-        // loop {
-        //     let offset = self.get_offset();
-        //     let len = inode.read(offset, &mut buffer);
-        //     totol_read += len;
-        //     if len == 0 {
-        //         break;
-        //     }
-        //     self.add_offset(len);
-        //     v.extend_from_slice(&buffer[..len]);
-        //     log::warn!("read one paeg at offset: {}", offset);
-        // }
         log::info!("read_all: total_read: {}", total_read);
         buffer
     }
@@ -138,20 +148,44 @@ impl FileOp for File {
         self.add_offset(read_size);
         read_size
     }
+    fn read_all(&self) -> Vec<u8> {
+        self.read_all()
+    }
     /// 共享文件映射和私有文件映射只读时调用
     fn get_page(self: Arc<Self>, page_aligned_offset: usize) -> Result<Arc<Page>, &'static str> {
         debug_assert!(page_aligned_offset % PAGE_SIZE == 0);
         let inode = self.inner_handler(|inner| inner.inode.clone());
         inode.get_page(page_aligned_offset >> PAGE_SIZE_BITS)
     }
+    fn get_inode(&self) -> Arc<dyn InodeOp> {
+        self.inner_handler(|inner| inner.inode.clone())
+    }
 
     fn write<'a>(&'a self, buf: &'a [u8]) -> usize {
-        let write_size = self.inner_handler(|inner| inner.inode.write(inner.offset, buf));
+        let write_size = self.inner_handler(|inner| {
+            if inner.flags.contains(OpenFlags::O_APPEND) {
+                inner.offset = inner.inode.get_size();
+            }
+            inner.inode.write(inner.offset, buf)
+        });
         self.add_offset(write_size);
         write_size
     }
-    fn seek(&self, offset: usize) {
-        self.inner_handler(|inner| inner.offset = offset);
+    fn seek(&self, offset: usize, whence: Whence) -> usize {
+        self.inner_handler(|inner| {
+            match whence {
+                Whence::SeekSet => inner.offset = offset,
+                Whence::SeekCur => inner.offset += offset,
+                Whence::SeekEnd => {
+                    let size = inner.inode.get_size();
+                    if offset > size {
+                        panic!("seek out of range");
+                    }
+                    inner.offset = size - offset;
+                }
+            }
+            return inner.offset;
+        })
     }
     fn get_offset(&self) -> usize {
         self.inner_handler(|inner| inner.offset)
@@ -162,9 +196,10 @@ impl FileOp for File {
         // self.inner_handler(|inner| inner.flags & O_RDONLY != 0)
         true
     }
-    // Todo:
     fn writable(&self) -> bool {
-        true
+        let inner_guard = self.inner.lock();
+        inner_guard.flags.contains(OpenFlags::O_WRONLY)
+            || inner_guard.flags.contains(OpenFlags::O_RDWR)
     }
 }
 
@@ -180,6 +215,7 @@ bitflags::bitflags! {
     // File access mode (O_RDONLY, O_WRONLY, O_RDWR).
     // The file creation flags are O_CLOEXEC, O_CREAT, O_DIRECTORY, O_EXCL,
     // O_NOCTTY, O_NOFOLLOW, O_TMPFILE, and O_TRUNC.
+    // O_EXCL在sys_openat中被处理, 文件访问模式在`create_file_from_dentry`中被处理
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct OpenFlags: i32 {
         // reserve 3 bits for the access mode

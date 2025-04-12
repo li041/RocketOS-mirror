@@ -49,7 +49,7 @@ pub fn main() -> i32 {
             panic!("unreachable!");
         } else {
             let mut exit_code = 0;
-            let _wait_pid = waitpid(pid as usize, &mut exit_code);
+            let _wait_pid = waitpid(pid, &mut exit_code);
         }
     }
     return 0;

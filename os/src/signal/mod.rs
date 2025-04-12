@@ -22,6 +22,7 @@ use crate::{
 // 5. 修改内核栈顶trap信息
 
 pub fn handle_signal() {
+    log::trace!("[handle_signal]");
     use crate::arch::trampoline::sigreturn_trampoline;
 
     let task = current_task();

@@ -1,7 +1,10 @@
 use crate::{
     arch::{
         mm::{copy_from_user, copy_to_user},
-        trap::{context::{get_trap_context, save_trap_context}, TrapContext},
+        trap::{
+            context::{get_trap_context, save_trap_context},
+            TrapContext,
+        },
     },
     signal::{SiField, Sig, SigAction, SigContext, SigInfo, SigSet},
     task::{
@@ -54,7 +57,8 @@ pub fn sys_kill(pid: isize, sig: i32) -> isize {
                     );
                 }
             } else {
-                return -1; // ESRCH
+                // Todo: 目前系统在测试busybox时
+                return 0; // ESRCH
             }
         }
         0 => {
@@ -155,12 +159,12 @@ pub fn sys_rt_sigaction(signum: i32, act: usize, oldact: usize) -> isize {
     if sig.is_kill_or_stop() {
         return -1;
     }
-    log::info!(
-        "[sys_rt_sigaction] task{} old_ptr: {:x}, new_ptr: {:x}",
-        task.tid(),
-        oldact,
-        act
-    );
+    // log::info!(
+    //     "[sys_rt_sigaction] task{} old_ptr: {:x}, new_ptr: {:x}",
+    //     task.tid(),
+    //     oldact,
+    //     act
+    // );
     let act_ptr = act as *const SigAction;
     let oldact_ptr = oldact as *mut SigAction;
     // 将当前action写入oldact
@@ -183,7 +187,7 @@ pub fn sys_rt_sigaction(signum: i32, act: usize, oldact: usize) -> isize {
         task.op_sig_handler_mut(|handler| {
             handler.update(sig, new_action);
         });
-        log::info!("[sys_rt_sigaction] new:{:?}", new_action);
+        // log::info!("[sys_rt_sigaction] new:{:?}", new_action);
     }
     0
 }
@@ -206,7 +210,7 @@ pub fn sys_rt_sigprocmask(how: usize, set: usize, oldset: usize) -> isize {
     let oldset_ptr = oldset as *mut SigSet;
     let current_mask = task.op_sig_pending_mut(|pending| pending.mask);
     log::info!("[sys_rt_sigprocmask] how: {:?}", how);
-    log::info!("[sys_rt_sigprocmask] current mask {:?}", current_mask);
+    // log::info!("[sys_rt_sigprocmask] current mask {:?}", current_mask);
     // oldset非NULL
     if oldset != 0 {
         if let Err(_) = copy_to_user(oldset_ptr, &current_mask as *const SigSet, 1) {
@@ -222,7 +226,7 @@ pub fn sys_rt_sigprocmask(how: usize, set: usize, oldset: usize) -> isize {
             log::error!("[sys_rt_sigprocmask] copy_from_user failed");
             return -1;
         };
-        log::info!("[sys_rt_sigprocmask] current mask {:?}", new_mask);
+        // log::info!("[sys_rt_sigprocmask] current mask {:?}", new_mask);
         new_mask.remove(SigSet::SIGKILL | SigSet::SIGCONT);
         let mut change_mask = SigSet::empty();
         match how {

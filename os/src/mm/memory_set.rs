@@ -1,5 +1,5 @@
 //! MemorySet
-use core::{arch::asm, ops::Range, usize};
+use core::{arch::asm, mem, ops::Range, usize};
 
 use super::{address::StepByOne, area::MapArea, VPNRange};
 use crate::{
@@ -131,7 +131,11 @@ impl MemorySet {
 
         // 映射内核
         log::info!(".text\t[{:#x}, {:#x})", stext as usize, etext as usize);
-        log::info!(".rodata\t[{:#x}, {:#x})", srodata as usize, erodata as usize);
+        log::info!(
+            ".rodata\t[{:#x}, {:#x})",
+            srodata as usize,
+            erodata as usize
+        );
         log::info!(".data\t[{:#x}, {:#x})", sdata as usize, edata as usize);
         log::info!(
             ".bss\t[{:#x}, {:#x})",
@@ -506,6 +510,8 @@ impl MemorySet {
         let heap_bottom = ustack_top + PAGE_SIZE;
         memory_set.heap_bottom = heap_bottom;
         memory_set.brk = heap_bottom;
+        // 重置mmap_start
+        memory_set.mmap_start = MMAP_MIN_ADDR;
 
         log::error!("[from_elf] entry_point: {:#x}", entry_point);
 
@@ -555,7 +561,7 @@ impl MemorySet {
         let memory_set = MemorySet {
             brk: user_memory_set.brk,
             heap_bottom: user_memory_set.heap_bottom,
-            mmap_start: MMAP_MIN_ADDR,
+            mmap_start: user_memory_set.mmap_start,
             page_table,
             areas: user_memory_set.areas.clone(),
         };

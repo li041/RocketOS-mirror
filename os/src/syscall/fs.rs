@@ -1,15 +1,21 @@
-use core::mem;
+use core::{mem, panic, time};
 
+use alloc::sync::Arc;
 use alloc::{string::String, vec};
 
 use alloc::string::ToString;
 use xmas_elf::header::parse_header;
 
-use crate::arch::timer::TimeSpec;
+use crate::arch::timer::{get_time_ms, TimeSpec};
 use crate::fs::fdtable::FdFlags;
 use crate::fs::file::OpenFlags;
 use crate::fs::kstat::Statx;
+use crate::fs::mount::get_mount_by_dentry;
+use crate::fs::namei::lookup_dentry;
 use crate::fs::pipe::make_pipe;
+use crate::fs::uapi::{DevT, PollEvents, PollFd, RenameFlags, StatFs, UtimenatFlags, Whence};
+use crate::signal::SigSet;
+use crate::task::yield_current_task;
 use crate::{
     ext4::{self, inode::S_IFDIR},
     fs::{
@@ -20,7 +26,7 @@ use crate::{
         namei::{filename_create, filename_lookup, path_openat, Nameidata},
         path::Path,
         pipe::Pipe,
-        uio::IoVec,
+        uapi::IoVec,
         AT_FDCWD,
     },
     task::current_task,
@@ -29,6 +35,26 @@ use crate::{
 
 use crate::arch::mm::{copy_from_user, copy_from_user_mut, copy_to_user};
 
+pub fn sys_lseek(fd: usize, offset: usize, whence: usize) -> isize {
+    log::info!(
+        "[sys_lseek] fd: {}, offset: {}, whence: {}",
+        fd,
+        offset,
+        whence
+    );
+    let task = current_task();
+    let file = task.fd_table().get_file(fd);
+    let whence = Whence::try_from(whence).unwrap_or(Whence::SeekSet);
+    if let Some(file) = file {
+        let file = file.clone();
+        let ret = file.seek(offset, whence);
+        ret as isize
+    } else {
+        -1
+    }
+}
+
+#[cfg(target_arch = "riscv64")]
 pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
     let task = current_task();
     let file = task.fd_table().get_file(fd);
@@ -41,7 +67,7 @@ pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
         let mut ker_buf = vec![0u8; len];
         let read_len = file.read(&mut ker_buf);
         let ker_buf_ptr = ker_buf.as_ptr();
-        assert!(ker_buf_ptr != core::ptr::null());
+        // assert!(ker_buf_ptr != core::ptr::null());
         // 写回用户空间
         let ret = copy_to_user(buf, ker_buf_ptr, read_len as usize);
         match ret {
@@ -56,32 +82,32 @@ pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
     }
 }
 
-// #[cfg(target_arch = "loongarch64")]
-// pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
-//     use crate::mm::VirtAddr;
+#[cfg(target_arch = "loongarch64")]
+pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
+    use crate::mm::VirtAddr;
 
-//     let task = current_task();
-//     let file = task.fd_table().get_file(fd);
-//     if let Some(file) = file {
-//         let file = file.clone();
-//         if !file.readable() {
-//             return -1;
-//         }
-//         let buf = current_task().op_memory_set(|memory_set| {
-//             memory_set
-//                 .translate_va_to_pa(VirtAddr::from(buf as usize))
-//                 .unwrap()
-//         });
-//         let ret = file.read(unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, len) });
-//         // ToOptimize:
-//         if fd >= 3 {
-//             log::info!("sys_read: fd: {}, len: {}, ret: {}", fd, len, ret);
-//         }
-//         ret as isize
-//     } else {
-//         -1
-//     }
-// }
+    let task = current_task();
+    let file = task.fd_table().get_file(fd);
+    if let Some(file) = file {
+        let file = file.clone();
+        if !file.readable() {
+            return -1;
+        }
+        let buf = current_task().op_memory_set(|memory_set| {
+            memory_set
+                .translate_va_to_pa(VirtAddr::from(buf as usize))
+                .unwrap()
+        });
+        let ret = file.read(unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, len) });
+        // ToOptimize:
+        if fd >= 3 {
+            log::info!("sys_read: fd: {}, len: {}, ret: {}", fd, len, ret);
+        }
+        ret as isize
+    } else {
+        -1
+    }
+}
 
 #[no_mangle]
 pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
@@ -101,6 +127,40 @@ pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
     } else {
         -1
     }
+}
+
+pub fn sys_readv(fd: usize, iov: *const IoVec, iovcnt: usize) -> isize {
+    if fd > 3 {
+        log::info!("sys_readv: fd: {}, iovcnt: {}", fd, iovcnt);
+    }
+    let task = current_task();
+    let file = task.fd_table().get_file(fd);
+    if file.is_none() {
+        return -1;
+    }
+    let file = file.unwrap();
+    if !file.readable() {
+        return -1;
+    }
+    let mut total_read = 0isize;
+    let iov = copy_from_user(iov, iovcnt).unwrap();
+    for iovec in iov.iter() {
+        if iovec.len == 0 {
+            continue;
+        }
+        let buf = copy_from_user_mut(iovec.base as *mut u8, iovec.len).unwrap();
+        let read = file.read(buf);
+        // 如果读取失败, 则返回已经读取的字节数, 或错误码
+        if read == 0 {
+            return if total_read > 0 {
+                total_read
+            } else {
+                read as isize
+            };
+        }
+        total_read += read as isize;
+    }
+    total_read
 }
 
 pub fn sys_writev(fd: usize, iov: *const IoVec, iovcnt: usize) -> isize {
@@ -139,6 +199,7 @@ pub fn sys_writev(fd: usize, iov: *const IoVec, iovcnt: usize) -> isize {
 
 /// 注意Fd_flags并不会在dup中继承
 pub fn sys_dup(oldfd: usize) -> isize {
+    log::info!("[sys_dup] oldfd: {}", oldfd);
     let task = current_task();
     // let file = task.fd_table().get_file(oldfd);
     let fd_entry = task.fd_table().get_fdentry(oldfd);
@@ -156,6 +217,12 @@ pub fn sys_dup(oldfd: usize) -> isize {
 /// 如果`newfd`已经打开, 则关闭`newfd`, 再分配, 关闭newfd中出现的错误不会影响sys_dup2
 ///
 pub fn sys_dup3(oldfd: usize, newfd: usize, flags: i32) -> isize {
+    log::info!(
+        "[sys_dup3] oldfd: {}, newfd: {}, flags: {}",
+        oldfd,
+        newfd,
+        flags
+    );
     let task = current_task();
     let flags = OpenFlags::from_bits(flags).unwrap();
     if oldfd == newfd {
@@ -206,6 +273,7 @@ pub fn sys_unlinkat(dirfd: i32, pathname: *const u8, flag: i32) -> isize {
     }
 }
 
+/// 创建硬链接
 pub fn sys_linkat(
     olddirfd: i32,
     oldpath: *const u8,
@@ -274,6 +342,33 @@ pub fn sys_openat(dirfd: i32, pathname: *const u8, flags: i32, mode: usize) -> i
     }
 }
 
+/// mode是inode类型+文件权限
+pub fn sys_mknodat(dirfd: i32, pathname: *const u8, mode: usize, dev: u64) -> isize {
+    log::info!(
+        "[sys_mknodat] dirfd: {}, pathname: {:?}, mode: {}, dev: {}",
+        dirfd,
+        pathname,
+        mode,
+        dev
+    );
+    let path = c_str_to_string(pathname);
+    let mut nd = Nameidata::new(&path, dirfd);
+    let fake_lookup_flags = 0;
+    match filename_create(&mut nd, fake_lookup_flags) {
+        Ok(dentry) => {
+            let parent_inode = nd.dentry.get_inode();
+            parent_inode.mknod(dentry, mode as u16, DevT::new(dev));
+            // Debug Ok
+            // ext4_list_apps();
+            return 0;
+        }
+        Err(e) => {
+            log::info!("[sys_mknodat] fail to create file: {}, {}", path, e);
+            -1
+        }
+    }
+}
+
 pub fn sys_mkdirat(dirfd: isize, pathname: *const u8, mode: usize) -> isize {
     log::info!(
         "[sys_mkdirat] dirfd: {}, pathname: {:?}, mode: {}",
@@ -288,8 +383,6 @@ pub fn sys_mkdirat(dirfd: isize, pathname: *const u8, mode: usize) -> isize {
         Ok(dentry) => {
             let parent_inode = nd.dentry.get_inode();
             parent_inode.mkdir(dentry, mode as u16 | S_IFDIR);
-            // Debug Ok
-            // ext4_list_apps();
             return 0;
         }
         Err(e) => {
@@ -381,50 +474,8 @@ pub fn sys_fstatat(dirfd: i32, pathname: *const u8, statbuf: *mut Stat, flags: i
         }
         Err(e) => {
             log::info!("[sys_fstatat] fail to fstatat: {}, {}", path, e);
-            return -1;
-        }
-    }
-}
-
-// Todo: 使用mask指示内核需要返回哪些信息
-pub fn sys_statx(
-    dirfd: i32,
-    pathname: *const u8,
-    flags: i32,
-    _mask: u32,
-    statxbuf: *mut Statx,
-    // statbuf: *mut Stat,
-) -> isize {
-    log::info!(
-        "[sys_statx] dirfd: {}, pathname: {:?}, flags: {}, mask: {}",
-        dirfd,
-        pathname,
-        flags,
-        _mask
-    );
-    let path = c_str_to_string(pathname);
-    if path.is_empty() {
-        log::error!("[sys_statx] pathname is empty");
-        return -1;
-    }
-    let mut nd = Nameidata::new(&path, dirfd);
-    let fake_lookup_flags = 0;
-    match filename_lookup(&mut nd, fake_lookup_flags) {
-        Ok(dentry) => {
-            let inode = dentry.get_inode();
-            let statx = Statx::from(inode.getattr());
-            log::error!("statx: statx: {:?}", statx);
-            if let Err(e) = copy_to_user(statxbuf, &statx as *const Statx, 1) {
-                // let stat = Stat::from(inode.getattr());
-                // if let Err(e) = copy_to_user(statbuf, &stat as *const Stat, 1) {
-                log::error!("statx: copy_to_user failed: {}", e);
-                return -1;
-            }
-            return 0;
-        }
-        Err(e) => {
-            log::info!("[sys_statx] fail to statx: {}, {}", path, e);
-            return -1;
+            // Todo: 这里需要设置errno, 如果返回-1, 应用程序检查errno, 会认为Operation not permitted
+            return -2;
         }
     }
 }
@@ -444,9 +495,8 @@ pub fn sys_getdents64(fd: usize, dirp: *mut u8, count: usize) -> isize {
                 Ok(dirents) => {
                     let mut offset = 0;
                     for dirent in dirents {
-                        // log::error!("dirent_name: {}", String::from_utf8_lossy(&dirent.d_name));
+                        log::error!("dirent_name: {}", String::from_utf8_lossy(&dirent.d_name));
                         let dirent_size = dirent.d_reclen as usize;
-                        log::warn!("dirent_size: {}", dirent_size);
                         if offset + dirent_size > count {
                             break;
                         }
@@ -487,37 +537,154 @@ pub fn sys_chdir(pathname: *const u8) -> isize {
 }
 
 // Todo: 直接往用户地址空间写入, 没有检查
-pub fn sys_pipe2(fdset: *const u8, flags: i32) -> isize {
+pub fn sys_pipe2(fdset_ptr: *mut i32, flags: i32) -> isize {
+    log::trace!("[sys_pipe2]");
     let flags = OpenFlags::from_bits(flags).unwrap();
-    log::info!("[sys_pipe2] fdset: {:?}, flags: {:?}", fdset, flags);
     let task = current_task();
     let pipe_pair = make_pipe();
     let fd_table = task.fd_table();
     let fd_flags = FdFlags::from(&flags);
     let fd1 = fd_table.alloc_fd(pipe_pair.0.clone(), fd_flags);
     let fd2 = fd_table.alloc_fd(pipe_pair.1.clone(), fd_flags);
+    log::info!(
+        "[sys_pipe2] fdset: {:?}, flags: {:?}, fds: [{}, {}]",
+        fdset_ptr,
+        flags,
+        fd1,
+        fd2
+    );
     let pipe = [fd1 as i32, fd2 as i32];
-    let fdset_ptr = fdset as *mut [i32; 2];
-    // unsafe {
-    //     core::ptr::write(fdset_ptr, pipe);
-    // }
-    copy_to_user(
-        fdset_ptr as *mut u8,
-        pipe.as_ptr() as *const u8,
-        2 * core::mem::size_of::<i32>(),
-    )
-    .unwrap();
+    copy_to_user(fdset_ptr, pipe.as_ptr(), 2).unwrap();
     0
 }
 
 pub fn sys_close(fd: usize) -> isize {
-    log::info!("[sys_close] fd: {}", fd);
+    // 4.17
+    log::error!("[sys_close] fd: {}", fd);
     let task = current_task();
     let fd_table = task.fd_table();
     if fd_table.close(fd) {
         0
     } else {
         -1
+    }
+}
+
+/// 更改文件的名称(必要的时候会改变位置), 文件的其他硬链接(由link创建)不受影响, 对oldpth打开的文件描述符不受影响
+/// Todo: 实现oldpath是符号链接的情况
+pub fn sys_renameat2(
+    olddirfd: i32,
+    oldpath: *const u8,
+    newdirfd: i32,
+    newpath: *const u8,
+    flags: i32,
+) -> isize {
+    log::info!(
+        "[sys_renameat2] olddirfd: {}, oldpath: {:?}, newdirfd: {}, newpath: {:?}, flags: {}",
+        olddirfd,
+        oldpath,
+        newdirfd,
+        newpath,
+        flags
+    );
+    let oldpath = c_str_to_string(oldpath);
+    let newpath = c_str_to_string(newpath);
+    let flags = RenameFlags::from_bits(flags).unwrap();
+    // 检查flags
+    if (flags.contains(RenameFlags::NOREPLACE) || flags.contains(RenameFlags::WHITEOUT))
+        && flags.contains(RenameFlags::EXCHANGE)
+    {
+        log::error!("[sys_renameat2] NOREPLACE and RENAME_EXCHANGE cannot be used together");
+        return -1;
+    }
+    if flags.contains(RenameFlags::WHITEOUT) {
+        unimplemented!();
+    }
+    let mut old_nd = Nameidata::new(&oldpath, olddirfd);
+    let fake_lookup_flags = 0;
+    match filename_lookup(&mut old_nd, fake_lookup_flags) {
+        Ok(old_dentry) => {
+            let mut new_nd = Nameidata::new(&newpath, newdirfd);
+            // 检查newpath是否存在, 并进行相关的类型检查
+            let new_dentry = lookup_dentry(&mut new_nd);
+            if new_dentry.is_negative() {
+                // new_path不存在
+                if flags.contains(RenameFlags::EXCHANGE) {
+                    log::error!("[sys_renameat2] newpath must exist with EXCHANGE flag");
+                    return -1;
+                }
+            } else {
+                // new_path存在
+                if flags.contains(RenameFlags::NOREPLACE) {
+                    // 如果newpath存在, 则返回错误
+                    log::error!("[sys_renameat2] newpath already exists with NOREPLACE flag");
+                    return -1;
+                }
+                if flags.contains(RenameFlags::EXCHANGE) {
+                    // 进行ancestor检查
+                    if new_dentry.is_ancestor(&old_dentry) {
+                        log::error!(
+                            "[sys_renameat2] newpath is ancestor of oldpath with EXCHANGE flag"
+                        );
+                        return -1;
+                    }
+                }
+                // 先进行类型检查
+                if old_dentry.is_symlink() {
+                    // Todo: 处理符号链接
+                    unimplemented!();
+                }
+                if old_dentry.is_dir() && !new_dentry.get_inode().can_lookup() {
+                    // 如果old_dentry是目录, 则newpath必须不存在, 或者是空目录
+                    log::error!(
+                        "[sys_renameat2] oldpath is dir, newpath must not exist or be an empty dir"
+                    );
+                    return -1;
+                }
+                if old_dentry.is_regular()
+                    && Arc::ptr_eq(&old_dentry.get_inode(), &new_dentry.get_inode())
+                {
+                    // 如果old_dentry和new_dentry是同一个file的两个硬链接, 则直接返回
+                    log::warn!(
+                        "[rename] old_dentry and new_dentry are the hard links of the same file"
+                    );
+                    return 0;
+                }
+            }
+            // 进行ancestor检查
+            if old_dentry.is_ancestor(&new_dentry) {
+                log::error!("[sys_renameat2] oldpath is ancestor of newpath");
+                return -1;
+            }
+            // 执行renameat操作
+            let old_dir_entry = old_dentry.get_parent();
+            let new_dir_entry = new_dentry.get_parent();
+            let old_dir_inode = old_dir_entry.get_inode();
+            let new_dir_inode = new_dir_entry.get_parent().get_inode();
+            let should_mv = Arc::ptr_eq(&old_dir_inode, &new_dir_inode);
+            // inode层次的操作 + dentry层次的操作
+            match old_dir_inode.rename(
+                new_dir_inode,
+                old_dentry.clone(),
+                new_dentry.clone(),
+                flags,
+                should_mv,
+            ) {
+                Ok(_) => {
+                    delete_dentry(old_dentry);
+                    return 0;
+                }
+                Err(e) => {
+                    log::error!("[sys_renameat2] rename failed: {}", e);
+                    return -1;
+                }
+            }
+        }
+        Err(e) => {
+            // old_path不存在
+            log::info!("[sys_renameat2] fail to lookup oldpath: {}, {}", oldpath, e);
+            return -1;
+        }
     }
 }
 
@@ -550,47 +717,475 @@ impl TryFrom<i32> for FcntlOp {
     }
 }
 
+// Todo: 还有Op没有实现
 pub fn sys_fcntl(fd: i32, op: i32, arg: usize) -> isize {
     log::info!("[sys_fcntl] fd: {}, op: {}, arg: {}", fd, op, arg);
     let task = current_task();
-    let file = task.fd_table().get_file(fd as usize);
+    // let file = task.fd_table().get_file(fd as usize);
+    let fd_entry = task.fd_table().get_fdentry(fd as usize);
     let op = FcntlOp::try_from(op).unwrap_or(FcntlOp::F_UNIMPL);
     let fd_flags = FdFlags::from(&op);
-    if let Some(file) = file {
+    if let Some(entry) = fd_entry {
         match op {
             FcntlOp::F_DUPFD => {
                 // let newfd = task.fd_table().alloc_fd(file.clone(), FdFlags::empty());
-                let newfd = task
-                    .fd_table()
-                    .alloc_fd_above_lower_bound(file.clone(), fd_flags, arg);
+                let newfd = task.fd_table().alloc_fd_above_lower_bound(
+                    entry.get_file().clone(),
+                    fd_flags,
+                    arg,
+                );
                 return newfd as isize;
             }
             FcntlOp::F_DUPFD_CLOEXEC => {
-                let newfd = task
-                    .fd_table()
-                    .alloc_fd_above_lower_bound(file.clone(), fd_flags, arg);
+                let newfd = task.fd_table().alloc_fd_above_lower_bound(
+                    entry.get_file().clone(),
+                    fd_flags,
+                    arg,
+                );
                 return newfd as isize;
             }
+            FcntlOp::F_GETFD => {
+                return i32::from(entry.get_flags()) as isize;
+            }
+            FcntlOp::F_SETFD => {
+                // 仅仅是设置fd的flags, 不会影响fd_table中的fd
+                let mut fd_entry = entry.clone();
+                fd_entry.set_flags(FdFlags::from_bits(arg).unwrap());
+                return 0;
+            }
+            FcntlOp::F_GETFL => {
+                // 获取flags
+                return i32::from(entry.get_flags()) as isize;
+            }
             _ => {
-                log::warn!("[sys_fcntl] Unimplemented");
-                return -1;
+                panic!("[sys_fcntl] Unimplemented");
             }
         }
     }
     -1
 }
 
-pub fn sys_utimensat(dirfd: i32, pathname: *const u8, times: *const TimeSpec, flags: i32) -> isize {
+#[cfg(target_arch = "riscv64")]
+pub fn sys_ppoll(fds: *mut PollFd, nfds: usize, timeout: *const TimeSpec, sigmask: usize) -> isize {
+    log::error!(
+        "[sys_ppoll] fds: {:?}, nfds: {}, timeout: {:?}, sigmask: {}",
+        fds,
+        nfds,
+        timeout,
+        sigmask
+    );
+    let task = current_task();
+    // 处理参数
+    let timeout = if timeout.is_null() {
+        // timeout为负数对于poll来说是无限等待
+        -1
+    } else {
+        let tmo = copy_from_user(timeout, 1).unwrap()[0];
+        (tmo.sec * 1000 + tmo.nsec / 1000000) as isize
+    };
+    // Todo: 设置sigmaskconst
+    // 用于保存原来的sigmask, 后续需要恢复
+    let origin_sigset = task.op_sig_pending_mut(|sig_pending| sig_pending.mask.clone());
+    if sigmask != 0 {
+        let sigset = copy_from_user(sigmask as *const SigSet, 1).unwrap()[0];
+        task.op_sig_pending_mut(|sig_pending| sig_pending.mask = sigset);
+    }
+    drop(task);
+
+    // 内核直接操作用户空间的pollfd
+    let poll_fds = copy_from_user_mut(fds, nfds).unwrap();
+    for poll_fd in poll_fds.iter_mut() {
+        poll_fd.revents = PollEvents::empty();
+    }
+    let mut done;
+    loop {
+        done = 0;
+        let task = current_task();
+        for poll_fd in poll_fds.iter_mut() {
+            if poll_fd.fd < 0 {
+                continue;
+            } else {
+                if let Some(file) = task.fd_table().get_file(poll_fd.fd as usize) {
+                    let mut trigger = 0;
+                    if file.hang_up() {
+                        poll_fd.revents |= PollEvents::HUP;
+                        trigger = 1;
+                    }
+                    // Todo: 如果文件描述符是pipe写端, 且没有读端打开, 则设置POLLERR
+                    if poll_fd.events.contains(PollEvents::IN) && file.r_ready() {
+                        poll_fd.revents |= PollEvents::IN;
+                        trigger = 1;
+                    }
+                    if poll_fd.events.contains(PollEvents::OUT) && file.w_ready() {
+                        poll_fd.revents |= PollEvents::OUT;
+                        trigger = 1;
+                    }
+                    done += trigger;
+                } else {
+                    // pollfd的fd字段大于0, 但是对应文件描述符并没有打开, 设置pollfd.revents为POLLNVAL
+                    poll_fd.revents |= PollEvents::INVAL;
+                    log::error!("[sys_ppoll] invalid fd: {}", poll_fd.fd);
+                }
+            }
+        }
+        if done > 0 {
+            break;
+        }
+        if timeout == 0 {
+            // timeout为0表示立即返回, 即使没有fd准备好
+            break;
+        } else if timeout > 0 {
+            if get_time_ms() > timeout as usize {
+                // 超时了, 返回
+                break;
+            }
+        }
+        drop(task);
+        yield_current_task();
+    }
+    // 恢复origin sigmask
+    if sigmask != 0 {
+        let task = current_task();
+        task.op_sig_pending_mut(|sig_pending| sig_pending.mask = origin_sigset);
+    }
+    done
+}
+
+/// Todo: 目前只支持了Pipe的hang_up, r_ready, w_ready
+#[cfg(target_arch = "loongarch64")]
+pub fn sys_ppoll(fds: *mut PollFd, nfds: usize, timeout: *const TimeSpec, sigmask: usize) -> isize {
     log::info!(
-        "[sys_utimensat] dirfd: {}, pathname: {:?}, times: {:?}, flags: {}",
+        "[sys_ppoll] fds: {:?}, nfds: {}, timeout: {:?}, sigmask: {}",
+        fds,
+        nfds,
+        timeout,
+        sigmask
+    );
+    let task = current_task();
+    // 处理参数
+    let timeout = if timeout.is_null() {
+        // timeout为负数对于poll来说是无限等待
+        -1
+    } else {
+        let tmo = copy_from_user(timeout, 1).unwrap()[0];
+        (tmo.sec * 1000 + tmo.nsec / 1000000) as isize
+    };
+    // Todo: 设置sigmaskconst
+    // 用于保存原来的sigmask, 后续需要恢复
+    let origin_sigset = task.op_sig_pending_mut(|sig_pending| sig_pending.mask.clone());
+    if sigmask != 0 {
+        let sigset = copy_from_user(sigmask as *const SigSet, 1).unwrap()[0];
+        task.op_sig_pending_mut(|sig_pending| sig_pending.mask = sigset);
+    }
+    drop(task);
+
+    // 内核直接操作用户空间的pollfd
+    let poll_fds = copy_from_user_mut(fds, nfds).unwrap();
+    // 神奇小咒语, 避免编译器优化掉poll_fds
+    // log::trace!("poll_fds: {:?}", poll_fds);
+    core::hint::black_box(&poll_fds);
+    for poll_fd in poll_fds.iter_mut() {
+        poll_fd.revents = PollEvents::empty();
+    }
+    let mut done;
+    loop {
+        done = 0;
+        let task = current_task();
+        for i in 0..nfds {
+            let poll_fd = &mut poll_fds[i];
+            if poll_fd.fd < 0 {
+                continue;
+            } else {
+                if let Some(file) = task.fd_table().get_file(poll_fd.fd as usize) {
+                    let mut trigger = 0;
+                    if file.hang_up() {
+                        poll_fd.revents |= PollEvents::HUP;
+                        trigger = 1;
+                    }
+                    // Todo: 如果文件描述符是pipe写端, 且没有读端打开, 则设置POLLERR
+                    if poll_fd.events.contains(PollEvents::IN) && file.r_ready() {
+                        poll_fd.revents |= PollEvents::IN;
+                        trigger = 1;
+                    }
+                    if poll_fd.events.contains(PollEvents::OUT) && file.w_ready() {
+                        poll_fd.revents |= PollEvents::OUT;
+                        trigger = 1;
+                    }
+                    done += trigger;
+                } else {
+                    // pollfd的fd字段大于0, 但是对应文件描述符并没有打开, 设置pollfd.revents为POLLNVAL
+                    poll_fd.revents |= PollEvents::INVAL;
+                    log::error!("[sys_ppoll] invalid fd: {}", poll_fd.fd);
+                }
+            }
+        }
+        if done > 0 {
+            break;
+        }
+        if timeout == 0 {
+            // timeout为0表示立即返回, 即使没有fd准备好
+            break;
+        } else if timeout > 0 {
+            if get_time_ms() > timeout as usize {
+                // 超时了, 返回
+                break;
+            }
+        }
+        drop(task);
+        yield_current_task();
+    }
+    // 恢复origin sigmask
+    if sigmask != 0 {
+        let task = current_task();
+        task.op_sig_pending_mut(|sig_pending| sig_pending.mask = origin_sigset);
+    }
+    done
+}
+
+// 如果对应timespec.sec为UTIME_NOE, 时间戳设置为当前时间(墙上时间)
+pub const UTIME_NOW: usize = 0x3fffffff;
+// 如果对应timespec.sec为UTIME_OMIT, 则不修改对应的时间戳
+pub const UTIME_OMIT: usize = 0x3ffffffe;
+
+// Todo: 需要设置errno
+pub fn sys_utimensat(
+    dirfd: i32,
+    pathname: *const u8,
+    time_spec2: *const TimeSpec,
+    flags: i32,
+) -> isize {
+    let flags = UtimenatFlags::from_bits(flags).unwrap();
+    log::info!(
+        "[sys_utimensat] dirfd: {}, pathname: {:?}, times: {:?}, flags: {:?}",
         dirfd,
         pathname,
-        times,
+        time_spec2,
         flags
     );
-    log::warn!("[sys_utimensat] Unimplemented");
+    let path = if flags.contains(UtimenatFlags::AT_EMPTY_PATH) {
+        None
+    } else {
+        if pathname.is_null() {
+            log::error!("[sys_utimensat] pathname is null, and AT_EMPTY_PATH is not set");
+            return -1;
+        }
+        Some(c_str_to_string(pathname))
+    };
+    let time_specs = if time_spec2.is_null() {
+        None
+    } else {
+        let time_spec = copy_from_user(time_spec2, 2).unwrap();
+        Some(time_spec)
+    };
+    let inode = if let Some(path) = path {
+        let mut nd = Nameidata::new(&path, dirfd);
+        let fake_lookup_flags = 0;
+        match filename_lookup(&mut nd, fake_lookup_flags) {
+            Ok(dentry) => dentry.get_inode(),
+            Err(e) => {
+                log::info!("[sys_utimensat] fail to lookup: {}, {}", path, e);
+                // Todo: 应该返回-1, 设置errno=ENOENT, 但是目前没有实现errno, 如果返回-1, busybox会检查errno, 报Operation not permitted
+                return e;
+            }
+        }
+    } else {
+        // 直接操作dirfd
+        match dirfd {
+            AT_FDCWD => current_task().pwd().dentry.get_inode(),
+            _ => {
+                let file = current_task().fd_table().get_file(dirfd as usize);
+                if let Some(file) = file {
+                    file.get_inode()
+                } else {
+                    log::error!("[sys_utimensat] invalid dirfd: {}", dirfd);
+                    return -1;
+                }
+            }
+        }
+    };
+    let current_time = TimeSpec::new_wall_time();
+    match time_specs {
+        Some(time_specs) => {
+            match time_specs[0].nsec {
+                UTIME_NOW => {
+                    log::info!("[sys_utimensat] set atime to now");
+                    inode.set_atime(current_time);
+                }
+                UTIME_OMIT => {
+                    log::info!("[sys_utimensat] omit atime");
+                }
+                _ => {
+                    inode.set_atime(time_specs[0]);
+                }
+            }
+            match time_specs[1].nsec {
+                UTIME_NOW => {
+                    log::info!("[sys_utimensat] set mtime to now");
+                    inode.set_mtime(current_time);
+                }
+                UTIME_OMIT => {
+                    log::info!("[sys_utimensat] omit mtime");
+                }
+                _ => {
+                    inode.set_mtime(time_specs[1]);
+                }
+            }
+        }
+        None => {
+            log::info!("[sys_utimensat] times is null, use current time to set atime and mtime");
+            inode.set_atime(current_time);
+            inode.set_mtime(current_time);
+            inode.set_ctime(current_time);
+        }
+    }
     0
 }
+
+pub fn sys_sendfile(out_fd: usize, in_fd: usize, offset_ptr: *mut usize, count: usize) -> isize {
+    log::info!(
+        "[sys_sendfile] out_fd: {}, in_fd: {}, offset: {:?}, count: {}",
+        out_fd,
+        in_fd,
+        offset_ptr,
+        count
+    );
+    let fd_table = current_task().fd_table();
+    let (in_file, out_file) = match (fd_table.get_file(in_fd), fd_table.get_file(out_fd)) {
+        (Some(in_file), Some(out_file)) => (in_file, out_file),
+        _ => {
+            log::error!("[sys_sendfile] invalid fd");
+            return -1;
+        }
+    };
+    if !in_file.readable() || !out_file.writable() {
+        log::error!("[sys_sendfile] invalid fd");
+        return -1;
+    }
+    let mut buf = vec![0u8; count];
+    let len;
+    if offset_ptr.is_null() {
+        len = in_file.read(&mut buf);
+    } else {
+        // offset不为NULL, 则sendfile不会修改`in_fd`的文件偏移量
+        let offset = copy_from_user(offset_ptr, 1).unwrap()[0];
+        let origin_offset = in_file.get_offset();
+        in_file.seek(offset, Whence::SeekSet);
+        len = in_file.read(&mut buf);
+        in_file.seek(origin_offset, Whence::SeekSet);
+        // 将新的偏移量写回用户空间
+        copy_to_user(offset_ptr, &(offset + len + 1), 1).unwrap();
+    }
+    let ret = out_file.write(&buf[..len]) as isize;
+    log::info!("[sys_sendfile] ret: {}", ret);
+    ret
+}
+
+/* loongarch */
+// Todo: 使用mask指示内核需要返回哪些信息
+pub fn sys_statx(
+    dirfd: i32,
+    pathname: *const u8,
+    flags: i32,
+    _mask: u32,
+    statxbuf: *mut Statx,
+    // statbuf: *mut Stat,
+) -> isize {
+    log::info!(
+        "[sys_statx] dirfd: {}, pathname: {:?}, flags: {}, mask: {}",
+        dirfd,
+        pathname,
+        flags,
+        _mask
+    );
+    if flags & AT_EMPTY_PATH != 0 {
+        if let Some(file) = current_task().fd_table().get_file(dirfd as usize) {
+            match file.as_any().downcast_ref::<File>() {
+                Some(file) => {
+                    let inode = file.inner_handler(|inner| inner.inode.clone());
+                    let statx = Statx::from(inode.getattr());
+                    log::error!("statx: statx: {:?}", statx);
+                    if let Err(e) = copy_to_user(statxbuf, &statx as *const Statx, 1) {
+                        log::error!("statx: copy_to_user failed: {}", e);
+                        return -1;
+                    }
+                    return 0;
+                }
+                None => {
+                    log::error!("statx: downcast_ref failed");
+                    return -1;
+                }
+            }
+        }
+        // 根据fd获取文件失败
+        return -1;
+    }
+    let path = c_str_to_string(pathname);
+    if path.is_empty() {
+        log::error!("[sys_statx] pathname is empty");
+        return -1;
+    }
+    let mut nd = Nameidata::new(&path, dirfd);
+    let fake_lookup_flags = 0;
+    match filename_lookup(&mut nd, fake_lookup_flags) {
+        Ok(dentry) => {
+            let inode = dentry.get_inode();
+            let statx = Statx::from(inode.getattr());
+            log::error!("statx: statx: {:?}", statx);
+            if let Err(e) = copy_to_user(statxbuf, &statx as *const Statx, 1) {
+                // let stat = Stat::from(inode.getattr());
+                // if let Err(e) = copy_to_user(statbuf, &stat as *const Stat, 1) {
+                log::error!("statx: copy_to_user failed: {}", e);
+                return -1;
+            }
+            return 0;
+        }
+        Err(e) => {
+            log::info!("[sys_statx] fail to statx: {}, {}", path, e);
+            // Todo: 这里需要设置errno, 如果返回-1, 应用程序检查errno, 会认为Operation not permitted
+            return -2;
+        }
+    }
+}
+
+pub fn sys_statfs(path: *const u8, buf: *mut StatFs) -> isize {
+    let path = c_str_to_string(path);
+    if path.is_empty() {
+        log::error!("[sys_statfs] pathname is empty");
+        return -1;
+    }
+    log::info!("[sys_statfs] path: {:?}, buf: {:?}", path, buf);
+    // 特殊处理根目录, 因为根目录的dentry是空字符串, path传入的是"/"
+    if path == "/" {
+        let root_dentry = current_task().root().dentry.clone();
+        let mount = get_mount_by_dentry(root_dentry).unwrap();
+        match mount.statfs(buf) {
+            Ok(_) => {
+                log::info!("[sys_statfs] success to statfs");
+                return 0;
+            }
+            Err(e) => {
+                log::info!("[sys_statfs] fail to statfs: {}, {}", path, e);
+                return -1;
+            }
+        }
+    } else {
+        let mut nd = Nameidata::new(&path, AT_FDCWD);
+        let target_dentry = lookup_dentry(&mut nd);
+        let mount = get_mount_by_dentry(target_dentry).unwrap();
+        match mount.statfs(buf) {
+            Ok(_) => {
+                log::info!("[sys_statfs] success to statfs");
+                return 0;
+            }
+            Err(e) => {
+                log::info!("[sys_statfs] fail to statfs: {}, {}", path, e);
+                return -1;
+            }
+        }
+    }
+}
+
+/* loongarch end */
 
 /* Todo: fake  */
 pub fn sys_mount(
@@ -631,12 +1226,13 @@ pub fn sys_ioctl(fd: usize, op: usize, _arg_ptr: usize) -> isize {
         op,
         _arg_ptr
     );
-    log::warn!("sys_ioctl Unimplemented");
     let task = current_task();
     let file = task.fd_table().get_file(fd);
+    log::error!("current task: {:?}", task.tid());
     if let Some(file) = file {
         return file.ioctl(op, _arg_ptr);
     }
+    panic!("sys_ioctl: invalid fd: {}", fd);
     return -EBADF;
 }
 

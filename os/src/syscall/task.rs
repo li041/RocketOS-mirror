@@ -19,7 +19,7 @@ use crate::{
 use alloc::sync::Arc;
 use bitflags::bitflags;
 
-
+#[cfg(target_arch = "riscv64")]
 pub fn sys_clone(
     flags: u32,
     stack_ptr: usize,
@@ -43,11 +43,39 @@ pub fn sys_clone(
     new_task_tid as isize
 }
 
+#[cfg(target_arch = "loongarch64")]
+pub fn sys_clone(
+    flags: u32,
+    stack_ptr: usize,
+    _parent_tid_ptr: usize,
+    _tls_ptr: usize,
+    _chilren_tid_ptr: usize,
+) -> isize {
+    // ToDo: 更新错误检验
+    log::error!("[sys_clone] flags: {:x}, stack_ptr: {:x}", flags, stack_ptr);
+    let flags = match CloneFlags::from_bits(flags as u32) {
+        None => {
+            log::error!("clone flags is None: {}", flags);
+            return 22;
+        }
+        Some(flag) => flag,
+    };
+    let task = current_task();
+    let new_task = task.kernel_clone(flags, stack_ptr);
+    let new_task_tid = new_task.tid();
+    add_task(new_task);
+    drop(task);
+    yield_current_task();
+    new_task_tid as isize
+}
+
 pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> isize {
     let path = c_str_to_string(path);
     log::info!(
         "[sys_execve] path: {}, args: {:?}, envs: {:?}",
-        path, args, envs
+        path,
+        args,
+        envs
     );
     // argv[0]是应用程序的名字
     // 后续元素是用户在命令行中输入的参数
@@ -100,24 +128,27 @@ pub fn sys_yield() -> isize {
 pub fn sys_exit(exit_code: i32) -> ! {
     kernel_exit(current_task(), exit_code);
     remove_task(current_task().tid());
-    log::warn!( "[sys_exit] task {} exit with code {}",
-        current_task().tid(), exit_code
+    log::warn!(
+        "[sys_exit] task {} exit with code {}",
+        current_task().tid(),
+        exit_code
     );
     // 切换任务
     switch_to_next_task();
     panic!("Unreachable in sys_exit");
 }
 
-// 使用block
-#[no_mangle]
+#[cfg(target_arch = "riscv64")]
 pub fn sys_waitpid(pid: isize, exit_code_ptr: usize, option: i32) -> isize {
+    log::trace!("[sys_waitpid]");
     let option = WaitOption::from_bits(option).unwrap();
     if pid != -1 {
         log::warn!(
-            "[sys_waitpid] pid: {}, exit_code_ptr: {:x}, option: {:?}",
+            "[sys_waitpid] pid: {}, exit_code_ptr: {:x}, option: {:?}, caller: {:?}",
             pid,
             exit_code_ptr,
-            option
+            option,
+            current_task().tid(),
         );
     }
     let current_task = current_task();
@@ -171,6 +202,77 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: usize, option: i32) -> isize {
         // 不存在目标进程
         else {
             return -1;
+        }
+    }
+}
+
+// 使用block
+#[no_mangle]
+#[cfg(target_arch = "loongarch64")]
+pub fn sys_waitpid(pid: isize, exit_code_ptr: usize, option: i32) -> isize {
+    log::trace!("[sys_waitpid]");
+    let option = WaitOption::from_bits(option).unwrap();
+    if pid != -1 {
+        log::warn!(
+            "[sys_waitpid] pid: {}, exit_code_ptr: {:x}, option: {:?}, caller: {:?}",
+            pid,
+            exit_code_ptr,
+            option,
+            current_task().tid(),
+        );
+    }
+    let current_task = current_task();
+
+    loop {
+        // 先检查当前进程是否存在满足目标子进程
+        let target_task = current_task.op_children_mut(|children| {
+            for child in children.values() {
+                if pid == -1 || pid as usize == child.tid() {
+                    return Some(child.clone());
+                }
+            }
+            None
+        });
+
+        if let Some(wait_task) = target_task {
+            // 目标子进程已死
+            if wait_task.is_zombie() {
+                current_task.remove_child_task(wait_task.tid());
+                debug_assert_eq!(Arc::strong_count(&wait_task), 1);
+                let found_tid = wait_task.tid() as i32;
+                // 写入exit_code
+                // Todo: 需要对地址检查
+                log::warn!(
+                    "[sys_waitpid] child {} exit with code {}, exit_code_ptr: {:x}",
+                    found_tid,
+                    wait_task.exit_code(),
+                    exit_code_ptr
+                );
+                if exit_code_ptr != 0 {
+                    // exit_code_ptr为空, 表示不关心子进程的退出状态
+                    copy_to_user(
+                        exit_code_ptr as *mut i32,
+                        &((wait_task.exit_code() & 0xff) << 8) as *const i32,
+                        1,
+                    )
+                    .unwrap();
+                }
+                return found_tid as isize;
+            }
+            // 如果目标子进程未死亡
+            else {
+                drop(wait_task);
+                if option.contains(WaitOption::WNOHANG) {
+                    return 0;
+                } else {
+                    yield_current_task();
+                }
+            }
+        }
+        // 不存在目标进程
+        else {
+            // Todo: 需要设置errno, ECHILD = -10
+            return -10;
         }
     }
 }

@@ -227,6 +227,42 @@ impl<'a> Ext4DirContentWE<'a> {
         }
         Err("Entry not found")
     }
+    // 在rename的时候如果new_dentry存在, 调用这个函数修改inode_num和file_type
+    pub fn set_entry(
+        &mut self,
+        old_name: &str,
+        new_inode_num: u32,
+        new_file_type: u8,
+    ) -> Result<(), &'static str> {
+        let mut rec_len_total = 0;
+        let content_len = self.content.len();
+
+        while rec_len_total < content_len {
+            let rec_len = u16::from_le_bytes([
+                self.content[rec_len_total + 4],
+                self.content[rec_len_total + 5],
+            ]);
+            let mut dentry = Ext4DirEntry::try_from(
+                &self.content[rec_len_total..rec_len_total + rec_len as usize],
+            )
+            .map_err(|_| "DirEntry::try_from failed")?;
+
+            let dentry_name = String::from_utf8(dentry.name[..].to_vec()).unwrap();
+            if dentry_name == old_name {
+                dentry.inode_num = new_inode_num;
+                dentry.file_type = new_file_type;
+                dentry.write_to_mem(
+                    &mut self.content[rec_len_total..rec_len_total + rec_len as usize],
+                );
+                return Ok(());
+            }
+
+            rec_len_total += rec_len as usize;
+        }
+
+        Err("Entry not found")
+    }
+
     pub fn init_dot_dotdot(
         &mut self,
         parent_inode_num: u32,

@@ -9,18 +9,45 @@ use bitflags::Flag;
 use hashbrown::HashMap;
 use lazy_static::lazy_static;
 use log::set_logger;
+use spin::RwLock;
 
-use crate::{ext4::dentry::Ext4DirEntry, mutex::SpinNoIrqLock};
+use crate::{
+    ext4::{dentry::Ext4DirEntry, inode::S_IFDIR},
+    mutex::SpinNoIrqLock,
+};
 
-use super::inode::InodeOp;
+use super::{file::OpenFlags, inode::InodeOp, uapi::RenameFlags};
 
-pub const DCACHE_SYMLINK_TYPE: u32 = 0x00100000;
+bitflags::bitflags! {
+    /// 目前只支持type
+    pub struct DentryFlags: u32 {
+        const DCACHE_MISS_TYPE     = 0 << 20; // Negative dentry
+        const DCACHE_WHITEOUT_TYPE = 1 << 20; // Whiteout dentry
+        const DCACHE_DIRECTORY_TYPE= 2 << 20; // Normal directory
+        const DCACHE_AUTODIR_TYPE  = 3 << 20; // Autodir (presumed automount)
+        const DCACHE_REGULAR_TYPE  = 4 << 20; // Regular file
+        const DCACHE_SPECIAL_TYPE  = 5 << 20; // Special file
+        const DCACHE_SYMLINK_TYPE  = 6 << 20; // Symlink
+        // const DCACHE_ENTRY_TYPE    = 7 << 20; // Bitmask for entry type
+    }
+}
+
+impl DentryFlags {
+    pub fn update_type_from_negative(&mut self, flags: DentryFlags) {
+        self.remove(DentryFlags::DCACHE_DIRECTORY_TYPE);
+        self.insert(flags);
+    }
+    pub fn get_type(&self) -> DentryFlags {
+        const DCACHE_ENTRY_TYPE_MASK: u32 = 7 << 20;
+        DentryFlags::from_bits_truncate(self.bits() & DCACHE_ENTRY_TYPE_MASK)
+    }
+}
+
 // VFS层的统一目录项结构
 #[repr(C)]
-
 pub struct Dentry {
     pub absolute_path: String,
-    pub flags: u32,
+    pub flags: RwLock<DentryFlags>,
     pub inner: SpinNoIrqLock<DentryInner>,
 }
 
@@ -55,26 +82,26 @@ impl Dentry {
     pub fn zero_init() -> Self {
         Self {
             absolute_path: String::new(),
-            flags: 0,
+            flags: RwLock::new(DentryFlags::empty()),
             inner: SpinNoIrqLock::new(DentryInner::negative(None)),
         }
     }
     pub fn new(
         absolute_path: String,
         parent: Option<Arc<Dentry>>,
-        flags: u32,
+        flags: DentryFlags,
         inode: Arc<dyn InodeOp>,
     ) -> Arc<Self> {
         Arc::new(Self {
             absolute_path,
-            flags,
+            flags: RwLock::new(flags),
             inner: SpinNoIrqLock::new(DentryInner::new(parent, inode)),
         })
     }
     pub fn negative(absolute_path: String, parent: Option<Arc<Dentry>>) -> Arc<Self> {
         Arc::new(Self {
             absolute_path,
-            flags: 0,
+            flags: RwLock::new(DentryFlags::DCACHE_MISS_TYPE),
             inner: SpinNoIrqLock::new(DentryInner::negative(parent)),
         })
     }
@@ -87,13 +114,46 @@ impl Dentry {
         self.inner.lock().inode.is_none()
     }
     pub fn is_symlink(&self) -> bool {
-        self.flags & DCACHE_SYMLINK_TYPE != 0
+        self.flags.read().contains(DentryFlags::DCACHE_SYMLINK_TYPE)
+    }
+    pub fn is_regular(&self) -> bool {
+        self.flags.read().contains(DentryFlags::DCACHE_REGULAR_TYPE)
+    }
+    pub fn is_dir(&self) -> bool {
+        self.flags
+            .read()
+            .contains(DentryFlags::DCACHE_DIRECTORY_TYPE)
     }
     pub fn get_last_name(&self) -> &str {
         self.absolute_path
             .split('/')
             .last()
             .unwrap_or(&self.absolute_path)
+    }
+
+    // 判断ancestor是否是child的祖先
+    pub fn is_ancestor(self: &Arc<Dentry>, child: &Arc<Dentry>) -> bool {
+        let target = Arc::as_ptr(self);
+        let mut current = child.clone();
+        loop {
+            let parent_opt = current.inner.lock().parent.as_ref().unwrap().upgrade();
+            match parent_opt {
+                Some(parent) => {
+                    // 根目录的parent是自己
+                    if Arc::as_ptr(&parent) == Arc::as_ptr(&current) {
+                        return false;
+                    }
+                    current = parent;
+                }
+                None => {
+                    log::warn!("[is_ancestor] Note: Orphan inode detected");
+                    return false;
+                }
+            }
+            if Arc::as_ptr(&current) == target {
+                return true;
+            }
+        }
     }
     // 上层调用者保证: 负目录项不能调用该函数
     pub fn get_inode(&self) -> Arc<dyn InodeOp> {
@@ -106,6 +166,16 @@ impl Dentry {
             .clone()
             .map(|p| p.upgrade().unwrap())
             .unwrap()
+    }
+    pub fn set_parent(&self, parent: Arc<Dentry>) {
+        self.inner.lock().parent = Some(Arc::downgrade(&parent));
+    }
+    /// renameat在dentry层次的操作 + inode层次的操作
+    pub fn rename(&self, new_dentry: Option<Arc<Dentry>>, flags: RenameFlags) {
+        // 需要检查, 不能将自己放在自己的子目录下, 需要一个辅助函数
+        // 从旧父目录的dentry中移除自身, 修改路径`absolute_path`, 修改 parent 引用为新的父目录（如果 new_dentry 在其他目录下）。
+        // 添加到新父目录的 children
+        // 注意需要操作底层的inode
     }
 }
 
@@ -219,6 +289,6 @@ impl LinuxDirent64 {
         buf[16..18].copy_from_slice(&self.d_reclen.to_le_bytes());
         buf[18] = self.d_type;
         let name_len = self.d_name.len();
-        buf[19..19 + name_len].copy_from_slice(&self.d_name[..]);
+        buf[NAME_OFFSET..NAME_OFFSET + name_len].copy_from_slice(&self.d_name[..]);
     }
 }
