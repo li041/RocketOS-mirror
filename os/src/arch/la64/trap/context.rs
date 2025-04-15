@@ -19,6 +19,9 @@ impl TrapContext {
     pub fn get_sp(&self) -> usize {
         self.r[3]
     }
+    pub fn get_a0(&self) -> usize {
+        self.r[4]
+    }
     pub fn set_ra(&mut self, ra: usize) {
         self.r[1] = ra;
     }
@@ -70,23 +73,23 @@ impl TrapContext {
 // 获取某一任务的trap_context
 // 注: 除非是只想读，否则建议立即成对的调用save_trap_context
 pub fn get_trap_context(task: &Arc<Task>) -> TrapContext {
-    log::warn!("[get_trap_context] task{} fetch trap_cx", task.tid());
+    log::trace!("[get_trap_context] task{} fetch trap_cx", task.tid());
     let task_kstack_top = get_stack_top_by_sp(task.kstack());
-    log::warn!("[get_trap_context] kstack top: {:#x}", task_kstack_top);
+    log::trace!("[get_trap_context] kstack top: {:#x}", task_kstack_top);
     let trap_cx_ptr = task_kstack_top - core::mem::size_of::<TrapContext>();
     let trap_cx_ptr = trap_cx_ptr as *mut TrapContext;
-    log::warn!("[get_trap_context] trap_cx_ptr: {:x}", trap_cx_ptr as usize);
+    log::trace!("[get_trap_context] trap_cx_ptr: {:x}", trap_cx_ptr as usize);
     unsafe { trap_cx_ptr.read_volatile() }
 }
 
 // 保存trap_context到某个任务的内核栈
 pub fn save_trap_context(task: &Arc<Task>, cx: TrapContext) {
-    log::warn!("[save_trap_context] task{} write trap_cx", task.tid());
+    log::trace!("[save_trap_context] task{} write trap_cx", task.tid());
     let task_kstack_top = get_stack_top_by_sp(task.kstack());
-    log::warn!("[save_trap_context] kstack top: {:#x}", task_kstack_top);
+    log::trace!("[save_trap_context] kstack top: {:#x}", task_kstack_top);
     let trap_cx_ptr = task_kstack_top - core::mem::size_of::<TrapContext>();
     let trap_cx_ptr = trap_cx_ptr as *mut TrapContext;
-    log::warn!("[save_trap_context] trap_cx_ptr: {:#x}", trap_cx_ptr as usize);
+    log::trace!("[save_trap_context] trap_cx_ptr: {:#x}", trap_cx_ptr as usize);
     unsafe { trap_cx_ptr.write_volatile(cx) }
 }
 

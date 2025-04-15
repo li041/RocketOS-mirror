@@ -4,7 +4,7 @@ use crate::{
     mm::{MapPermission, VPNRange, VirtAddr, KERNEL_SPACE},
 };
 
-use super::id::kid_alloc;
+use super::{id::kid_alloc, wait};
 
 pub const KSTACK_TOP: usize = 0xffff_ffff_ffff_f000;
 pub const KSTACK_SIZE: usize = (PAGE_SIZE << 4) - PAGE_SIZE;
@@ -20,11 +20,11 @@ pub fn kstack_alloc() -> usize {
     let kstack_id = kid_alloc();
     let kstack_top = KSTACK_TOP - kstack_id * (KSTACK_SIZE + PAGE_SIZE);
     let kstack_bottom = kstack_top - KSTACK_SIZE;
-    log::info!(
-        "[kstack_alloc] kstack:\t[{:#x},{:#x})",
-        kstack_top,
-        kstack_bottom
-    );
+    // log::trace!(
+    //     "[kstack_alloc] kstack:\t[{:#x},{:#x})",
+    //     kstack_top,
+    //     kstack_bottom
+    // );
     let vpn_range = VPNRange::new(
         VirtAddr::from(kstack_bottom).floor(),
         VirtAddr::from(kstack_top).ceil(),

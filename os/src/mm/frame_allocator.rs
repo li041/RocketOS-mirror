@@ -5,6 +5,7 @@ use crate::{arch::boards::qemu::MEMORY_END, arch::config::KERNEL_BASE};
 use alloc::vec::Vec;
 use core::fmt::{self, Debug, Formatter};
 use lazy_static::*;
+use spin::Mutex;
 
 use crate::mm::{PhysAddr, PhysPageNum};
 
@@ -89,8 +90,8 @@ type FrameAllocatorImpl = StackFrameAllocator;
 
 lazy_static! {
     /// frame allocator instance through lazy_static!
-    pub static ref FRAME_ALLOCATOR: SpinNoIrqLock<FrameAllocatorImpl> =
-        SpinNoIrqLock::new(FrameAllocatorImpl::new());
+    pub static ref FRAME_ALLOCATOR: Mutex<FrameAllocatorImpl> =
+        Mutex::new(FrameAllocatorImpl::new());
 }
 /// initiate the frame allocator using `ekernel` and `MEMORY_END`
 pub fn init_frame_allocator() {
@@ -110,9 +111,14 @@ pub fn init_frame_allocator() {
     );
 }
 
-/// allocate a frame
+/// allocate a frame, 实现了Drop, 会自动清理
 pub fn frame_alloc() -> Option<FrameTracker> {
     FRAME_ALLOCATOR.lock().alloc().map(FrameTracker::new)
+}
+
+/// 由调用者负责清理
+pub fn frame_alloc_ppn() -> Option<PhysPageNum> {
+    FRAME_ALLOCATOR.lock().alloc()
 }
 
 /// deallocate a frame

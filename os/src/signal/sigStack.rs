@@ -38,7 +38,6 @@ impl Default for SignalStack {
 }
 
 #[repr(C)]
-#[repr(align(16))]
 #[derive(Clone, Copy, Debug)]
 pub struct UContext {
     // 保存具体机器状态的上下文信息，这是一个机器相关的表示，包含了处理器的寄存器状态等信息
@@ -54,23 +53,25 @@ pub struct UContext {
 }
 
 #[repr(C)]
-#[repr(align(16))]
 #[derive(Clone, Copy, Debug)]
 #[cfg(target_arch = "riscv64")]
 pub struct SigContext {
     pub x: [usize; 32],
     pub sepc: usize,
+    pub last_a0: usize,
+    pub kernel_tp: usize,
     pub mask: SigSet,   // 记录原先的mask
     pub info: usize,    // 标志是否存在SIGINFO
 }
 
 #[repr(C)]
-#[repr(align(16))]
 #[derive(Clone, Copy, Debug)]
 #[cfg(target_arch = "loongarch64")]
 pub struct SigContext {
     pub r: [usize; 32],
     pub era: usize,
+    pub last_a0: usize,
+    pub kernel_tp: usize,
     pub mask: SigSet,   // 记录原先的mask
     pub info: usize,    // 标志是否存在SIGINFO
 }

@@ -23,8 +23,8 @@ use signal::{
     sys_rt_sigsuspend, sys_rt_sigtimedwait, sys_tgkill, sys_tkill,
 };
 use task::{
-    sys_clone, sys_execve, sys_futex, sys_get_time, sys_getpid, sys_getppid, sys_nanosleep,
-    sys_waitpid, sys_yield,
+    sys_clone, sys_execve, sys_futex, sys_get_time, sys_getpid, sys_getppid, sys_gettid,
+    sys_nanosleep, sys_set_tid_address, sys_waitpid, sys_yield,
 };
 use util::{sys_clock_gettime, sys_prlimit64, sys_syslog, sys_times, sys_uname};
 
@@ -74,7 +74,7 @@ const SYSCALL_FSTATAT: usize = 79;
 const SYSCALL_FSTAT: usize = 80;
 const SYSCALL_UTIMENSAT: usize = 88;
 const SYSCALL_EXIT: usize = 93;
-const SYS_EXIT_GROUP: usize = 94;
+const SYSCALL_EXIT_GROUP: usize = 94;
 const SYSCALL_SET_TID_ADDRESS: usize = 96;
 const SYSCALL_FUTEX: usize = 98;
 const SYSCALL_SET_ROBUST_LIST: usize = 99;
@@ -117,10 +117,8 @@ const SYSCALL_STATX: usize = 291;
 
 const CARELESS_SYSCALLS: [usize; 4] = [63, 64, 124, 260];
 // const SYSCALL_NUM_2_NAME: [(&str, usize); 4] = [
-const SYSCALL_NUM_2_NAME: [(usize, &str); 8] = [
-    (SYSCALL_SET_TID_ADDRESS, "SYS_SET_TID_ADDRESS"),
+const SYSCALL_NUM_2_NAME: [(usize, &str); 6] = [
     (SYSCALL_GETUID, "SYS_GETUID"),
-    (SYS_EXIT_GROUP, "SYS_EXIT_GROUP"),
     (SYSCALL_SET_ROBUST_LIST, "SYS_SET_ROBUST_LIST"),
     (SYSCALL_SETGID, "SYS_SETGID"),
     (SYSCALL_SETUID, "SYS_SETUID"),
@@ -142,7 +140,9 @@ pub fn syscall(
     // 神奇小咒语
     log::trace!("[syscall]");
     if !CARELESS_SYSCALLS.contains(&syscall_id) {
-        log::warn!("syscall_id: {}", syscall_id);
+        if syscall_id != 98 {
+            log::warn!("syscall_id: {}", syscall_id);
+        }
     }
     // if syscall_id == SYSCALL_WAIT4 {
     // log::warn!("syscall_id: {}", syscall_id);
@@ -191,6 +191,7 @@ pub fn syscall(
             sys_utimensat(a0 as i32, a1 as *const u8, a2 as *const TimeSpec, a3 as i32)
         }
         SYSCALL_EXIT => sys_exit(a0 as i32),
+        SYSCALL_SET_TID_ADDRESS => sys_set_tid_address(a0),
         SYSCALL_FUTEX => sys_futex(a0, a1 as i32, a2 as u32, a3, a4, a5 as u32),
         SYSCALL_NANOSLEEP => sys_nanosleep(a0),
         SYSCALL_CLOCK_GETTIME => sys_clock_gettime(a0, a1 as *mut TimeSpec),
@@ -199,8 +200,8 @@ pub fn syscall(
         SYSCALL_KILL => sys_kill(a0 as isize, a1 as i32),
         SYSCALL_TKILL => sys_tkill(a0 as isize, a1 as i32),
         SYSCALL_TGKILL => sys_tgkill(a0 as isize, a1 as isize, a2 as i32),
-        //SYSCALL_SIGALTSTACK => sys_sigaltstack()
-        //SYSCALL_RT_SIGSUSPEND => sys_rt_sigsuspend(a0),
+        // SYSCALL_SIGALTSTACK => sys_sigaltstack()
+        // SYSCALL_RT_SIGSUSPEND => sys_rt_sigsuspend(a0),
         // SYSCALL_RT_SIGACTION => sys_rt_sigaction(a0 as i32, a1, a2),
         SYSCALL_RT_SIGPROCMASK => sys_rt_sigprocmask(a0, a1, a2),
         SYSCALL_RT_SIGPENDING => sys_rt_sigpending(a0),
@@ -216,6 +217,7 @@ pub fn syscall(
         SYSCALL_GET_TIME => sys_get_time(a0),
         SYSCALL_GITPID => sys_getpid(),
         SYSCALL_GETPPID => sys_getppid(),
+        SYSCALL_GETTID => sys_gettid(),
         SYSCALL_BRK => sys_brk(a0),
         SYSCALL_MUNMAP => sys_munmap(a0, a1),
         SYSCALL_MADVISE => sys_madvise(a0, a1, a2 as i32),

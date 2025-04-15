@@ -82,6 +82,6 @@ pub fn write_task_cx(task: Arc<Task>) {
     let task_cx = TaskContext::app_init_task_context(task_tp, task_pgtbl_token);
     let task_cx_ptr = task.kstack() as *mut TaskContext;
     unsafe {
-        task_cx_ptr.write(task_cx);
+        task_cx_ptr.write_volatile(task_cx);
     }
 }

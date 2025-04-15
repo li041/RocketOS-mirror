@@ -8,8 +8,8 @@ use spin::Mutex;
 
 // 进程（线程）号分配器
 lazy_static! {
-    pub static ref TID_ALLOCATOR: Mutex<IdAllocator> = Mutex::new(IdAllocator::new());
-    pub static ref KID_ALLOCATOR: Mutex<IdAllocator> = Mutex::new(IdAllocator::new());
+    static ref TID_ALLOCATOR: Mutex<IdAllocator> = Mutex::new(IdAllocator::new());
+    static ref KID_ALLOCATOR: Mutex<IdAllocator> = Mutex::new(IdAllocator::new());
 }
 
 /// 申请内核栈号
@@ -75,13 +75,28 @@ impl TidHandle {
     }
 }
 
-#[derive(PartialEq, Debug)]
-pub struct KIdHandle(pub usize);
-impl Drop for KIdHandle {
-    fn drop(&mut self) {
-        KID_ALLOCATOR.lock().dealloc(self.0);
+pub struct TidAddress {
+    // 当 set_child_tid 被设置时，新线程做的第一件事就是将其线程 ID 写入此地址。
+    pub set_child_tid: Option<usize>,
+    pub clear_child_tid: Option<usize>,
+}
+
+impl TidAddress {
+    pub fn new() -> Self {
+        Self {
+            set_child_tid: None,
+            clear_child_tid: None,
+        }
     }
 }
+
+// #[derive(PartialEq, Debug)]
+// pub struct KIdHandle(pub usize);
+// impl Drop for KIdHandle {
+//     fn drop(&mut self) {
+//         KID_ALLOCATOR.lock().dealloc(self.0);
+//     }
+// }
 
 #[cfg(test)]
 fn test_id_allocator() {

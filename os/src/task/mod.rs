@@ -7,6 +7,7 @@ mod scheduler;
 mod task;
 mod manager;
 mod signal;
+mod wait;
 
 use crate::{
     arch::trap::TrapContext,
@@ -28,10 +29,10 @@ use lazy_static::lazy_static;
 pub use task::{Task,INIT_PROC_PID};
 pub use context::TaskContext;
 pub use processor::{current_task, run_tasks};
-pub use scheduler::{add_task, remove_task, switch_to_next_task, yield_current_task, WaitOption};
+pub use scheduler::{add_task, remove_task, schedule, yield_current_task, WaitOption, get_scheduler_len};
 pub use task::kernel_exit;
 pub use kstack::get_stack_top_by_sp;
-pub use manager::TASK_MANAGER;
+pub use manager::{get_task, for_each_task, wakeup_timeout, wait, wait_timeout, wakeup};
 pub use task::CloneFlags;
 
 pub type Tid = usize;
@@ -41,7 +42,6 @@ lazy_static! {
     pub static ref INITPROC: Arc<Task> = Task::initproc(get_app_data_by_name("initproc").unwrap(), do_ext4_mount(BLOCK_DEVICE.clone()));
 }
 
-#[cfg(target_arch = "riscv64")]
 #[cfg(target_arch = "riscv64")]
 pub fn add_initproc() {
     // 设置tp寄存器指向INITPROC

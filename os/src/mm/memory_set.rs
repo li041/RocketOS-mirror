@@ -33,7 +33,7 @@ use alloc::{
 use bitflags::bitflags;
 use log::info;
 
-use spin::RwLock;
+use spin::{Mutex, RwLock};
 use xmas_elf::program::Type;
 
 use crate::{
@@ -63,8 +63,8 @@ extern "C" {
 }
 
 lazy_static! {
-    pub static ref KERNEL_SPACE: Arc<SpinNoIrqLock<MemorySet>> =
-        Arc::new(SpinNoIrqLock::new(MemorySet::new_kernel()));
+    pub static ref KERNEL_SPACE: Arc<Mutex<MemorySet>> =
+        Arc::new(Mutex::new(MemorySet::new_kernel()));
     pub static ref KERNEL_SATP: usize = KERNEL_SPACE.lock().page_table.token();
 }
 
@@ -642,8 +642,15 @@ impl MemorySet {
         // 用于存放拆分出来的区域, 最后添加到filebe_areas中
         let mut split_new_areas: Vec<MapArea> = Vec::new();
         let mut areas_to_remove = Vec::new();
-        let unmap_vpn_end = unmap_vpn_range.get_end();
-        self.areas.range_mut(..=unmap_vpn_end).for_each(|(vpn, area)| {
+        let unmap_vpn_start = unmap_vpn_range.get_start();
+        // 只检查可能与unmap_vpn_range重叠的区域
+        // self.areas.range_mut(..=unmap_vpn_end).rev().for_each(|(vpn, area)| {
+        for (vpn, area) in self.areas.range_mut(..=unmap_vpn_start).rev() {
+            log::error!(
+                "[MemorySet::remove_area_with_overlap] area: {:#x} {:#x}",
+                area.vpn_range.get_start().0,
+                area.vpn_range.get_end().0
+            );
             if area.vpn_range.is_intersect_with(&unmap_vpn_range) {
                 let old_vpn_start = area.vpn_range.get_start();
                 let old_vpn_end = area.vpn_range.get_end();
@@ -657,33 +664,48 @@ impl MemorySet {
                     unmap_start.0,
                     unmap_end.0
                 );
-                // 释放`unmap_vpn_range`范围内的页
-                for vpn in unmap_vpn_range {
-                    if area.vpn_range.contains_vpn(vpn) {
-                        area.dealloc_one_page(&mut self.page_table, vpn);
-                    }
-                }
+                // // 释放`unmap_vpn_range`范围内的页
+                // for vpn in unmap_vpn_range {
+                //     if area.vpn_range.contains_vpn(vpn) {
+                //         area.dealloc_one_page(&mut self.page_table, vpn);
+                //     }
+                // }
                 // 调整区域
                 if unmap_start <= old_vpn_start && unmap_end >= old_vpn_end {
                     // `unmap_vpn_range` 完全覆盖 `vpn_range`，删除 `area`
+                    for vpn in area.vpn_range {
+                        area.dealloc_one_page(&mut self.page_table, vpn);
+                    }
                     // 记录要删除的区域
                     areas_to_remove.push(*vpn);
-                    return;
                 } else if unmap_start <= old_vpn_start {
                     // `unmap_vpn_range` 覆盖了前部分，调整 `vpn_start`
+                    for vpn in VPNRange::new(old_vpn_start, unmap_end) {
+                        area.dealloc_one_page(&mut self.page_table, vpn);
+                    }
                     area.vpn_range.set_start(unmap_end);
                 } else if unmap_end >= old_vpn_end {
                     // `unmap_vpn_range` 覆盖了后部分，调整 `vpn_end`
+                    for vpn in VPNRange::new(unmap_start, old_vpn_end) {
+                        area.dealloc_one_page(&mut self.page_table, vpn);
+                    }
                     area.vpn_range.set_end(unmap_start);
                 } else {
+                    for vpn in unmap_vpn_range {
+                        if area.vpn_range.contains_vpn(vpn) {
+                            area.dealloc_one_page(&mut self.page_table, vpn);
+                        }
+                    }
                     // 区域被 `unmap_vpn_range` 拆成两部分，需要拆分 `area`
                     let new_area = area.split_in(unmap_start, unmap_end);
                     split_new_areas.push(new_area);
                     area.vpn_range.set_end(unmap_start);
                 }
                 found = true;
+            } else {
+                break;
             }
-        });
+        }
         // 在迭代后删除区域
         for vpn in areas_to_remove {
             self.areas.remove(&vpn);
@@ -705,8 +727,7 @@ impl MemorySet {
             "[MemorySet::remove_area_with_start_vpn] remove area with start_vpn: {:#x}",
             start_vpn.0
         );
-        let area = self.areas.remove(&start_vpn);
-        debug_assert!(area.is_some());
+        self.areas.remove(&start_vpn);
     }
 
     /// 从尾部开始找, 因为动态分配的内存一般在最后
@@ -775,17 +796,19 @@ impl MemorySet {
                         });
                     }
                 }
-                panic!(
+                log::error!(
                     "[MemorySet::get_shared_mmaping_info] area is not shared, vpn: {:#x}~{:#x}",
                     area.vpn_range.get_start().0,
                     area.vpn_range.get_end().0
                 );
+                return None;
             }
         }
-        panic!(
+        log::error!(
             "[MemorySet::get_shared_mmaping_info] can't find area that contains vpn {:#x}",
             vpn.0
         );
+        return None;
     }
     /// 由caller保证区域没有冲突, 且start_va和end_va是页对齐的
     /// 插入mmap的空白区域
@@ -927,6 +950,11 @@ impl MemorySet {
             }
 
             if !found {
+                println!(
+                    "[check_valid_user_vpn_range] can't find area with vpn {:#x}",
+                    current_vpn.0
+                );
+                self.page_table.dump_all_user_mapping();
                 return Err(Errno::EFAULT);
             }
         }

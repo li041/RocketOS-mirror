@@ -17,8 +17,6 @@ use spin::RwLock;
 use crate::arch::config::PAGE_SIZE_BITS;
 use crate::mm::PhysPageNum;
 
-use super::{frame_allocator::frame_alloc_ppn, frame_dealloc};
-
 pub enum PageKind {
     Private,
     Shared(RwLock<ShreadPageInfo>),
@@ -61,9 +59,9 @@ impl Page {
     ) -> Self {
         let start_block_id = fs_block_id * (*FS_BLOCK_SIZE / VIRTIO_BLOCK_SIZE);
         unsafe {
-            let ppn = frame_alloc_ppn().unwrap();
-            let vaddr = (ppn.0 << PAGE_SIZE_BITS) + KERNEL_BASE;
-            let buf = core::slice::from_raw_parts_mut(vaddr as *mut u8, PAGE_SIZE);
+            let layout = Layout::from_size_align_unchecked(PAGE_SIZE, PAGE_SIZE);
+            let vaddr = alloc(layout);
+            let buf = core::slice::from_raw_parts_mut(vaddr, PAGE_SIZE);
             // 从块设备中读取数据到缓存中
             if !fs_block_id != 0 {
                 block_device.read_blocks(start_block_id, buf);
@@ -86,9 +84,9 @@ impl Page {
     // 写时复制
     pub fn new_private(data: Option<&[u8; PAGE_SIZE]>) -> Self {
         unsafe {
-            let ppn = frame_alloc_ppn().unwrap();
-            let vaddr = (ppn.0 << PAGE_SIZE_BITS) + KERNEL_BASE;
-            let buf = core::slice::from_raw_parts_mut(vaddr as *mut u8, PAGE_SIZE);
+            let layout = Layout::from_size_align_unchecked(PAGE_SIZE, PAGE_SIZE);
+            let vaddr = alloc(layout);
+            let buf = core::slice::from_raw_parts_mut(vaddr, PAGE_SIZE);
             if let Some(data) = data {
                 // 复制数据到页中
                 buf.copy_from_slice(data);
@@ -106,11 +104,9 @@ impl Page {
     /// fs_block_id和inner_offset用于回写block cache
     pub fn new_inline(inode: Weak<dyn InodeOp>, inline_data: &[u8]) -> Self {
         unsafe {
-            // let layout = Layout::from_size_align_unchecked(PAGE_SIZE, PAGE_SIZE);
-            // let vaddr = alloc(layout);
-            let ppn = frame_alloc_ppn().unwrap();
-            let vaddr = (ppn.0 << PAGE_SIZE_BITS) + KERNEL_BASE;
-            let buf = core::slice::from_raw_parts_mut(vaddr as *mut u8, PAGE_SIZE);
+            let layout = Layout::from_size_align_unchecked(PAGE_SIZE, PAGE_SIZE);
+            let vaddr = alloc(layout);
+            let buf = core::slice::from_raw_parts_mut(vaddr, PAGE_SIZE);
             let len_to_copy = inline_data.len();
             buf[..len_to_copy].copy_from_slice(inline_data);
             return Self {
@@ -234,14 +230,17 @@ impl Page {
             }
         }
         // 释放内存
-        let ppn = (self.vaddr - KERNEL_BASE) >> PAGE_SIZE_BITS;
-        frame_dealloc(PhysPageNum(ppn));
+        unsafe {
+            let layout = Layout::from_size_align_unchecked(PAGE_SIZE, PAGE_SIZE);
+            dealloc(self.vaddr as *mut u8, layout);
+        }
         self.modified = false;
     }
 }
 
 impl Drop for Page {
     fn drop(&mut self) {
+        println!("[Page::drop] drop page: {:#x}", self.vaddr);
         self.sync()
     }
 }
