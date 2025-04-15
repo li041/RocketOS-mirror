@@ -1,4 +1,4 @@
-use core::{arch::asm, ops::Add, ptr::read_volatile};
+use core::{arch::asm, cmp::Ordering, ops::Add, ptr::read_volatile};
 
 use crate::utils::{seconds_to_beijing_datetime, DateTime};
 
@@ -7,7 +7,7 @@ use super::config::{self, CLOCK_FREQ};
 pub const TICKS_PER_SEC: usize = 100;
 const MSEC_PER_SEC: usize = 1000;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default)]
 #[repr(C)]
 pub struct TimeSpec {
     // 秒数
@@ -15,6 +15,13 @@ pub struct TimeSpec {
     // 毫秒数中剩余的部分, 使用纳秒表示
     pub nsec: usize,
 }
+
+impl PartialEq for TimeSpec {
+    fn eq(&self, other: &Self) -> bool {
+        self.sec == other.sec && self.nsec == other.nsec
+    }
+}
+impl Eq for TimeSpec {}
 
 impl PartialOrd for TimeSpec {
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
@@ -25,6 +32,16 @@ impl PartialOrd for TimeSpec {
         }
     }
 }
+
+impl Ord for TimeSpec {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.sec.cmp(&other.sec) {
+            Ordering::Equal => self.nsec.cmp(&other.nsec),
+            other_order => other_order,
+        }
+    }
+}
+
 
 impl Add for TimeSpec {
     type Output = Self;
@@ -57,6 +74,11 @@ impl TimeSpec {
             sec: sec as usize,
             nsec: nsec as usize,
         }
+    }
+    pub fn from_nanos(nanos: usize) -> Self {
+        let sec = nanos / 1_000_000_000;
+        let nsec = nanos % 1_000_000_000;
+        TimeSpec { sec, nsec }
     }
 }
 

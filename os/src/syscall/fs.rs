@@ -170,7 +170,7 @@ pub fn sys_readv(fd: usize, iov: *const IoVec, iovcnt: usize) -> SyscallRet {
 
 pub fn sys_writev(fd: usize, iov: *const IoVec, iovcnt: usize) -> SyscallRet {
     if fd >= 3 {
-        log::info!("sys_writev: fd: {}, iovcnt: {}", fd, iovcnt);
+    log::info!("sys_writev: fd: {}, iovcnt: {}", fd, iovcnt);
     }
     let task = current_task();
     let file = task.fd_table().get_file(fd);
@@ -187,7 +187,17 @@ pub fn sys_writev(fd: usize, iov: *const IoVec, iovcnt: usize) -> SyscallRet {
         if iovec.len == 0 {
             continue;
         }
-        let buf = copy_from_user(iovec.base as *const u8, iovec.len).unwrap();
+        let buf = match copy_from_user(iovec.base as *const u8, iovec.len as usize) {
+            Ok(buf) => buf,
+            Err(e) => {
+                log::error!(
+                    "sys_writev: copy_from_user failed: vaddr: iovec.base: {}, len: {}",
+                    iovec.base,
+                    iovec.len
+                );
+                return Err(e);
+            }
+        };
         let written = file.write(buf);
         // 如果写入失败, 则返回已经写入的字节数, 或错误码
         if written == 0 {

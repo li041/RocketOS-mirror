@@ -6,7 +6,7 @@ use crate::{
         mm::PageTable,
         tlbrelo::{TLBRELo0, TLBRELo1},
         Interrupt, TLBRBadV, TLBREHi, PGDL, PWCL, TLBRERA,
-    }, mm::VirtAddr, signal::handle_signal, syscall::{errno::Errno, syscall}, task::{current_task, yield_current_task}
+    }, mm::VirtAddr, signal::handle_signal, syscall::{errno::Errno, syscall}, task::{current_task, wakeup_timeout, yield_current_task}
 };
 
 use super::{register, Exception, TIClr, Trap, ERA};
@@ -136,6 +136,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
         Trap::Interrupt(Interrupt::Timer) => {
             TIClr::read().clear_timer().write();
             set_next_trigger();
+            wakeup_timeout();
             yield_current_task();
         }
         _ => {

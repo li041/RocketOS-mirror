@@ -21,7 +21,7 @@ use crate::{
     },
     mm::VirtAddr,
     task::{
-        current_task, get_stack_top_by_sp, kernel_exit, remove_task, switch_to_next_task, Task,
+        current_task, get_stack_top_by_sp, kernel_exit, remove_task, schedule, Task,
     },
 };
 
@@ -34,7 +34,6 @@ use crate::{
 pub fn handle_signal() {
     log::trace!("[handle_signal]");
     use crate::arch::trampoline::sigreturn_trampoline;
-
     let task = current_task();
     // 检查是否有信号触发
     while let Some((sig, sigInfo)) = task.op_sig_pending_mut(|pending| pending.fetch_signal(None)) {
@@ -59,9 +58,9 @@ pub fn handle_signal() {
         #[cfg(target_arch = "loongarch64")]
         if action.flags.contains(SigActionFlag::SA_RESTART) {
             // 回到用户调用ecall的指令
-            trap_cx.set_pc(trap_cx.era - 4);
-            trap_cx.restore_a0(); // 从last_a0中恢复a0
-            log::warn!("[handle_signal] handle SA_RESTART");
+            // trap_cx.set_pc(trap_cx.era - 4);
+            // trap_cx.restore_a0();   // 从last_a0中恢复a0
+            // log::warn!("[handle_signal] handle SA_RESTART");
         }
 
         //log::info!("[handle_signal] kstack_top: {:x}", kstack);
@@ -90,8 +89,8 @@ pub fn handle_signal() {
 
             // 加上action中的mask
             task.op_sig_pending_mut(|pending| {
-                pending.add_mask_sigset(action.mask);
-                log::info!("[handle_signal] current mask = {:?}", old_mask);
+                    pending.add_mask_sigset(action.mask);
+                    log::info!("[handle_signal] current mask = {:?}", pending.mask);
             });
 
             // 决定 signal handler 应该运行在哪个栈（SignalStack / 普通栈）
@@ -146,15 +145,16 @@ pub fn handle_signal() {
             // 信号处理函数定义方式 void (*sa_handler)(int)
             else {
                 let sig_context_size = core::mem::size_of::<SigContext>();
-                log::info!("[handle_signal] origin user stack {:x}", user_sp);
+                log::info!("[handle_signal] origin user stack {:#x}", user_sp);
                 user_sp = user_sp - ((sig_context_size + 15) & !0xF);
-                log::info!("[handle_signal] SigContext size {:x}", sig_context_size);
-                log::info!("[handle_signal] current user stack {:x}", user_sp);
+                log::info!("[handle_signal] current user stack {:#x}", user_sp);
                 let user_sig_context_ptr = user_sp as *mut SigContext;
                 #[cfg(target_arch = "riscv64")]
                 let sig_context = SigContext {
                     x: trap_cx.x,
                     sepc: trap_cx.sepc,
+                    last_a0: trap_cx.last_a0,
+                    kernel_tp: trap_cx.kernel_tp,
                     mask: old_mask,
                     info: 0,
                 };
@@ -162,6 +162,8 @@ pub fn handle_signal() {
                 let sig_context = SigContext {
                     r: trap_cx.r,
                     era: trap_cx.era,
+                    last_a0: trap_cx.last_a0,
+                    kernel_tp: trap_cx.kernel_tp,
                     mask: old_mask,
                     info: 0,
                 };
@@ -191,7 +193,7 @@ fn terminate(task: Arc<Task>, sig: Sig) {
     task.close_thread();
     // 将信号放入低7位 (第8位是core dump标志,在gdb调试崩溃程序中用到)
     kernel_exit(task, sig.raw() as i32 & 0x7F);
-    switch_to_next_task();
+    schedule();
 }
 // Todo:
 fn stop() {}

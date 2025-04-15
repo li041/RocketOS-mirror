@@ -7,7 +7,7 @@ use crate::{
     },
     fs::uapi::{RLimit, Resource},
     syscall::errno::Errno,
-    task::{current_task, TASK_MANAGER},
+    task::{current_task, get_task},
 };
 
 use super::errno::SyscallRet;
@@ -171,7 +171,7 @@ pub fn sys_prlimit64(
     let task = if pid == 0 {
         current_task()
     } else {
-        TASK_MANAGER.get(pid).expect("[sys_prlimit64]: invalid pid")
+        get_task(pid).expect("[sys_prlimit64]: invalid pid")
     };
     let resource = Resource::try_from(resource).unwrap();
     log::error!("resource: {:?}", resource);

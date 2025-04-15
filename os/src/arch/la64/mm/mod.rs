@@ -67,6 +67,7 @@ pub fn copy_to_user<T: Copy>(to: *mut T, from: *const T, n: usize) -> SyscallRet
 /// to是用户的虚拟地址, 需要将其转换为内核使用的虚拟地址
 /// 由调用者保证n不为0
 pub fn copy_from_user<'a, T: Copy>(from: *const T, n: usize) -> Result<&'a [T], Errno> {
+    log::trace!("[copy from user]");
     if from.is_null() {
         return Err(Errno::EINVAL);
     }

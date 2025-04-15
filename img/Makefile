@@ -18,7 +18,7 @@ CFLAGS =
 LDFLAGS =
 
 ifeq ($(ARCH), riscv64)
-    ifeq ($(LIBC), gnu)
+    ifeq ($(LIBC), glibc)
 		CC := $(riscv64_gnu)
 	else ifeq ($(LIBC), musl)
 		CC := $(riscv64_musl)
@@ -26,7 +26,7 @@ ifeq ($(ARCH), riscv64)
 		$(error "Unsupported libc: $(LIBC), Use gnu or musl")
 	endif
 else ifeq ($(ARCH), loongarch64)
-   	ifeq ($(LIBC), gnu)
+   	ifeq ($(LIBC), glibc)
 		CC := $(loongarch64_gnu)
 	else ifeq ($(LIBC), musl)
 		CC := $(loongarch64_musl)
@@ -38,20 +38,33 @@ else
 endif
 
 pre2024:
-	$(MAKE) init_img IMG=pre2024 ARCH=$(ARCH)
+	$(MAKE) init_img_2024 IMG=pre2024 ARCH=$(ARCH)
 
 pre2025:
-	$(MAKE) init_img IMG=pre2025 ARCH=$(ARCH)
+	$(MAKE) init_img_2025 IMG=pre2025 ARCH=$(ARCH)
 
-init_img:
+init_img_2024:
 	rm $(EXT4_OUT)
-	dd if=/dev/zero of=$(EXT4_OUT) count=4096 bs=1M
+	dd if=/dev/zero of=$(EXT4_OUT) count=2048 bs=1M
 	mkfs.ext4 $(EXT4_OUT)
 	mkdir -p mnt_temp
 	sudo mount $(EXT4_OUT) mnt_temp
 	mkdir -p mnt
 	sudo mount $(IMG_FILE) mnt
 	sudo cp -r ./mnt/* mnt_temp
+	sudo umount mnt
+	sudo umount mnt_temp
+	sudo rm -rf mnt_temp
+
+init_img_2025:
+	rm $(EXT4_OUT)
+	dd if=/dev/zero of=$(EXT4_OUT) count=2048 bs=1M
+	mkfs.ext4 $(EXT4_OUT)
+	mkdir -p mnt_temp
+	sudo mount $(EXT4_OUT) mnt_temp
+	mkdir -p mnt
+	sudo mount $(IMG_FILE) mnt
+	sudo cp -r ./mnt/$(LIBC)/* mnt_temp
 	sudo umount mnt
 	sudo umount mnt_temp
 	sudo rm -rf mnt_temp

@@ -117,21 +117,21 @@ pub fn futex_get_value_locked(uaddr: *const Futex) -> Result<Futex, Errno> {
     }
 }
 
-pub fn get_futex_key(uaddr: usize, flags: i32) -> FutexKey {
+pub fn get_futex_key(uaddr: usize, flags: i32) -> Result<FutexKey, Errno> {
     if flags & FLAGS_SHARED != 0 {
         let shared_mapping_info = current_task()
             .op_memory_set(|memory_set| memory_set.get_shared_mmaping_info(VirtAddr::from(uaddr)))
-            .unwrap();
-        return FutexKey::new(
+            .map_or(Err(Errno::EINVAL), |info| Ok(info))?;
+        return Ok(FutexKey::new(
             shared_mapping_info.inode_addr,
             shared_mapping_info.page_index,
             shared_mapping_info.offset,
-        );
+        ));
     } else {
         let mm_addr = Arc::as_ptr(&current_task().memory_set()) as u64;
         let aligned = uaddr & !((1 << PAGE_SIZE_BITS) - 1);
         let offset = (uaddr & ((1 << PAGE_SIZE_BITS) - 1)) as u32;
-        return FutexKey::new(mm_addr, aligned as u64, offset);
+        return Ok(FutexKey::new(mm_addr, aligned as u64, offset));
     }
 }
 
@@ -154,7 +154,7 @@ pub fn futex_wait(
     let mut is_timeout = false;
 
     // we may be victim of spurious wakeups, so we need to loop
-    let key = get_futex_key(uaddr, flags);
+    let key = get_futex_key(uaddr, flags)?;
     let real_futex_val = futex_get_value_locked(uaddr as *const u32)?;
     if expected_val != real_futex_val as u32 {
         return Err(Errno::EAGAIN);
@@ -175,6 +175,7 @@ pub fn futex_wait(
         drop(hash_bucket);
     }
     loop {
+        log::trace!("futex_wait loop");
         if let Some(deadline) = deadline {
             let now = TimeSpec::new_machine_time();
             is_timeout = deadline < now;
@@ -218,7 +219,7 @@ pub fn futex_wake(uaddr: usize, flags: i32, nr_waken: u32) -> SyscallRet {
         nr_waken
     );
     let mut ret = 0;
-    let key = get_futex_key(uaddr, flags);
+    let key = get_futex_key(uaddr, flags)?;
     {
         // Debug 4.20
         log::warn!("futex_key: {:?}, hash_value: {}", key, futex_hash(&key));
@@ -257,7 +258,7 @@ pub fn futex_wake_bitset(uaddr: usize, flags: i32, nr_waken: u32, bitset: u32) -
         return Err(Errno::EINVAL);
     }
     let mut ret = 0;
-    let key = get_futex_key(uaddr, flags);
+    let key = get_futex_key(uaddr, flags)?;
     {
         let mut hash_bucket = FUTEXQUEUES.buckets[futex_hash(&key)].lock();
         if hash_bucket.is_empty() {
@@ -290,8 +291,8 @@ pub fn futex_requeue(
 ) -> SyscallRet {
     let mut ret = 0;
     let mut requeued = 0;
-    let key = get_futex_key(uaddr, flags);
-    let req_key = get_futex_key(uaddr2, flags);
+    let key = get_futex_key(uaddr, flags)?;
+    let req_key = get_futex_key(uaddr2, flags)?;
 
     if key == req_key {
         return futex_wake(uaddr, flags, nr_waken);

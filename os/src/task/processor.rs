@@ -1,7 +1,7 @@
-use crate::mutex::SpinNoIrqLock;
 use alloc::sync::Arc;
 use core::arch::asm;
 use lazy_static::lazy_static;
+use spin::Mutex;
 
 use super::Task;
 use crate::arch::switch;
@@ -41,7 +41,7 @@ lazy_static! {
 // 创建任务管理器
 lazy_static! {
     ///Processor management structure
-    pub static ref PROCESSOR: SpinNoIrqLock<Processor> = SpinNoIrqLock::new(Processor::new());
+    pub static ref PROCESSOR: Mutex<Processor> = Mutex::new(Processor::new());
 }
 
 /// 运行初始任务
@@ -68,6 +68,23 @@ pub fn run_tasks() {
 /// 获取当前任务
 pub fn current_task() -> Arc<Task> {
     PROCESSOR.lock().current_task()
+}
+
+#[cfg(target_arch = "riscv64")]
+pub fn current_tp() -> usize {
+    let mut tp: usize;
+    unsafe {
+        asm!("mv {}, tp", out(reg) tp);
+    }
+    tp
+}
+#[cfg(target_arch = "loongarch64")]
+pub fn current_tp() -> usize {
+    let mut tp: usize;
+    unsafe {
+        asm!("addi.d {}, $r2, 0", out(reg) tp);
+    }
+    tp
 }
 
 ///Processor management structure

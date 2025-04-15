@@ -2,6 +2,7 @@ use core::arch::global_asm;
 
 use alloc::sync::Arc;
 use bitflags::bitflags;
+use context::dump_trap_context;
 pub use context::TrapContext;
 use riscv::register::{
     satp,
@@ -13,7 +14,7 @@ use riscv::register::{
 };
 
 use crate::{
-    arch::mm::PageTable, mm::VirtAddr, signal::handle_signal, syscall::{self, errno::Errno, syscall}, task::{current_task, yield_current_task}
+    arch::mm::PageTable, mm::VirtAddr, signal::handle_signal, syscall::{errno::Errno, syscall}, task::{current_task, wakeup_timeout, yield_current_task}
 };
 
 use super::timer::set_next_trigger;
@@ -158,6 +159,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
         }
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
             set_next_trigger();
+            wakeup_timeout();
             yield_current_task();
         }
         _ => {

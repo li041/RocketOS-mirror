@@ -5,15 +5,15 @@ use crate::{
         mm::{copy_from_user, copy_to_user},
         timer::TimeSpec,
         trap::{
-            context::{get_trap_context, save_trap_context},
+            context::{dump_trap_context, get_trap_context, save_trap_context},
             TrapContext,
         },
     },
     signal::{SiField, Sig, SigAction, SigContext, SigInfo, SigSet},
     syscall::errno::Errno,
     task::{
-        current_task, get_stack_top_by_sp, yield_current_task, INITPROC, INIT_PROC_PID,
-        TASK_MANAGER,
+        current_task, for_each_task, get_stack_top_by_sp, get_task, yield_current_task, INITPROC,
+        INIT_PROC_PID,
     },
 };
 
@@ -39,7 +39,7 @@ pub fn sys_kill(pid: isize, sig: i32) -> SyscallRet {
     log::info!("[sys_kill] pid: {} signal: {}", pid, sig.raw());
     match pid {
         pid if pid > 0 => {
-            if let Some(task) = TASK_MANAGER.get(pid as usize) {
+            if let Some(task) = get_task(pid as usize) {
                 // 向线程组发送信号
                 if task.is_process() {
                     task.receive_siginfo(
@@ -72,7 +72,7 @@ pub fn sys_kill(pid: isize, sig: i32) -> SyscallRet {
             // ToDO: 进程组相关
         }
         -1 => {
-            TASK_MANAGER.for_each(|task| {
+            for_each_task(|task| {
                 if task.tid() != INIT_PROC_PID && task.is_process() {
                     task.receive_siginfo(
                         SigInfo {
@@ -99,7 +99,7 @@ pub fn sys_tkill(tid: isize, sig: i32) -> SyscallRet {
     if !sig.is_valid() || tid < 0 {
         return Err(Errno::EINVAL);
     }
-    let task = TASK_MANAGER.get(tid as usize).unwrap();
+    let task = get_task(tid as usize).unwrap();
     log::info!(
         "[sys_tkill] task{} receive signal {}",
         task.tid(),
@@ -327,6 +327,7 @@ pub fn sys_rt_sigreturn() -> SyscallRet {
     let task = current_task();
     // 获取栈顶trapcontext
     let mut trap_cx = get_trap_context(&task);
+    let mut ret: isize = -1;
     // 获取用户栈中sigcontext
     let user_sp = trap_cx.get_sp();
     let sig_context_ptr = user_sp as *const SigContext;
@@ -342,6 +343,9 @@ pub fn sys_rt_sigreturn() -> SyscallRet {
         // 更新栈顶trapcontext
         trap_cx.x = sig_context.x;
         trap_cx.sepc = sig_context.sepc;
+        trap_cx.last_a0 = sig_context.last_a0;
+        trap_cx.kernel_tp = sig_context.kernel_tp;
+        ret = trap_cx.get_a0() as isize;
         save_trap_context(&task, trap_cx);
         // 恢复mask
         task.op_sig_pending_mut(|pending| {
@@ -355,6 +359,9 @@ pub fn sys_rt_sigreturn() -> SyscallRet {
         // 更新栈顶trapcontext
         trap_cx.r = sig_context.r;
         trap_cx.era = sig_context.era;
+        trap_cx.last_a0 = sig_context.last_a0;
+        trap_cx.kernel_tp = sig_context.kernel_tp;
+        ret = trap_cx.get_a0() as isize;
         save_trap_context(&task, trap_cx);
         // 恢复mask
         task.op_sig_pending_mut(|pending| {
