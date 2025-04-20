@@ -138,3 +138,90 @@ pub struct StatFs {
     pub f_flags: i64,      // 挂载标志（如 ST_RDONLY）
     pub f_spare: [i64; 4], // 保留字段
 }
+
+pub const RLIM_INFINITY: usize = usize::MAX;
+/// Resource Limit
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+pub struct RLimit {
+    /// Soft limit: the kernel enforces for the corresponding resource
+    pub rlim_cur: usize,
+    /// Hard limit (ceiling for rlim_cur)
+    pub rlim_max: usize,
+}
+
+impl RLimit {
+    pub fn new(rlim_cur: usize) -> Self {
+        Self {
+            rlim_cur,
+            rlim_max: RLIM_INFINITY,
+        }
+    }
+}
+
+/// sys_prlimit
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i32)]
+pub enum Resource {
+    // 每个进程的 CPU 时间限制，单位为秒。
+    CPU = 0,
+    // 可以创建的最大文件大小，单位为字节。
+    FSIZE = 1,
+    // 数据段的最大大小，单位为字节。
+    DATA = 2,
+    // 栈段的最大大小，单位为字节。
+    STACK = 3,
+    // 可以创建的最大核心转储文件大小，单位为字节。
+    CORE = 4,
+    // 最大驻留集大小，单位为字节。
+    // 这会影响交换(swapping)；超过其驻留集大小的进程更有可能被剥夺物理内存。
+    RSS = 5,
+    // 进程数量。
+    NPROC = 6,
+    // 打开文件的数量。
+    NOFILE = 7,
+    // 锁在内存中的地址空间。
+    MEMLOCK = 8,
+    // 地址空间限制。
+    AS = 9,
+    // 最大文件锁数量。
+    LOCKS = 10,
+    // 最大挂起信号数量。
+    SIGPENDING = 11,
+    // POSIX 消息队列的最大字节数。
+    MSGQUEUE = 12,
+    // 允许提高的最大 nice 优先级。
+    // Nice 级别 19 到 -20 对应于此资源限制的 0 到 39 值。
+    NICE = 13,
+    // 非特权进程允许的最大实时优先级。
+    RTPRIO = 14,
+    // 在实时调度策略下调度的进程在未进行阻塞系统调用之前可以消耗的最大 CPU 时间，单位为微秒，
+    // 超过此时间将被强制取消调度。
+    RTTIME = 15,
+}
+
+impl TryFrom<i32> for Resource {
+    type Error = &'static str;
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Resource::CPU),
+            1 => Ok(Resource::FSIZE),
+            2 => Ok(Resource::DATA),
+            3 => Ok(Resource::STACK),
+            4 => Ok(Resource::CORE),
+            5 => Ok(Resource::RSS),
+            6 => Ok(Resource::NPROC),
+            7 => Ok(Resource::NOFILE),
+            8 => Ok(Resource::MEMLOCK),
+            9 => Ok(Resource::AS),
+            10 => Ok(Resource::LOCKS),
+            11 => Ok(Resource::SIGPENDING),
+            12 => Ok(Resource::MSGQUEUE),
+            13 => Ok(Resource::NICE),
+            14 => Ok(Resource::RTPRIO),
+            15 => Ok(Resource::RTTIME),
+            _ => Err("invalid resource"),
+        }
+    }
+}

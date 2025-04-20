@@ -147,6 +147,8 @@ pub fn make_pipe() -> (Arc<Pipe>, Arc<Pipe>) {
     (read_end, write_end)
 }
 
+pub const ESPIPE: usize = 29; // Invalid seek on a pipe
+
 impl FileOp for Pipe {
     fn as_any(&self) -> &dyn core::any::Any {
         self
@@ -210,6 +212,9 @@ impl FileOp for Pipe {
     }
     fn writable(&self) -> bool {
         self.writable
+    }
+    fn seek(&self, offset: isize, whence: super::uapi::Whence) -> usize {
+        return ESPIPE;
     }
     fn r_ready(&self) -> bool {
         if self.readable {

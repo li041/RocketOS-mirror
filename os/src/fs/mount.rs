@@ -23,6 +23,7 @@ use super::{
     namei::{filename_create, parse_path, Nameidata},
     path::Path,
     proc::init_procfs,
+    tmp::init_tmpfs,
     uapi::StatFs,
 };
 
@@ -199,6 +200,8 @@ pub fn do_ext4_mount(block_device: Arc<dyn BlockDevice>) -> Arc<Path> {
     let root_path = Path::new(root_vfs_mount, root_dentry);
     init_devfs(root_path.clone());
     init_procfs(root_path.clone());
+    init_tmpfs(root_path.clone());
+
     // Todo: 为了busybox which ls, 创建一个空的/bin/ls
     let bin_path = "/bin";
     let bin_mode = S_IFDIR as u16 | 0o755;

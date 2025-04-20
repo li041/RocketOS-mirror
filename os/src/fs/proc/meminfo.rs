@@ -11,6 +11,7 @@ use crate::{
         inode::InodeOp,
         kstat::Kstat,
         path::Path,
+        uapi::Whence,
         FileOld,
     },
 };
@@ -131,6 +132,29 @@ impl FileOp for MemInfoFile {
     }
     fn readable(&self) -> bool {
         true
+    }
+    fn seek(&self, offset: isize, whence: Whence) -> usize {
+        let mut inner_guard = self.inner.write();
+        match whence {
+            crate::fs::uapi::Whence::SeekSet => {
+                if offset < 0 {
+                    panic!("SeekSet offset < 0");
+                }
+                inner_guard.offset = offset as usize;
+            }
+            crate::fs::uapi::Whence::SeekCur => {
+                inner_guard.offset = inner_guard.offset.checked_add_signed(offset).unwrap()
+            }
+            crate::fs::uapi::Whence::SeekEnd => {
+                inner_guard.offset = FAKEMEMINFO
+                    .read()
+                    .serialize()
+                    .len()
+                    .checked_add_signed(offset)
+                    .unwrap();
+            }
+        }
+        inner_guard.offset
     }
 }
 

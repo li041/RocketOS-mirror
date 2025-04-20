@@ -23,9 +23,9 @@ pub mod dentry;
 pub mod dev;
 pub mod fdtable;
 pub mod file;
-pub mod manager;
 pub mod inode;
 pub mod kstat;
+pub mod manager;
 pub mod mount;
 pub mod namei;
 pub mod old;
@@ -34,6 +34,7 @@ pub mod path;
 pub mod pipe;
 pub mod proc;
 mod stdio;
+pub mod tmp;
 // pub mod tty;
 pub mod uapi;
 

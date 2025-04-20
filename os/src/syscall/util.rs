@@ -1,4 +1,13 @@
-use crate::arch::mm::copy_to_user;
+use core::time;
+
+use crate::{
+    arch::{
+        mm::{copy_from_user, copy_to_user},
+        timer::TimeSpec,
+    },
+    fs::uapi::{RLimit, Resource},
+    task::{current_task, TASK_MANAGER},
+};
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -152,4 +161,68 @@ pub fn sys_syslog(log_type: usize, buf: *mut u8, len: usize) -> isize {
         SyslogAction::SIZE_BUFFER => LOG_BUF_LEN as isize,
         SyslogAction::ILLEAGAL => -1,
     }
+}
+
+// Todo: 检查当前进程是否有权限修改其他进程的rlimit, 检查是否有权限修改硬限制
+pub fn sys_prlimit64(
+    pid: usize,
+    resource: i32,
+    new_limit: *const RLimit,
+    old_limit: *mut RLimit,
+) -> isize {
+    // 根据tid获取操作的进程
+    let task = if pid == 0 {
+        current_task()
+    } else {
+        TASK_MANAGER.get(pid).expect("[sys_prlimit64]: invalid pid")
+    };
+    let resource = Resource::try_from(resource).unwrap();
+    log::error!("resource: {:?}", resource);
+    // 如果old_limit不为NULL, 则将当前的rlimit写入old_limit
+    if !old_limit.is_null() {
+        let old_rlimit = task
+            .get_rlimit(resource)
+            .expect("[sys_prlimit64] get rlimit failed");
+        // 这里需要copy_to_user
+        copy_to_user(old_limit, &old_rlimit as *const RLimit, 1).unwrap();
+    }
+    // 如果new_limit不为NULL, 则将new_limit写入当前的rlimit
+    if !new_limit.is_null() {
+        let new_limit = copy_from_user(new_limit, 1).unwrap()[0];
+        task.set_rlimit(resource, &new_limit)
+            .expect("[sys_prlimit64]: set rlimit failed");
+    }
+    0
+}
+
+// clockid
+pub const SUPPORT_CLOCK: usize = 2;
+/// 一个可设置的系统级实时时钟，用于测量真实（即墙上时钟）时间
+pub const CLOCK_REALTIME: usize = 0;
+/// 一个不可设置的系统级时钟，代表自某个未指定的过去时间点以来的单调时间
+pub const CLOCK_MONOTONIC: usize = 1;
+/// 用于测量调用进程消耗的CPU时间
+pub const CLOCK_PROCESS_CPUTIME_ID: usize = 2;
+/// 用于测量调用线程消耗的CPU时间
+pub const CLOCK_THREAD_CPUTIME_ID: usize = 3;
+pub fn sys_clock_gettime(clock_id: usize, timespec: *mut TimeSpec) -> isize {
+    //如果tp是NULL, 函数不会存储时间值, 但仍然会执行其他检查（如 `clockid` 是否有效）。
+    if timespec.is_null() {
+        return 0;
+    }
+    match clock_id {
+        CLOCK_REALTIME => {
+            let time = TimeSpec::new_wall_time();
+            copy_to_user(timespec, &time as *const TimeSpec, 1).unwrap();
+        }
+        CLOCK_MONOTONIC => {
+            let time = TimeSpec::new_machine_time();
+            copy_to_user(timespec, &time as *const TimeSpec, 1).unwrap();
+        }
+        _ => {
+            panic!("[sys_clock_gettime] invalid clock_id: {}", clock_id);
+            return -1;
+        }
+    }
+    0
 }
