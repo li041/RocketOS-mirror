@@ -12,7 +12,17 @@ pub use sigStack::*;
 pub use sigStruct::*;
 
 use crate::{
-    arch::{mm::copy_to_user, trap::{context::{get_trap_context, save_trap_context}, TrapContext}}, mm::VirtAddr, task::{current_task, get_stack_top_by_sp, kernel_exit, remove_task, switch_to_next_task, Task}
+    arch::{
+        mm::copy_to_user,
+        trap::{
+            context::{get_trap_context, save_trap_context},
+            TrapContext,
+        },
+    },
+    mm::VirtAddr,
+    task::{
+        current_task, get_stack_top_by_sp, kernel_exit, remove_task, switch_to_next_task, Task,
+    },
 };
 
 // 1. 检查是否有信号触发
@@ -27,18 +37,22 @@ pub fn handle_signal() {
 
     let task = current_task();
     // 检查是否有信号触发
-    while let Some((sig, sigInfo)) = task.op_sig_pending_mut(|pending| pending.fetch_signal()) {
+    while let Some((sig, sigInfo)) = task.op_sig_pending_mut(|pending| pending.fetch_signal(None)) {
         let old_mask = task.mask();
-        log::info!("[handle_signal] task{} is handling signal {}",task.tid(), sig.raw());
+        log::info!(
+            "[handle_signal] task{} is handling signal {}",
+            task.tid(),
+            sig.raw()
+        );
         let action = task.op_sig_handler(|handler| handler.get(sig));
         let mut trap_cx = get_trap_context(&task);
-        
+
         // Todo: 中断处理，测试
         #[cfg(target_arch = "riscv64")]
         if action.flags.contains(SigActionFlag::SA_RESTART) {
             // 回到用户调用ecall的指令
             trap_cx.set_pc(trap_cx.sepc - 4);
-            trap_cx.restore_a0();   // 从last_a0中恢复a0
+            trap_cx.restore_a0(); // 从last_a0中恢复a0
             log::warn!("[handle_signal] handle SA_RESTART");
         }
 
@@ -46,7 +60,7 @@ pub fn handle_signal() {
         if action.flags.contains(SigActionFlag::SA_RESTART) {
             // 回到用户调用ecall的指令
             trap_cx.set_pc(trap_cx.era - 4);
-            trap_cx.restore_a0();   // 从last_a0中恢复a0
+            trap_cx.restore_a0(); // 从last_a0中恢复a0
             log::warn!("[handle_signal] handle SA_RESTART");
         }
 
@@ -71,15 +85,15 @@ pub fn handle_signal() {
                 action.flags
             );
             if !action.flags.contains(SigActionFlag::SA_NODEFER) {
-                task.op_sig_pending_mut(|pending| {pending.add_mask(sig)});
+                task.op_sig_pending_mut(|pending| pending.add_mask(sig));
             }
 
             // 加上action中的mask
             task.op_sig_pending_mut(|pending| {
-                    pending.add_mask_sigset(action.mask);
-                    log::info!("[handle_signal] current mask = {:?}", old_mask);
+                pending.add_mask_sigset(action.mask);
+                log::info!("[handle_signal] current mask = {:?}", old_mask);
             });
-            
+
             // 决定 signal handler 应该运行在哪个栈（SignalStack / 普通栈）
             // user_sp：当前用户栈（信号栈）位置
             let sig_stack = task.sigstack();
@@ -108,7 +122,7 @@ pub fn handle_signal() {
                 // let siginfo_ptr = siginfo_sp as *mut LinuxSigInfo;
                 // unsafe { siginfo_ptr.write(siginfo) };
                 // trap_cx.x[11] = siginfo_sp;
-                                // ucontext_sp：塞入ucontext后的用户栈位置
+                // ucontext_sp：塞入ucontext后的用户栈位置
                 // user_sp = (user_sp - core::mem::size_of::<UContext>()) & !0xf;
                 // let ucontext_sp = user_sp;
                 // let ucontext_ptr = ucontext_sp as *mut UContext;
@@ -128,8 +142,7 @@ pub fn handle_signal() {
                 // unsafe { ucontext_ptr.write(ucontext) };
                 // task.set_sig_ucontext(ucontext_ptr as usize);
             }
-
-            // 向用户栈中仅塞入sigcontext 
+            // 向用户栈中仅塞入sigcontext
             // 信号处理函数定义方式 void (*sa_handler)(int)
             else {
                 let sig_context_size = core::mem::size_of::<SigContext>();
@@ -153,7 +166,7 @@ pub fn handle_signal() {
                     info: 0,
                 };
                 let sig_context_ptr = &sig_context as *const SigContext;
-                if let Err(err) = copy_to_user(user_sig_context_ptr, sig_context_ptr,1){
+                if let Err(err) = copy_to_user(user_sig_context_ptr, sig_context_ptr, 1) {
                     panic!("[handle_signal] copy_to_user failed: {}", err);
                 }
                 // 修改栈顶trap的a0

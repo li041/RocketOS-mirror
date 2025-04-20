@@ -126,13 +126,20 @@ impl FileOp for MountsFile {
         self.add_offset(len);
         len
     }
-    fn seek(&self, offset: usize, whence: crate::fs::uapi::Whence) -> usize {
+    fn seek(&self, offset: isize, whence: crate::fs::uapi::Whence) -> usize {
         let mut inner_guard = self.inner.write();
         match whence {
-            crate::fs::uapi::Whence::SeekSet => inner_guard.offset = offset,
-            crate::fs::uapi::Whence::SeekCur => inner_guard.offset += offset,
+            crate::fs::uapi::Whence::SeekSet => {
+                if offset < 0 {
+                    panic!("SeekSet offset < 0");
+                }
+                inner_guard.offset = offset as usize;
+            }
+            crate::fs::uapi::Whence::SeekCur => {
+                inner_guard.offset = inner_guard.offset.checked_add_signed(offset).unwrap();
+            }
             crate::fs::uapi::Whence::SeekEnd => {
-                inner_guard.offset = read_proc_mounts().len() - offset
+                inner_guard.offset = read_proc_mounts().len().checked_add_signed(offset).unwrap();
             }
         }
         inner_guard.offset

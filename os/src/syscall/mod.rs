@@ -25,14 +25,15 @@ use task::{
     sys_clone, sys_execve, sys_get_time, sys_getpid, sys_getppid, sys_nanosleep, sys_waitpid,
     sys_yield,
 };
-use util::{sys_syslog, sys_times, sys_uname};
+use util::{sys_clock_gettime, sys_prlimit64, sys_syslog, sys_times, sys_uname};
 
 use crate::{
     arch::timer::TimeSpec,
     fs::{
         kstat::{Stat, Statx},
-        uapi::{IoVec, PollFd, StatFs},
+        uapi::{IoVec, PollFd, RLimit, StatFs},
     },
+    signal::{SigInfo, SigSet},
 };
 pub use fs::FcntlOp;
 pub use task::sys_exit;
@@ -107,12 +108,13 @@ const SYSCALL_MMAP: usize = 222;
 const SYSCALL_MADVISE: usize = 233;
 const SYSCALL_MPROTECT: usize = 226;
 const SYSCALL_WAIT4: usize = 260;
+const SYSCALL_PRLIMIT: usize = 261;
 const SYSCALL_RENAMEAT2: usize = 276;
 const SYSCALL_STATX: usize = 291;
 
 const CARELESS_SYSCALLS: [usize; 4] = [63, 64, 124, 260];
 // const SYSCALL_NUM_2_NAME: [(&str, usize); 4] = [
-const SYSCALL_NUM_2_NAME: [(usize, &str); 9] = [
+const SYSCALL_NUM_2_NAME: [(usize, &str); 8] = [
     (SYSCALL_SET_TID_ADDRESS, "SYS_SET_TID_ADDRESS"),
     (SYSCALL_GETUID, "SYS_GETUID"),
     (SYS_EXIT_GROUP, "SYS_EXIT_GROUP"),
@@ -120,7 +122,6 @@ const SYSCALL_NUM_2_NAME: [(usize, &str); 9] = [
     (SYSCALL_SETGID, "SYS_SETGID"),
     (SYSCALL_SETUID, "SYS_SETUID"),
     (SYSCALL_GETGID, "SYS_GETGID"),
-    (SYSCALL_CLOCK_GETTIME, "SYS_CLOCK_GETTIME"),
     (SYSCALL_GETTID, "SYS_GETTID"),
 ];
 
@@ -172,7 +173,7 @@ pub fn syscall(
         SYSCALL_CLOSE => sys_close(a0),
         SYSCALL_PIPE2 => sys_pipe2(a0 as *mut i32, a1 as i32),
         SYSCALL_GETDENTS64 => sys_getdents64(a0, a1 as *mut u8, a2),
-        SYSCALL_LSEEK => sys_lseek(a0, a1, a2),
+        SYSCALL_LSEEK => sys_lseek(a0, a1 as isize, a2),
         SYSCALL_READ => sys_read(a0, a1 as *mut u8, a2),
         SYSCALL_WRITE => sys_write(a0, a1 as *const u8, a2),
         SYSCALL_READV => sys_readv(a0, a1 as *const IoVec, a2),
@@ -186,6 +187,7 @@ pub fn syscall(
         }
         SYSCALL_EXIT => sys_exit(a0 as i32),
         SYSCALL_NANOSLEEP => sys_nanosleep(a0),
+        SYSCALL_CLOCK_GETTIME => sys_clock_gettime(a0, a1 as *mut TimeSpec),
         SYSCALL_SYSLOG => sys_syslog(a0, a1 as *mut u8, a3),
         SYSCALL_YIELD => sys_yield(),
         SYSCALL_KILL => sys_kill(a0 as isize, a1 as i32),
@@ -196,7 +198,11 @@ pub fn syscall(
         // SYSCALL_RT_SIGACTION => sys_rt_sigaction(a0 as i32, a1, a2),
         SYSCALL_RT_SIGPROCMASK => sys_rt_sigprocmask(a0, a1, a2),
         SYSCALL_RT_SIGPENDING => sys_rt_sigpending(a0),
-        //SYSCALL_RT_SIGTIMEDWAIT => sys_rt_sigtimedwait(a0, a1, a2),
+        SYSCALL_RT_SIGTIMEDWAIT => sys_rt_sigtimedwait(
+            a0 as *const SigSet,
+            a1 as *const SigInfo,
+            a2 as *const TimeSpec,
+        ),
         //SYSCALL_RT_SIGQUEUEINFO => sys_rt_sigqueueinfo(),
         SYSCALL_RT_SIGRETURN => sys_rt_sigreturn(),
         SYSCALL_TIMES => sys_times(a0),
@@ -212,6 +218,7 @@ pub fn syscall(
         SYSCALL_EXEC => sys_execve(a0 as *mut u8, a1 as *const usize, a2 as *const usize),
         SYSCALL_MMAP => sys_mmap(a0, a1, a2, a3, a4 as i32, a5),
         SYSCALL_WAIT4 => sys_waitpid(a0 as isize, a1, a2 as i32),
+        SYSCALL_PRLIMIT => sys_prlimit64(a0, a1 as i32, a2 as *const RLimit, a3 as *mut RLimit),
         SYSCALL_RENAMEAT2 => sys_renameat2(
             a0 as i32,
             a1 as *const u8,

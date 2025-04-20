@@ -35,7 +35,7 @@ use crate::{
 
 use crate::arch::mm::{copy_from_user, copy_from_user_mut, copy_to_user};
 
-pub fn sys_lseek(fd: usize, offset: usize, whence: usize) -> isize {
+pub fn sys_lseek(fd: usize, offset: isize, whence: usize) -> isize {
     log::info!(
         "[sys_lseek] fd: {}, offset: {}, whence: {}",
         fd,
@@ -48,6 +48,8 @@ pub fn sys_lseek(fd: usize, offset: usize, whence: usize) -> isize {
     if let Some(file) = file {
         let file = file.clone();
         let ret = file.seek(offset, whence);
+        // Debug
+        log::info!("[sys_lseek] ret: {}", ret);
         ret as isize
     } else {
         -1
@@ -56,6 +58,9 @@ pub fn sys_lseek(fd: usize, offset: usize, whence: usize) -> isize {
 
 #[cfg(target_arch = "riscv64")]
 pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
+    if fd >= 3 {
+        log::info!("sys_read: fd: {}, len: {}", fd, len);
+    }
     let task = current_task();
     let file = task.fd_table().get_file(fd);
     if let Some(file) = file {
@@ -164,7 +169,7 @@ pub fn sys_readv(fd: usize, iov: *const IoVec, iovcnt: usize) -> isize {
 }
 
 pub fn sys_writev(fd: usize, iov: *const IoVec, iovcnt: usize) -> isize {
-    if fd > 3 {
+    if fd >= 3 {
         log::info!("sys_writev: fd: {}, iovcnt: {}", fd, iovcnt);
     }
     let task = current_task();
@@ -183,6 +188,7 @@ pub fn sys_writev(fd: usize, iov: *const IoVec, iovcnt: usize) -> isize {
             continue;
         }
         let buf = copy_from_user(iovec.base as *const u8, iovec.len).unwrap();
+        log::info!("sys_writev: len: {}, buf: {:?}", iovec.len, buf);
         let written = file.write(buf);
         // 如果写入失败, 则返回已经写入的字节数, 或错误码
         if written == 0 {
@@ -194,6 +200,8 @@ pub fn sys_writev(fd: usize, iov: *const IoVec, iovcnt: usize) -> isize {
         }
         total_written += written as isize;
     }
+    // Debug
+    log::info!("sys_writev: total_written: {}", total_written);
     total_written
 }
 
@@ -1069,9 +1077,9 @@ pub fn sys_sendfile(out_fd: usize, in_fd: usize, offset_ptr: *mut usize, count: 
         // offset不为NULL, 则sendfile不会修改`in_fd`的文件偏移量
         let offset = copy_from_user(offset_ptr, 1).unwrap()[0];
         let origin_offset = in_file.get_offset();
-        in_file.seek(offset, Whence::SeekSet);
+        in_file.seek(offset as isize, Whence::SeekSet);
         len = in_file.read(&mut buf);
-        in_file.seek(origin_offset, Whence::SeekSet);
+        in_file.seek(origin_offset as isize, Whence::SeekSet);
         // 将新的偏移量写回用户空间
         copy_to_user(offset_ptr, &(offset + len + 1), 1).unwrap();
     }

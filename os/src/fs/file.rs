@@ -55,7 +55,7 @@ pub trait FileOp: Any + Send + Sync {
         unimplemented!();
     }
     // move the file offset
-    fn seek(&self, offset: usize, whence: Whence) -> usize {
+    fn seek(&self, offset: isize, whence: Whence) -> usize {
         unimplemented!();
     }
     // Get the file offset
@@ -171,17 +171,19 @@ impl FileOp for File {
         self.add_offset(write_size);
         write_size
     }
-    fn seek(&self, offset: usize, whence: Whence) -> usize {
+    fn seek(&self, offset: isize, whence: Whence) -> usize {
         self.inner_handler(|inner| {
             match whence {
-                Whence::SeekSet => inner.offset = offset,
-                Whence::SeekCur => inner.offset += offset,
+                Whence::SeekSet => {
+                    if offset < 0 {
+                        panic!("SeekSet offset < 0");
+                    }
+                    inner.offset = offset as usize;
+                }
+                Whence::SeekCur => inner.offset = inner.offset.checked_add_signed(offset).unwrap(),
                 Whence::SeekEnd => {
                     let size = inner.inode.get_size();
-                    if offset > size {
-                        panic!("seek out of range");
-                    }
-                    inner.offset = size - offset;
+                    inner.offset = size.checked_add_signed(offset).unwrap();
                 }
             }
             return inner.offset;

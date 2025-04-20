@@ -8,6 +8,7 @@ use spin::RwLock;
 use super::{
     dev::tty::TTY,
     file::{FileOp, OpenFlags},
+    uapi::RLimit,
     Stdin, Stdout,
 };
 use alloc::sync::Arc;
@@ -49,31 +50,11 @@ impl From<&FcntlOp> for FdFlags {
 
 /// Max file descriptors counts
 pub const MAX_FDS: usize = 128;
-pub const RLIM_INFINITY: usize = usize::MAX;
-
-/// Resource Limit
-#[derive(Debug, Clone, Copy)]
-#[repr(C)]
-pub struct RLimit {
-    /// Soft limit: the kernel enforces for the corresponding resource
-    pub rlim_cur: usize,
-    /// Hard limit (ceiling for rlim_cur)
-    pub rlim_max: usize,
-}
-
-impl RLimit {
-    pub fn new(rlim_cur: usize) -> Self {
-        Self {
-            rlim_cur,
-            rlim_max: RLIM_INFINITY,
-        }
-    }
-}
 
 /// 进程的文件描述符表
 pub struct FdTable {
     table: RwLock<Vec<Option<FdEntry>>>,
-    rlimit: RLimit,
+    rlimit: RwLock<RLimit>,
 }
 
 #[derive(Clone)]
@@ -115,7 +96,7 @@ impl FdTable {
         vec[2] = Some(FdEntry::new(tty_file.clone(), FdFlags::empty()));
         Arc::new(Self {
             table: RwLock::new(vec),
-            rlimit: RLimit::new(MAX_FDS),
+            rlimit: RwLock::new(RLimit::new(MAX_FDS)),
         })
     }
 
@@ -130,7 +111,7 @@ impl FdTable {
         }
         Arc::new(Self {
             table: RwLock::new(vec),
-            rlimit: parent_table.rlimit,
+            rlimit: RwLock::new(parent_table.rlimit.read().clone()),
         })
     }
     pub fn alloc_fd(&self, file: Arc<dyn FileOp>, fd_flags: FdFlags) -> usize {
@@ -142,7 +123,7 @@ impl FdTable {
                 return fd;
             }
         }
-        if table_len < self.rlimit.rlim_cur {
+        if table_len < self.rlimit.read().rlim_cur {
             table.push(Some(FdEntry::new(file, fd_flags)));
             return table_len;
         }
@@ -166,7 +147,7 @@ impl FdTable {
                 return fd;
             }
         }
-        if table_len < self.rlimit.rlim_cur {
+        if table_len < self.rlimit.read().rlim_cur {
             table.push(Some(FdEntry::new(file, fd_flags)));
             return table_len;
         }
@@ -182,7 +163,7 @@ impl FdTable {
         file: Arc<dyn FileOp>,
         flags: FdFlags,
     ) -> Option<Arc<dyn FileOp>> {
-        if new_fd >= self.rlimit.rlim_cur {
+        if new_fd >= self.rlimit.read().rlim_cur {
             panic!("[FdTable::insert] fd out of range: {}", new_fd);
             // return None;
         }
@@ -221,8 +202,17 @@ impl FdTable {
         self.table.write().clear();
     }
 
+    pub fn get_rlimit(&self) -> RLimit {
+        self.rlimit.read().clone()
+    }
+    pub fn set_rlimit(&self, rlimit: &RLimit) {
+        let mut rlimit_lock = self.rlimit.write();
+        rlimit_lock.rlim_cur = rlimit.rlim_cur;
+        rlimit_lock.rlim_max = rlimit.rlim_max;
+    }
+
     // 设置某个fd的flag（例如 FD_CLOEXEC）
-    pub fn set_flag(&self, fd: usize, flags: FdFlags) -> bool {
+    pub fn set_flags(&self, fd: usize, flags: FdFlags) -> bool {
         if let Some(Some(entry)) = self.table.write().get_mut(fd) {
             entry.fd_flags |= flags;
             true

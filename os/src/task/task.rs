@@ -9,13 +9,20 @@ use super::{
 };
 use crate::{
     arch::{
+        config::USER_STACK_SIZE,
         mm::copy_to_user,
         trap::{
             context::{dump_trap_context, get_trap_context, save_trap_context},
             TrapContext,
         },
     },
-    fs::{fdtable::FdTable, file::FileOp, path::Path, FileOld, Stdin, Stdout},
+    fs::{
+        fdtable::FdTable,
+        file::FileOp,
+        path::Path,
+        uapi::{RLimit, Resource},
+        FileOld, Stdin, Stdout,
+    },
     mm::{MapArea, MapPermission, MapType, MemorySet, VPNRange, VirtAddr},
     mutex::{SpinNoIrq, SpinNoIrqLock},
     signal::{SiField, Sig, SigHandler, SigInfo, SigPending, SigSet, SignalStack, UContext},
@@ -475,6 +482,32 @@ impl Task {
             dst_trap_cx_ptr.write(src_trap_cx_ptr.read());
         }
         dst_trap_cx_ptr as usize
+    }
+    pub fn get_rlimit(&self, resource: Resource) -> Result<RLimit, &'static str> {
+        match resource {
+            Resource::STACK => {
+                // Todo: 现在是固定配置
+                let rlim = RLimit {
+                    rlim_cur: USER_STACK_SIZE,
+                    rlim_max: USER_STACK_SIZE,
+                };
+                Ok(rlim)
+            }
+            Resource::NOFILE => {
+                let rlim = self.fd_table().get_rlimit();
+                Ok(rlim)
+            }
+            _ => Err("not supported"),
+        }
+    }
+    pub fn set_rlimit(&self, resource: Resource, rlim: &RLimit) -> Result<(), &'static str> {
+        match resource {
+            Resource::NOFILE => {
+                self.fd_table().set_rlimit(&rlim);
+                Ok(())
+            }
+            _ => Err("not supported"),
+        }
     }
 
     // pub fn alloc_fd(&mut self, file: Arc<dyn FileOp + Send + Sync>) -> usize {

@@ -1,6 +1,9 @@
+use core::panic;
+
 use crate::{
     arch::{
         mm::{copy_from_user, copy_to_user},
+        timer::TimeSpec,
         trap::{
             context::{get_trap_context, save_trap_context},
             TrapContext,
@@ -267,8 +270,59 @@ pub fn sys_rt_sigpending(set: usize) -> isize {
 /// 如果 timeout 指向的 timespec结构为零值，并且 set 指定的信号均未挂起，则 sigtimedwait() 应立即返回错误。
 /// 如果 timeout 为空指针，则行为未指定。
 /// Todo: 涉及到时间
-pub fn sys_rt_sigtimedwait(set: usize, info: usize, timeout: usize) -> isize {
-    0
+/// 先检查是否有set中的信号pending，如果有则消耗该信号并返回, 否则就等待timeout时间
+pub fn sys_rt_sigtimedwait(
+    set: *const SigSet,
+    info: *const SigInfo,
+    timeout: *const TimeSpec,
+) -> isize {
+    let mut wanted_set = copy_from_user(set, 1).unwrap()[0];
+    wanted_set.remove(SigSet::SIGKILL | SigSet::SIGSTOP);
+    let timeout = if timeout.is_null() {
+        // timeout是空指针, 行为未定义
+        panic!("[sys_rt_sigtimedwait] timeout is null");
+    } else {
+        let timeout = copy_from_user(timeout, 1).unwrap()[0];
+        timeout
+    };
+
+    let sig = current_task().op_sig_pending_mut(|pending| pending.fetch_signal(Some(wanted_set)));
+    if let Some((sig, siginfo)) = sig {
+        // log::info!("[sys_rt_sigtimedwait] sig: {:?}", sig);
+        if !info.is_null() {
+            let info_ptr = info as *mut SigInfo;
+            if let Err(_) = copy_to_user(info_ptr, &siginfo as *const SigInfo, 1) {
+                log::error!("[sys_rt_sigtimedwait] copy_to_user failed");
+                return -1;
+            }
+        }
+        return sig.raw() as isize;
+    }
+    // 等待timeout时间
+    // Todo: 阻塞
+    let wait_until = TimeSpec::new_machine_time() + timeout;
+    loop {
+        let current_time = TimeSpec::new_machine_time();
+        if current_time >= wait_until {
+            break;
+        }
+        yield_current_task();
+    }
+    let sig = current_task().op_sig_pending_mut(|pending| pending.fetch_signal(Some(wanted_set)));
+    if let Some((sig, siginfo)) = sig {
+        // log::info!("[sys_rt_sigtimedwait] sig: {:?}", sig);
+        if !info.is_null() {
+            let info_ptr = info as *mut SigInfo;
+            if let Err(_) = copy_to_user(info_ptr, &siginfo as *const SigInfo, 1) {
+                log::error!("[sys_rt_sigtimedwait] copy_to_user failed");
+                return -1;
+            }
+        }
+        return sig.raw() as isize;
+    } else {
+        // 超时
+        return -1;
+    }
 }
 
 /// sigqueue() 将 sig 中指定的信号发送给 pid 中给出其 PID 的进程。

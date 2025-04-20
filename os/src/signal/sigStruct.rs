@@ -40,9 +40,13 @@ impl SigPending {
         self.info.get(&sig.raw())
     }
 
-    // 从当前待处理集合中选出最小的一个信号，但并不修改
-    pub fn find_signal(&self) -> Option<Sig> {
-        let mut temp_pending = self.pending.bits();
+    // 从当前待处理集合中选出在wanted_set中且最小的一个信号，但并不修改
+    pub fn find_signal(&self, wanted_sigset: Option<SigSet>) -> Option<Sig> {
+        let mut temp_pending = if let Some(wanted_set) = wanted_sigset {
+            (self.pending & wanted_set).bits()
+        } else {
+            self.pending.bits()
+        };
         loop {
             let pos: u32 = temp_pending.trailing_zeros();
             let sig = Sig::from((pos + 1) as i32);
@@ -62,9 +66,10 @@ impl SigPending {
         }
     }
 
-    // 取出未处理集合中选出最小的一个信号，修改内容
-    pub fn fetch_signal(&mut self) -> Option<(Sig, SigInfo)> {
-        if let Some(sig) = self.find_signal() {
+    /// 取出未处理集合中, 在wanted_sigset中最小的一个信号，修改内容
+    /// 如果wanted_sigset为None，则表示都可以, 取出pending中最小的一个信号
+    pub fn fetch_signal(&mut self, wanted_sigset: Option<SigSet>) -> Option<(Sig, SigInfo)> {
+        if let Some(sig) = self.find_signal(wanted_sigset) {
             log::debug!("[fetch_signal] fetch signal {}", sig.raw());
             self.pending.remove_signal(sig);
             Some((sig, self.info.remove(&sig.raw()).unwrap()))
