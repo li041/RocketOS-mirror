@@ -147,22 +147,22 @@ impl FdTable {
         file: Arc<dyn FileOp + Send + Sync>,
         fd_flags: FdFlags,
         lower_bound: usize,
-    ) -> usize {
+    ) -> SyscallRet {
         let mut table = self.table.write();
         let table_len = table.len();
         for fd in lower_bound..table_len {
             if table[fd].is_none() {
                 table[fd] = Some(FdEntry::new(file, fd_flags));
-                return fd;
+                return Ok(fd);
             }
         }
         if table_len < self.rlimit.read().rlim_cur {
             table.push(Some(FdEntry::new(file, fd_flags)));
-            return table_len;
+            return Ok(table_len);
         }
         // 超过限制
         log::error!("[FdTable::alloc_fd] fd table full");
-        panic!("fd table full");
+        return Err(Errno::EMFILE);
     }
 
     /// 给dup2使用, 将new_fd(并不是进程所能分配的最小描述符)指向old_fd的文件

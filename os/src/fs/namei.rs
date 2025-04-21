@@ -20,7 +20,7 @@ use crate::{
     },
     fs::{
         dentry::DentryFlags,
-        dev::rtc::RTC,
+        dev::{null::NULL, rtc::RTC},
         fdtable::{FdEntry, FdFlags},
         AT_FDCWD,
     },
@@ -276,7 +276,8 @@ fn create_file_from_dentry(
             // 根据设备号创建对应字符设备文件
             match inode.get_devt() {
                 (1, 3) => {
-                    unimplemented!();
+                    assert!(dentry.absolute_path == "/dev/null");
+                    NULL.get().unwrap().clone()
                 } // /dev/null
                 (1, 5) => {
                     unimplemented!();

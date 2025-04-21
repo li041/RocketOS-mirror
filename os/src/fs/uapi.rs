@@ -60,6 +60,9 @@ impl DevT {
     pub fn rtc_devt() -> Self {
         Self::makedev(10, 0)
     }
+    pub fn null_devt() -> Self {
+        Self::makedev(1, 3)
+    }
 }
 
 impl DevT {

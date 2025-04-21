@@ -421,6 +421,8 @@ pub fn sys_fstat(dirfd: i32, statbuf: *mut Stat) -> SyscallRet {
             Some(file) => {
                 let inode = file.inner_handler(|inner| inner.inode.clone());
                 let stat = Stat::from(inode.getattr());
+                // 4.21
+                // log::error!("fstat: stat: {:?}", stat);
                 if let Err(e) = copy_to_user(statbuf, &stat as *const Stat, 1) {
                     log::error!("fstat: copy_to_user failed: {:?}", e);
                     return Err(e);
@@ -730,20 +732,18 @@ pub fn sys_fcntl(fd: i32, op: i32, arg: usize) -> SyscallRet {
         match op {
             FcntlOp::F_DUPFD => {
                 // let newfd = task.fd_table().alloc_fd(file.clone(), FdFlags::empty());
-                let newfd = task.fd_table().alloc_fd_above_lower_bound(
+                return task.fd_table().alloc_fd_above_lower_bound(
                     entry.get_file().clone(),
                     fd_flags,
                     arg,
                 );
-                return Ok(newfd);
             }
             FcntlOp::F_DUPFD_CLOEXEC => {
-                let newfd = task.fd_table().alloc_fd_above_lower_bound(
+                return task.fd_table().alloc_fd_above_lower_bound(
                     entry.get_file().clone(),
                     fd_flags,
                     arg,
                 );
-                return Ok(newfd);
             }
             FcntlOp::F_GETFD => {
                 return Ok(i32::from(entry.get_flags()) as usize);
@@ -958,7 +958,23 @@ pub const UTIME_NOW: usize = 0x3fffffff;
 // 如果对应timespec.sec为UTIME_OMIT, 则不修改对应的时间戳
 pub const UTIME_OMIT: usize = 0x3ffffffe;
 
-// Todo: 需要设置errno
+/*
+   C library/kernel ABI differences
+       On Linux, futimens() is a library function implemented on top of
+       the utimensat() system call.  To support this, the Linux
+       utimensat() system call implements a nonstandard feature: if
+       pathname is NULL, then the call modifies the timestamps of the
+       file referred to by the file descriptor dirfd (which may refer to
+       any type of file).  Using this feature, the call
+       futimens(fd, times) is implemented as:
+
+           utimensat(fd, NULL, times, 0);
+
+       Note, however, that the glibc wrapper for utimensat() disallows
+       passing NULL as the value for pathname: the wrapper function
+       returns the error EINVAL in this case.
+*/
+// 当pathname为NULL时, 不检查flags是否设置了AT_EMPTY_PATH, 而是直接使用dirfd
 pub fn sys_utimensat(
     dirfd: i32,
     pathname: *const u8,
@@ -973,13 +989,13 @@ pub fn sys_utimensat(
         flags
     );
     let flags = UtimenatFlags::from_bits(flags).unwrap();
-    let path = if flags.contains(UtimenatFlags::AT_EMPTY_PATH) {
+    let path = if pathname.is_null() {
+        if !flags.contains(UtimenatFlags::AT_EMPTY_PATH) {
+            log::warn!("[sys_utimensat] pathname is NULL, but AT_EMPTY_PATH is not set");
+            // 因为linux kernel abi, 这里不返回EINVAL
+        }
         None
     } else {
-        if pathname.is_null() {
-            log::error!("[sys_utimensat] pathname is null, and AT_EMPTY_PATH is not set");
-            return Err(Errno::EINVAL);
-        }
         Some(c_str_to_string(pathname))
     };
     let time_specs = if time_spec2.is_null() {
@@ -995,7 +1011,6 @@ pub fn sys_utimensat(
             Ok(dentry) => dentry.get_inode(),
             Err(e) => {
                 log::info!("[sys_utimensat] fail to lookup: {}, {:?}", path, e);
-                // Todo: 应该返回-1, 设置errno=ENOENT, 但是目前没有实现errno, 如果返回-1, busybox会检查errno, 报Operation not permitted
                 return Err(e);
             }
         }

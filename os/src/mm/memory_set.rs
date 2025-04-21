@@ -903,53 +903,34 @@ impl MemorySet {
     // 使用`MapArea`做检查, 而不是查页表
     // 要保证MapArea与页表的一致性, 也就是说, 页表中的映射都在MapArea中, MapArea中的映射都在页表中
     // 检查用户传进来的虚拟地址的合法性
-    // pub fn check_valid_user_vpn_range(
-    //     &self,
-    //     vpn_range: VPNRange,
-    //     wanted_map_perm: MapPermission,
-    // ) -> SyscallRet {
-    //     log::trace!("[check_valid_user_vpn_range]");
-    //     let mut current_vpn = vpn_range.get_start();
-    //     let end_vpn = vpn_range.get_end();
-
-    //     while current_vpn < end_vpn {
-    //         let mut found = false;
-
-    //         for (_, area) in self.areas.iter() {
-    //             if area.vpn_range.contains_vpn(current_vpn) {
-    //                 if !area.map_perm.contains(wanted_map_perm) {
-    //                     return Err(Errno::EACCES);
-    //                 }
-    //                 current_vpn = core::cmp::min(area.vpn_range.get_end(), end_vpn);
-    //                 found = true;
-    //                 break;
-    //             }
-    //         }
-
-    //         if !found {
-    //             return Err(Errno::EFAULT);
-    //         }
-    //     }
-
-    //     Ok(0)
-    // }
-
     pub fn check_valid_user_vpn_range(
         &self,
         vpn_range: VPNRange,
         wanted_map_perm: MapPermission,
     ) -> SyscallRet {
-        let areas = self.areas.iter().rev();
-        for (_, area) in areas {
-            if area.vpn_range.is_contain(&vpn_range) {
-                if area.map_perm.contains(wanted_map_perm) {
-                    return Ok(0);
-                } else {
-                    return Err(Errno::EACCES);
+        log::trace!("[check_valid_user_vpn_range]");
+        let mut current_vpn = vpn_range.get_start();
+        let end_vpn = vpn_range.get_end();
+
+        while current_vpn < end_vpn {
+            let mut found = false;
+
+            for (_, area) in self.areas.iter() {
+                if area.vpn_range.contains_vpn(current_vpn) {
+                    if !area.map_perm.contains(wanted_map_perm) {
+                        return Err(Errno::EACCES);
+                    }
+                    current_vpn = core::cmp::min(area.vpn_range.get_end(), end_vpn);
+                    found = true;
+                    break;
                 }
             }
+
+            if !found {
+                return Err(Errno::EFAULT);
+            }
         }
-        return Err(Errno::EFAULT);
+        Ok(0)
     }
 
     // 检查是否是COW或者lazy_allocation的区域

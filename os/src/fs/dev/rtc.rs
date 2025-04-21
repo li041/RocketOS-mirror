@@ -123,17 +123,11 @@ pub struct RtcFile {
     pub path: Arc<Path>,
     pub inode: Arc<dyn InodeOp>,
     pub flags: OpenFlags,
-    pub inner: RwLock<RtcInodeInner>,
 }
 
 impl RtcFile {
     pub fn new(path: Arc<Path>, inode: Arc<dyn InodeOp>, flags: OpenFlags) -> Arc<Self> {
-        Arc::new(Self {
-            path,
-            inode,
-            flags,
-            inner: RwLock::new(RtcInodeInner::new(Ext4InodeDisk::default())),
-        })
+        Arc::new(Self { path, inode, flags })
     }
 }
 

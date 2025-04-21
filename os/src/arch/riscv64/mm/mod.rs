@@ -46,7 +46,6 @@ pub fn copy_to_user<T: Copy>(to: *mut T, from: *const T, n: usize) -> SyscallRet
     let start_vpn = VirtAddr::from(to as usize).floor();
     let end_vpn = VirtAddr::from(to as usize + n * core::mem::size_of::<T>()).ceil();
     let vpn_range = VPNRange::new(start_vpn, end_vpn);
-    log::error!("checked vpn range: {:?}", vpn_range);
     current_task().op_memory_set_mut(|memory_set| {
         memory_set.check_valid_user_vpn_range(vpn_range, MapPermission::W)?;
         memory_set.pre_handle_cow(vpn_range)
