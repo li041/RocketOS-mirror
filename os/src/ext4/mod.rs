@@ -3,7 +3,7 @@ use crate::{
     drivers::block::block_cache::get_block_cache,
     fs::{
         dentry::{Dentry, DentryFlags, LinuxDirent64},
-        dev::{rtc::RtcInode, tty::TtyInode},
+        dev::{null::NullInode, rtc::RtcInode, tty::TtyInode},
         inode::InodeOp,
         kstat::Kstat,
         uapi::{DevT, RenameFlags},
@@ -372,7 +372,17 @@ impl InodeOp for Ext4Inode {
         /// 主设备号1表示mem
         match (major, minor) {
             (1, 3) => {
-                unimplemented!();
+                assert!(dentry.absolute_path == "/dev/null");
+                let new_inode_num = self
+                    .ext4_fs
+                    .upgrade()
+                    .unwrap()
+                    .alloc_inode(self.block_device.clone(), true);
+                let null_inode = NullInode::new(new_inode_num, mode, 1, 3);
+                // 在父目录中添加对应项
+                self.add_entry(dentry.clone(), new_inode_num as u32, EXT4_DT_CHR);
+                // 关联到dentry
+                dentry.inner.lock().inode = Some(null_inode);
             } // /dev/null
             (1, 5) => {
                 unimplemented!();

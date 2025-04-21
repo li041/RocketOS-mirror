@@ -10,9 +10,11 @@ use super::{
     AT_FDCWD,
 };
 use alloc::sync::Arc;
+use null::{NullFile, NULL};
 use rtc::{RtcFile, RTC};
 use tty::{TtyFile, TTY};
 
+pub mod null;
 pub mod rtc;
 pub mod tty;
 
@@ -86,6 +88,32 @@ pub fn init_devfs(root_path: Arc<Path>) {
         }
         Err(e) => {
             panic!("create {} failed: {:?}", rtc_path, e);
+        }
+    }
+    // /dev/null
+    let null_path = "/dev/null";
+    let null_mode = S_IFCHR as u16 | 0o666;
+    let null_devt = DevT::null_devt();
+    nd = Nameidata {
+        path_segments: parse_path(null_path),
+        dentry: root_path.dentry.clone(),
+        mnt: root_path.mnt.clone(),
+        depth: 0,
+    };
+    match filename_create(&mut nd, 0) {
+        Ok(dentry) => {
+            let parent_inode = nd.dentry.get_inode();
+            parent_inode.mknod(dentry.clone(), null_mode, null_devt);
+            // 现在dentry的inode指向/dev/null
+            let null_file = NullFile::new(
+                Path::new(root_path.mnt.clone(), dentry.clone()),
+                dentry.get_inode().clone(),
+                OpenFlags::O_RDWR,
+            );
+            NULL.call_once(|| null_file.clone());
+        }
+        Err(e) => {
+            panic!("create {} failed: {:?}", null_path, e);
         }
     }
 }

@@ -9,6 +9,7 @@ use spin::RwLock;
 use crate::arch::config::EXT4_MAX_INLINE_DATA;
 use crate::arch::timer::TimeSpec;
 use crate::fat32::inode;
+use crate::fs::inode::InodeOp;
 use crate::fs::kstat::Kstat;
 // use crate::fs::inode::InodeMeta;
 use crate::{
@@ -1062,18 +1063,9 @@ impl Ext4Inode {
         kstat.size = inode_on_disk.get_size();
 
         // Todo: 目前没有更新时间戳
-        kstat.atime = TimeSpec {
-            sec: inode_on_disk.atime as usize,
-            nsec: (inode_on_disk.atime_extra >> 2) as usize,
-        };
-        kstat.mtime = TimeSpec {
-            sec: inode_on_disk.modify_file_time as usize,
-            nsec: (inode_on_disk.modify_file_time_extra >> 2) as usize,
-        };
-        kstat.ctime = TimeSpec {
-            sec: inode_on_disk.change_inode_time as usize,
-            nsec: (inode_on_disk.change_inode_time_extra >> 2) as usize,
-        };
+        kstat.atime = self.get_atime();
+        kstat.mtime = self.get_mtime();
+        kstat.ctime = self.get_ctime();
         kstat.btime = TimeSpec {
             sec: inode_on_disk.create_time as usize,
             nsec: (inode_on_disk.create_time_extra >> 2) as usize,
