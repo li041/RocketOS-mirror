@@ -13,6 +13,7 @@ use crate::{
         inode::{Ext4Inode, S_IFDIR, S_IFREG},
     },
     mutex::SpinNoIrqLock,
+    syscall::errno::SyscallRet,
 };
 
 use super::{
@@ -77,7 +78,7 @@ impl Mount {
             children: vec![],
         }
     }
-    pub fn statfs(&self, buf: *mut StatFs) -> Result<usize, &'static str> {
+    pub fn statfs(&self, buf: *mut StatFs) -> SyscallRet {
         self.vfs_mount.fs.statfs(buf)
     }
 }
@@ -217,7 +218,7 @@ pub fn do_ext4_mount(block_device: Arc<dyn BlockDevice>) -> Arc<Path> {
             parent_inode.mkdir(dentry, bin_mode);
         }
         Err(e) => {
-            panic!("create {} failed: {}", bin_path, e);
+            panic!("create {} failed: {:?}", bin_path, e);
         }
     };
     // 创建一个空的/bin/ls
@@ -235,7 +236,7 @@ pub fn do_ext4_mount(block_device: Arc<dyn BlockDevice>) -> Arc<Path> {
             parent_inode.create(dentry, ls_mode);
         }
         Err(e) => {
-            panic!("create {} failed: {}", ls_path, e);
+            panic!("create {} failed: {:?}", ls_path, e);
         }
     };
 
@@ -249,12 +250,12 @@ pub fn do_mount(
     fs_type: String,
     flags: usize,
     _data: *const u8,
-) -> isize {
+) -> SyscallRet {
     // user_path_at
     // 需要把dev_name先转换成BlockDevice?
     // path_mount
     // 最后更新全局的Mount Tree
-    0
+    Ok(0)
 }
 
 pub fn ext4_list_apps(root_inode: Arc<dyn InodeOp>) {

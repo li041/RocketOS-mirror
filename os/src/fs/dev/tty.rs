@@ -25,6 +25,7 @@ use crate::{
         path::Path,
         uapi::DevT,
     },
+    syscall::errno::{Errno, SyscallRet},
     task::{yield_current_task, Tid},
 };
 
@@ -301,16 +302,16 @@ impl FileOp for TtyFile {
         print!("{}", core::str::from_utf8(buf).unwrap());
         buf.len()
     }
-    fn ioctl(&self, op: usize, arg_ptr: usize) -> isize {
+    fn ioctl(&self, op: usize, arg_ptr: usize) -> SyscallRet {
         log::info!("[TtyFile::ioctl] op: {:#x}, arg_ptr: {:#x}", op, arg_ptr);
         let op: TtyIoctlCmd = unsafe { core::mem::transmute(op) };
         match op {
             TtyIoctlCmd::TCGETS | TtyIoctlCmd::TCGETA => {
                 match copy_to_user(arg_ptr as *mut Termios, &(self.inner.read().termios), 1) {
-                    Ok(_) => 0,
+                    Ok(_) => Ok(0),
                     Err(_) => {
                         log::error!("[TtyFile::ioctl] copy_to_user failed");
-                        -1
+                        return Err(Errno::EINVAL);
                     }
                 }
             }
@@ -318,55 +319,55 @@ impl FileOp for TtyFile {
                 match copy_from_user(arg_ptr as *const Termios, 1) {
                     Ok(termios) => {
                         self.inner.write().termios = termios[0];
-                        0
+                        Ok(0)
                     }
                     Err(_) => {
                         log::error!("[TtyFile::ioctl] copy_from_user failed");
-                        -1
+                        return Err(Errno::EINVAL);
                     }
                 }
             }
             TtyIoctlCmd::TIOCGPGRP => {
                 let fd_pgid = self.inner.read().fg_pgid;
                 match copy_to_user(arg_ptr as *mut Tid, &fd_pgid, 1) {
-                    Ok(_) => 0,
+                    Ok(_) => Ok(0),
                     Err(_) => {
                         log::error!("[TtyFile::ioctl] copy_to_user failed");
-                        -1
+                        return Err(Errno::EINVAL);
                     }
                 }
             }
             TtyIoctlCmd::TIOCSPGRP => match copy_from_user(arg_ptr as *const Tid, 1) {
                 Ok(pgid) => {
                     self.inner.write().fg_pgid = pgid[0];
-                    0
+                    Ok(0)
                 }
-                Err(_) => {
+                Err(e) => {
                     log::error!("[TtyFile::ioctl] copy_from_user failed");
-                    -1
+                    return Err(Errno::EINVAL);
                 }
             },
             TtyIoctlCmd::TIOCGWINSZ => {
                 let win_size = self.inner.read().win_size;
                 match copy_to_user(arg_ptr as *mut WinSize, &win_size, 1) {
-                    Ok(_) => 0,
-                    Err(_) => {
+                    Ok(_) => Ok(0),
+                    Err(e) => {
                         log::error!("[TtyFile::ioctl] copy_to_user failed");
-                        -1
+                        return Err(e);
                     }
                 }
             }
             TtyIoctlCmd::TIOCSWINSZ => match copy_from_user(arg_ptr as *const WinSize, 1) {
                 Ok(win_size) => {
                     self.inner.write().win_size = win_size[0];
-                    0
+                    Ok(0)
                 }
                 Err(_) => {
                     log::error!("[TtyFile::ioctl] copy_from_user failed");
-                    -1
+                    return Err(Errno::EFAULT);
                 }
             },
-            TtyIoctlCmd::TCSBRK => 0,
+            TtyIoctlCmd::TCSBRK => Ok(0),
             _ => {
                 panic!("[TtyFile::ioctl] Unsupported ioctl cmd: {:?}", op);
             }

@@ -33,7 +33,7 @@ pub fn init_devfs(root_path: Arc<Path>) {
             parent_inode.mkdir(dentry, dev_mode);
         }
         Err(e) => {
-            panic!("create {} failed: {}", dev_path, e);
+            panic!("create {} failed: {:?}", dev_path, e);
         }
     };
     // /dev/tty
@@ -59,7 +59,7 @@ pub fn init_devfs(root_path: Arc<Path>) {
             TTY.call_once(|| tty_file.clone());
         }
         Err(e) => {
-            panic!("create {} failed: {}", tty_path, e);
+            panic!("create {} failed: {:?}", tty_path, e);
         }
     };
     // /dev/rtc
@@ -85,7 +85,7 @@ pub fn init_devfs(root_path: Arc<Path>) {
             RTC.call_once(|| rtc_file.clone());
         }
         Err(e) => {
-            panic!("create {} failed: {}", rtc_path, e);
+            panic!("create {} failed: {:?}", rtc_path, e);
         }
     }
 }

@@ -3,6 +3,7 @@ use crate::arch::timer::TimeSpec;
 use crate::ext4::inode::Ext4Inode;
 use crate::mm::Page;
 use crate::mutex::SpinNoIrqLock;
+use crate::syscall::errno::SyscallRet;
 use log::SetLoggerError;
 use spin::RwLock;
 
@@ -62,7 +63,7 @@ pub trait InodeOp: Any + Send + Sync {
         new_dentry: Arc<Dentry>,
         flags: RenameFlags,
         should_mv: bool,
-    ) -> Result<(), &'static str> {
+    ) -> SyscallRet {
         unimplemented!();
     }
     // self是目录inode, old_dentry是旧的目录项, new_dentry是新的目录项, 他们指向同一个inode

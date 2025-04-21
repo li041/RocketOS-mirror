@@ -1,4 +1,4 @@
-use core::{arch::asm, ptr::read_volatile};
+use core::{arch::asm, ops::Add, ptr::read_volatile};
 
 use crate::utils::{seconds_to_beijing_datetime, DateTime};
 
@@ -7,13 +7,36 @@ use super::config::{self, CLOCK_FREQ};
 pub const TICKS_PER_SEC: usize = 100;
 const MSEC_PER_SEC: usize = 1000;
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 #[repr(C)]
 pub struct TimeSpec {
     // 秒数
     pub sec: usize,
     // 毫秒数中剩余的部分, 使用纳秒表示
     pub nsec: usize,
+}
+
+impl PartialOrd for TimeSpec {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        if self.sec == other.sec {
+            Some(self.nsec.cmp(&other.nsec))
+        } else {
+            Some(self.sec.cmp(&other.sec))
+        }
+    }
+}
+
+impl Add for TimeSpec {
+    type Output = Self;
+    fn add(self, rhs: Self) -> Self::Output {
+        let mut sec = self.sec + rhs.sec;
+        let mut nsec = self.nsec + rhs.nsec;
+        if nsec >= 1_000_000_000 {
+            sec += 1;
+            nsec -= 1_000_000_000;
+        }
+        Self { sec, nsec }
+    }
 }
 
 impl TimeSpec {

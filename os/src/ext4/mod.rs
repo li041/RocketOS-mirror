@@ -9,6 +9,7 @@ use crate::{
         uapi::{DevT, RenameFlags},
     },
     mm::Page,
+    syscall::errno::{Errno, SyscallRet},
 };
 use alloc::vec;
 use alloc::{
@@ -154,7 +155,7 @@ impl InodeOp for Ext4Inode {
         new_dentry: Arc<Dentry>,
         flags: RenameFlags,
         should_mv: bool,
-    ) -> Result<(), &'static str> {
+    ) -> SyscallRet {
         // Noreplace已经在上层调用者中检查过了, exchange还未支持
         if flags.contains(RenameFlags::EXCHANGE) {
             panic!("[rename] EXCHANGE not supported");
@@ -163,7 +164,7 @@ impl InodeOp for Ext4Inode {
             Some(entry) => entry,
             None => {
                 log::warn!("[rename] old_dentry not found");
-                return Err("old_dentry not found");
+                return Err(Errno::ENOENT);
             }
         };
         // 如果更新的old_dentry是目录, 且new_dentry所在的目录不同, 需要更新`..`条目, 使其指向new_dir
@@ -202,7 +203,7 @@ impl InodeOp for Ext4Inode {
                 Some(entry) => entry,
                 None => {
                     log::warn!("[rename] new_dentry not found");
-                    return Err("new_dentry not found");
+                    return Err(Errno::ENOENT);
                 }
             };
             assert!(old_dir_entry.file_type == new_dir_entry.file_type);
@@ -227,7 +228,7 @@ impl InodeOp for Ext4Inode {
         };
         // 删除旧目录项
         self.delete_entry(&old_name, old_inode_num);
-        return Ok(());
+        return Ok(0);
     }
     // 上层调用者保证:
     //  1.old_dentry不是负目录项, new_dentry是负目录项

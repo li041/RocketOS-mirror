@@ -7,6 +7,7 @@ use crate::{
         CrMd, TLBREHi, DMW0, DMW1, DMW2, DMW3, PWCH, PWCL, STLBPS,
     },
     mm::{MapPermission, VPNRange, VirtAddr},
+    syscall::errno::{Errno, SyscallRet},
     task::current_task,
 };
 
@@ -25,7 +26,7 @@ pub unsafe fn sfence_vma_vaddr(vaddr: usize) {
 }
 
 // Todo: 支持page fault预处理
-pub fn copy_to_user<T: Copy>(to: *mut T, from: *const T, n: usize) -> Result<usize, &'static str> {
+pub fn copy_to_user<T: Copy>(to: *mut T, from: *const T, n: usize) -> SyscallRet {
     log::trace!("[copy_to_user]");
     if to.is_null() || from.is_null() {
         log::error!(
@@ -33,7 +34,7 @@ pub fn copy_to_user<T: Copy>(to: *mut T, from: *const T, n: usize) -> Result<usi
             to as usize,
             from as usize
         );
-        return Err("null pointer");
+        return Err(Errno::EINVAL);
     }
     // 没有数据复制
     if n == 0 {
@@ -54,9 +55,6 @@ pub fn copy_to_user<T: Copy>(to: *mut T, from: *const T, n: usize) -> Result<usi
             .translate_va_to_pa(VirtAddr::from(to as usize))
             .unwrap()
     });
-    unsafe {
-        let data = from_raw_parts(from as *const u8, n);
-    }
     // 执行复制
     unsafe {
         let from_slice = from_raw_parts(from, n);
@@ -68,13 +66,13 @@ pub fn copy_to_user<T: Copy>(to: *mut T, from: *const T, n: usize) -> Result<usi
 
 /// to是用户的虚拟地址, 需要将其转换为内核使用的虚拟地址
 /// 由调用者保证n不为0
-pub fn copy_from_user<'a, T: Copy>(from: *const T, n: usize) -> Result<&'a [T], &'static str> {
+pub fn copy_from_user<'a, T: Copy>(from: *const T, n: usize) -> Result<&'a [T], Errno> {
     if from.is_null() {
-        return Err("null pointer");
+        return Err(Errno::EINVAL);
     }
     // 没有数据复制
     if n == 0 {
-        return Err("no data to copy");
+        return Err(Errno::EINVAL);
     }
     // 检查地址是否合法
     // 连续的虚拟地址在页表中的对应页表项很有可能是连续的(但不一定)
@@ -96,17 +94,14 @@ pub fn copy_from_user<'a, T: Copy>(from: *const T, n: usize) -> Result<&'a [T], 
 }
 
 /// to是用户的虚拟地址, 需要将其转换为内核使用的虚拟地址
-pub fn copy_from_user_mut<'a, T: Copy>(
-    from: *mut T,
-    n: usize,
-) -> Result<&'a mut [T], &'static str> {
+pub fn copy_from_user_mut<'a, T: Copy>(from: *mut T, n: usize) -> Result<&'a mut [T], Errno> {
     log::trace!("[copy_from_user_mut]");
     if from.is_null() {
-        return Err("null pointer");
+        return Err(Errno::EINVAL);
     }
     // 没有数据复制
     if n == 0 {
-        return Err("no data to copy");
+        return Err(Errno::EINVAL);
     }
     // 检查地址是否合法
     // 连续的虚拟地址在页表中的对应页表项很有可能是连续的(但不一定)
@@ -116,8 +111,6 @@ pub fn copy_from_user_mut<'a, T: Copy>(
     current_task().op_memory_set_mut(|memory_set| {
         memory_set.check_valid_user_vpn_range(vpn_range, MapPermission::R)
     })?;
-    // debug
-    log::error!("valid vpn range");
     // 将用户的虚拟地址转换为内核的虚拟地址(由于直接映射, 在数值上等于物理地址)
     return current_task().op_memory_set_mut(|memory_set| {
         let from = memory_set

@@ -8,6 +8,7 @@ extern crate alloc;
 
 #[macro_use]
 mod console;
+pub mod futex;
 pub mod index_list;
 mod loader;
 mod logging;
