@@ -897,6 +897,7 @@ pub enum TaskStatus {
 
 bitflags! {
     /// Open file flags
+    #[derive(Debug)]
     pub struct CloneFlags: u32 {
         // SIGCHLD 是一个信号，在UNIX和类UNIX操作系统中，当一个子进程改变了它的状态时，内核会向其父进程发送这个信号。这个信号可以用来通知父进程子进程已经终止或者停止了。父进程可以采取适当的行动，比如清理资源或者等待子进程的状态。
         // 以下是SIGCHLD信号的一些常见用途：

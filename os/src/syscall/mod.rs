@@ -10,6 +10,7 @@
 //! `sys_` then the name of the syscall. You can find functions like this in
 //! submodules, and you should also implement syscalls this way.
 
+use errno::{Errno, SyscallRet};
 use fs::{
     sys_chdir, sys_close, sys_dup, sys_dup3, sys_faccessat, sys_fcntl, sys_fstat, sys_fstatat,
     sys_getcwd, sys_getdents64, sys_ioctl, sys_linkat, sys_lseek, sys_mkdirat, sys_mknodat,
@@ -22,8 +23,8 @@ use signal::{
     sys_rt_sigsuspend, sys_rt_sigtimedwait, sys_tgkill, sys_tkill,
 };
 use task::{
-    sys_clone, sys_execve, sys_get_time, sys_getpid, sys_getppid, sys_nanosleep, sys_waitpid,
-    sys_yield,
+    sys_clone, sys_execve, sys_futex, sys_get_time, sys_getpid, sys_getppid, sys_nanosleep,
+    sys_waitpid, sys_yield,
 };
 use util::{sys_clock_gettime, sys_prlimit64, sys_syslog, sys_times, sys_uname};
 
@@ -37,6 +38,7 @@ use crate::{
 };
 pub use fs::FcntlOp;
 pub use task::sys_exit;
+pub mod errno;
 mod fs;
 mod mm;
 mod signal;
@@ -74,6 +76,7 @@ const SYSCALL_UTIMENSAT: usize = 88;
 const SYSCALL_EXIT: usize = 93;
 const SYS_EXIT_GROUP: usize = 94;
 const SYSCALL_SET_TID_ADDRESS: usize = 96;
+const SYSCALL_FUTEX: usize = 98;
 const SYSCALL_SET_ROBUST_LIST: usize = 99;
 const SYSCALL_NANOSLEEP: usize = 101;
 const SYSCALL_CLOCK_GETTIME: usize = 113;
@@ -135,7 +138,9 @@ pub fn syscall(
     a5: usize,
     _a6: usize,
     syscall_id: usize,
-) -> isize {
+) -> SyscallRet {
+    // 神奇小咒语
+    log::trace!("[syscall]");
     if !CARELESS_SYSCALLS.contains(&syscall_id) {
         log::warn!("syscall_id: {}", syscall_id);
     }
@@ -183,9 +188,10 @@ pub fn syscall(
         SYSCALL_FSTATAT => sys_fstatat(a0 as i32, a1 as *const u8, a2 as *mut Stat, a3 as i32),
         SYSCALL_FSTAT => sys_fstat(a0 as i32, a1 as *mut Stat),
         SYSCALL_UTIMENSAT => {
-            sys_utimensat(a0 as i32, a1 as *const u8, a2 as *const TimeSpec, a4 as i32)
+            sys_utimensat(a0 as i32, a1 as *const u8, a2 as *const TimeSpec, a3 as i32)
         }
         SYSCALL_EXIT => sys_exit(a0 as i32),
+        SYSCALL_FUTEX => sys_futex(a0, a1 as i32, a2 as u32, a3, a4, a5 as u32),
         SYSCALL_NANOSLEEP => sys_nanosleep(a0),
         SYSCALL_CLOCK_GETTIME => sys_clock_gettime(a0, a1 as *mut TimeSpec),
         SYSCALL_SYSLOG => sys_syslog(a0, a1 as *mut u8, a3),
@@ -243,7 +249,7 @@ pub fn syscall(
                     .map(|x| x.1)
                     .unwrap_or("Unknown")
             );
-            -1
+            Err(Errno::ENOSYS)
         }
     }
 }

@@ -6,7 +6,12 @@ use log::info;
 use spin::RwLock;
 use virtio_drivers::PAGE_SIZE;
 
-use crate::{arch::config::PAGE_SIZE_BITS, mm::Page, mutex::SpinNoIrqLock};
+use crate::{
+    arch::config::PAGE_SIZE_BITS,
+    mm::Page,
+    mutex::SpinNoIrqLock,
+    syscall::errno::{Errno, SyscallRet},
+};
 
 use super::{
     dentry::{Dentry, LinuxDirent64},
@@ -79,8 +84,8 @@ pub trait FileOp: Any + Send + Sync {
     fn w_ready(&self) -> bool {
         unimplemented!();
     }
-    fn ioctl(&self, _op: usize, _arg_ptr: usize) -> isize {
-        -ENOTTY
+    fn ioctl(&self, _op: usize, _arg_ptr: usize) -> SyscallRet {
+        Err(Errno::ENOTTY)
     }
 }
 
@@ -128,14 +133,14 @@ impl File {
         self.inner_handler(|inner| inner.inode.can_lookup())
     }
 
-    pub fn readdir(&self) -> Result<Vec<LinuxDirent64>, &'static str> {
+    pub fn readdir(&self) -> Result<Vec<LinuxDirent64>, Errno> {
         if self.is_dir() {
             let (offset, linux_dirents) =
                 self.inner_handler(|inner| inner.inode.getdents(inner.offset));
             self.add_offset(offset);
             return Ok(linux_dirents);
         }
-        return Err("not a directory");
+        return Err(Errno::ENOTDIR);
     }
 }
 

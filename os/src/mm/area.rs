@@ -128,6 +128,7 @@ impl MapArea {
             MapType::Filebe => {
                 for vpn in self.vpn_range {
                     // 文件映射, 应该在缺页时处理
+                    log::error!("[MapArea::map] unexpected filebe mapping");
                     let offset = self.offset
                         + (self.vpn_range.get_start().0 - self.vpn_range.get_start().0) * PAGE_SIZE;
                     let page = self

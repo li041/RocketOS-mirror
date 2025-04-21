@@ -13,7 +13,7 @@ use riscv::register::{
 };
 
 use crate::{
-    arch::mm::PageTable, mm::VirtAddr, signal::handle_signal, syscall::syscall, task::{current_task, yield_current_task}
+    arch::mm::PageTable, mm::VirtAddr, signal::handle_signal, syscall::{self, errno::Errno, syscall}, task::{current_task, yield_current_task}
 };
 
 use super::timer::set_next_trigger;
@@ -83,9 +83,28 @@ pub fn trap_handler(cx: &mut TrapContext) {
     match scause.cause() {
         Trap::Exception(Exception::UserEnvCall) => {
             cx.sepc += 4;
-            cx.x[10] = syscall(
-                cx.x[10], cx.x[11], cx.x[12], cx.x[13], cx.x[14], cx.x[15], cx.x[16], cx.x[17],
-            ) as usize;
+            // cx.x[10] = syscall(
+            //     cx.x[10], cx.x[11], cx.x[12], cx.x[13], cx.x[14], cx.x[15], cx.x[16], cx.x[17],
+            // ). as usize;
+            cx.x[10] = match syscall(
+                cx.x[10],
+                cx.x[11],
+                cx.x[12],
+                cx.x[13],
+                cx.x[14],
+                cx.x[15],
+                cx.x[16],
+                cx.x[17],
+            ) {
+                Ok(ret) => ret as usize,
+                Err(e) => {
+                    // 在开发阶段, 如果发生了EFAULT, 直接panic
+                    if e == Errno::EFAULT {
+                        panic!("EFAULT in syscall");
+                    }
+                    e as usize
+                }
+            }
         }
         Trap::Exception(Exception::InstructionFault)
         => {

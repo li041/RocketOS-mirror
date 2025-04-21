@@ -24,6 +24,7 @@ use crate::{
         fdtable::{FdEntry, FdFlags},
         AT_FDCWD,
     },
+    syscall::errno::Errno,
     task::current_task,
 };
 use alloc::{
@@ -176,7 +177,7 @@ pub fn open_last_lookups(
     nd: &mut Nameidata,
     flags: OpenFlags,
     mode: usize,
-) -> Result<Arc<dyn FileOp>, isize> {
+) -> Result<Arc<dyn FileOp>, Errno> {
     const MAX_SYMLINK_DEPTH: usize = 40;
     let mut follow_symlink = 0;
 
@@ -184,7 +185,7 @@ pub fn open_last_lookups(
 
     loop {
         if follow_symlink > MAX_SYMLINK_DEPTH {
-            return Err(-ELOOP); // 避免符号链接循环
+            return Err(Errno::ELOOP); // 避免符号链接循环
         }
 
         log::error!(
@@ -206,7 +207,7 @@ pub fn open_last_lookups(
             if !dentry.is_negative() {
                 if dentry.is_symlink() {
                     if flags.contains(OpenFlags::O_NOFOLLOW) {
-                        return Err(-ELOOP);
+                        return Err(Errno::ELOOP);
                     }
                     let symlink_target = dentry.get_inode().get_link();
                     log::warn!(
@@ -238,7 +239,7 @@ pub fn open_last_lookups(
                     assert!(!new_dentry.is_negative());
                     new_dentry
                 } else {
-                    return Err(-ENOENT);
+                    return Err(Errno::ENOENT);
                 }
             }
         };
@@ -252,7 +253,7 @@ fn create_file_from_dentry(
     dentry: Arc<Dentry>,
     mount: Arc<VfsMount>,
     flags: OpenFlags,
-) -> Result<Arc<dyn FileOp>, isize> {
+) -> Result<Arc<dyn FileOp>, Errno> {
     let inode = dentry.get_inode();
     let file_type = inode.get_mode() & S_IFMT;
 
@@ -406,7 +407,7 @@ pub fn path_openat(
     flags: OpenFlags,
     dfd: i32,
     mode: usize,
-) -> Result<Arc<dyn FileOp>, isize> {
+) -> Result<Arc<dyn FileOp>, Errno> {
     // 解析路径的目录部分，遇到最后一个组件时停止
     // Todo: 正常有符号链接的情况下, 这里应该是一个循环
     let mut nd = Nameidata::new(path, dfd);
@@ -458,7 +459,7 @@ const EEXIST: isize = 17;
 // 创建新文件或目录时用于解析路径, 获得对应的`dentry`
 // 同时检查路径是否存在, 若存在则返回错误
 // 预期的返回值是负目录项(已建立父子关系)
-pub fn filename_create(nd: &mut Nameidata, _lookup_flags: usize) -> Result<Arc<Dentry>, isize> {
+pub fn filename_create(nd: &mut Nameidata, _lookup_flags: usize) -> Result<Arc<Dentry>, Errno> {
     let mut error: i32;
     // 解析路径的目录部分，调用后nd.dentry是最后一个组件的父目录
     match link_path_walk(nd) {
@@ -467,14 +468,14 @@ pub fn filename_create(nd: &mut Nameidata, _lookup_flags: usize) -> Result<Arc<D
             let mut absolute_current_dir = nd.dentry.absolute_path.clone();
             // 处理`.`和`..`, 最后一个组件不能是`.`或`..`, 不合法
             if nd.path_segments[nd.depth] == "." {
-                return Err(-EEXIST);
+                return Err(Errno::EEXIST);
             } else if nd.path_segments[nd.depth] == ".." {
-                return Err(-EEXIST);
+                return Err(Errno::EEXIST);
             } else {
                 // name是String
                 let dentry = lookup_dentry(nd);
                 if !dentry.is_negative() {
-                    return Err(-EEXIST);
+                    return Err(Errno::EEXIST);
                 }
                 return Ok(dentry);
             }
@@ -486,7 +487,7 @@ pub fn filename_create(nd: &mut Nameidata, _lookup_flags: usize) -> Result<Arc<D
 }
 
 /// 根据路径查找inode, 如果不存在, 则返回error
-pub fn filename_lookup(nd: &mut Nameidata, _lookup_flags: usize) -> Result<Arc<Dentry>, isize> {
+pub fn filename_lookup(nd: &mut Nameidata, _lookup_flags: usize) -> Result<Arc<Dentry>, Errno> {
     let mut error: i32;
     match link_path_walk(nd) {
         Ok(_) => {
@@ -501,7 +502,7 @@ pub fn filename_lookup(nd: &mut Nameidata, _lookup_flags: usize) -> Result<Arc<D
                 // name是String
                 let dentry = lookup_dentry(nd);
                 if dentry.is_negative() {
-                    return Err(-ENOENT);
+                    return Err(Errno::ENOENT);
                 }
                 return Ok(dentry);
             }
@@ -523,7 +524,7 @@ const ENOENT: isize = 2;
 /// basic name resolution function: path -> dentry
 /// 解析路径的父目录部分，找到 dentry。
 /// 如果是符号链接, 则返回解析后的链接目标
-pub fn link_path_walk(nd: &mut Nameidata) -> Result<String, isize> {
+pub fn link_path_walk(nd: &mut Nameidata) -> Result<String, Errno> {
     assert!(!nd.dentry.is_negative());
     log::info!("[link_path_walk] path: {:?}", nd.path_segments);
     // 解析路径的目录部分，遇到最后一个组件时停止检查最后一个路径分量
@@ -543,11 +544,11 @@ pub fn link_path_walk(nd: &mut Nameidata) -> Result<String, isize> {
             let mut dentry = lookup_dentry(nd);
             // 路径组件不存在
             if dentry.is_negative() {
-                return Err(-ENOENT);
+                return Err(Errno::ENOENT);
             }
             while dentry.is_symlink() {
                 if symlink_count > SYMLINK_MAX {
-                    return Err(-ELOOP); // 防止无限循环解析符号链接
+                    return Err(Errno::ELOOP); // 防止无限循环解析符号链接
                 }
                 symlink_count += 1;
                 let symlink_target = dentry.get_inode().get_link(); // 读取符号链接目标
@@ -563,12 +564,12 @@ pub fn link_path_walk(nd: &mut Nameidata) -> Result<String, isize> {
                 // 重新查找
                 dentry = lookup_dentry(nd);
                 if dentry.is_negative() {
-                    return Err(-ENOENT);
+                    return Err(Errno::ENOENT);
                 }
             }
             // 确保最终路径是目录
             if !dentry.get_inode().can_lookup() {
-                return Err(-ENOTDIR);
+                return Err(Errno::ENOTDIR);
             }
             nd.depth += 1;
             nd.dentry = dentry;

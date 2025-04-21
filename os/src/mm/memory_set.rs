@@ -5,10 +5,12 @@ use super::{address::StepByOne, area::MapArea, VPNRange};
 use crate::{
     arch::mm::{sfence_vma_vaddr, PTEFlags, PageTable, PageTableEntry},
     fs::{fdtable::FdFlags, file::OpenFlags},
+    futex::futex::SharedMappingInfo,
     mm::{
         area::{MapPermission, MapType},
         frame_alloc, FrameTracker, PhysAddr, PhysPageNum, VirtAddr, VirtPageNum,
     },
+    syscall::errno::{Errno, SyscallRet},
     task::current_task,
 };
 
@@ -736,6 +738,55 @@ impl MemorySet {
 
 /// 操纵mmap_area的方法
 impl MemorySet {
+    // used by Futex
+    // 共享区域:
+    //    1. 匿名共享区域
+    //    2. 文件共享区域
+    pub fn get_shared_mmaping_info(&self, vaddr: VirtAddr) -> Option<SharedMappingInfo> {
+        let offset = (vaddr.0 % PAGE_SIZE) as u32;
+        let vpn = vaddr.floor();
+        if let Some((start_vpn, area)) = self.areas.range(..=vpn).next_back() {
+            if area.vpn_range.contains_vpn(vpn) {
+                // 共享区域
+                if area.is_shared() {
+                    if area.map_type == MapType::Filebe {
+                        // 文件映射
+                        let inode_addr =
+                            Arc::as_ptr(&area.backend_file.as_ref().unwrap().get_inode())
+                                as *const () as u64;
+                        let page_index = ((vaddr.0 - start_vpn.0 * PAGE_SIZE) / PAGE_SIZE) as u64;
+                        return Some(SharedMappingInfo {
+                            inode_addr,
+                            page_index,
+                            offset,
+                        });
+                    } else {
+                        // 匿名映射
+                        let page_index = ((vaddr.0 - start_vpn.0 * PAGE_SIZE) / PAGE_SIZE) as u64;
+                        let page_ppn = self.page_table.translate_vpn_to_pte(vpn).unwrap().ppn();
+                        log::warn!(
+                            "[MemorySet::get_shared_mmaping_info] pages_addr: {:#x}, page_index: {:#x}",
+                            page_ppn.0, page_index
+                        );
+                        return Some(SharedMappingInfo {
+                            inode_addr: page_ppn.0 as u64,
+                            page_index,
+                            offset,
+                        });
+                    }
+                }
+                panic!(
+                    "[MemorySet::get_shared_mmaping_info] area is not shared, vpn: {:#x}~{:#x}",
+                    area.vpn_range.get_start().0,
+                    area.vpn_range.get_end().0
+                );
+            }
+        }
+        panic!(
+            "[MemorySet::get_shared_mmaping_info] can't find area that contains vpn {:#x}",
+            vpn.0
+        );
+    }
     /// 由caller保证区域没有冲突, 且start_va和end_va是页对齐的
     /// 插入mmap的空白区域
     /// used by `sys_mmap`
@@ -852,28 +903,60 @@ impl MemorySet {
     // 使用`MapArea`做检查, 而不是查页表
     // 要保证MapArea与页表的一致性, 也就是说, 页表中的映射都在MapArea中, MapArea中的映射都在页表中
     // 检查用户传进来的虚拟地址的合法性
+    // pub fn check_valid_user_vpn_range(
+    //     &self,
+    //     vpn_range: VPNRange,
+    //     wanted_map_perm: MapPermission,
+    // ) -> SyscallRet {
+    //     log::trace!("[check_valid_user_vpn_range]");
+    //     let mut current_vpn = vpn_range.get_start();
+    //     let end_vpn = vpn_range.get_end();
+
+    //     while current_vpn < end_vpn {
+    //         let mut found = false;
+
+    //         for (_, area) in self.areas.iter() {
+    //             if area.vpn_range.contains_vpn(current_vpn) {
+    //                 if !area.map_perm.contains(wanted_map_perm) {
+    //                     return Err(Errno::EACCES);
+    //                 }
+    //                 current_vpn = core::cmp::min(area.vpn_range.get_end(), end_vpn);
+    //                 found = true;
+    //                 break;
+    //             }
+    //         }
+
+    //         if !found {
+    //             return Err(Errno::EFAULT);
+    //         }
+    //     }
+
+    //     Ok(0)
+    // }
+
     pub fn check_valid_user_vpn_range(
         &self,
         vpn_range: VPNRange,
         wanted_map_perm: MapPermission,
-    ) -> Result<(), &'static str> {
+    ) -> SyscallRet {
         let areas = self.areas.iter().rev();
         for (_, area) in areas {
             if area.vpn_range.is_contain(&vpn_range) {
                 if area.map_perm.contains(wanted_map_perm) {
-                    return Ok(());
+                    return Ok(0);
                 } else {
-                    return Err("invalid virtual permission");
+                    return Err(Errno::EACCES);
                 }
             }
         }
-        return Err("invalid virtual address");
+        return Err(Errno::EFAULT);
     }
+
     // 检查是否是COW或者lazy_allocation的区域
     // 逐页处理
     // used by `copy_to_user`, 不仅会检查, 还会提前处理, 避免实际写的时候发生page fault
     // 由调用者保证pte存在
-    pub fn pre_handle_cow(&mut self, vpn_range: VPNRange) -> Result<(), &'static str> {
+    pub fn pre_handle_cow(&mut self, vpn_range: VPNRange) -> SyscallRet {
         let mut vpn = vpn_range.get_start();
         while vpn < vpn_range.get_end() {
             if let Some(pte) = self.page_table.find_pte(vpn) {
@@ -920,7 +1003,7 @@ impl MemorySet {
             // 继续处理下一页
             vpn.step();
         }
-        return Ok(());
+        return Ok(0);
     }
     /// 处理可恢复的缺页异常
     /// 1. Cow区域

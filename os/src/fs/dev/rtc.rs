@@ -8,6 +8,7 @@ use crate::{
         path::Path,
         uapi::DevT,
     },
+    syscall::errno::{Errno, SyscallRet},
     utils::DateTime,
 };
 
@@ -162,7 +163,7 @@ impl FileOp for RtcFile {
     fn write<'a>(&'a self, buf: &'a [u8]) -> usize {
         unimplemented!();
     }
-    fn ioctl(&self, op: usize, arg_ptr: usize) -> isize {
+    fn ioctl(&self, op: usize, arg_ptr: usize) -> SyscallRet {
         let current_time = TimeSpec::new_wall_time();
         let date_time = DateTime::from(&current_time);
         let rtc_time = RtcTime {
@@ -181,12 +182,12 @@ impl FileOp for RtcFile {
             RtcIoctlCmd::RTC_RD_TIME => {
                 // 读取 RTC 时间
                 if arg_ptr == 0 {
-                    return -1;
+                    return Err(Errno::EINVAL);
                 }
                 let buf_ptr = arg_ptr as *mut RtcTime;
                 log::error!("RTC_RD_TIME: buf_ptr = {:#X}", buf_ptr as usize,);
                 copy_to_user(buf_ptr, &rtc_time as *const RtcTime, 1);
-                return 0;
+                return Ok(0);
             }
             RtcIoctlCmd::RTC_SET_TIME => {
                 unimplemented!("RTC_SET_TIME");

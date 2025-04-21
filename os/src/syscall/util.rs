@@ -6,8 +6,11 @@ use crate::{
         timer::TimeSpec,
     },
     fs::uapi::{RLimit, Resource},
+    syscall::errno::Errno,
     task::{current_task, TASK_MANAGER},
 };
+
+use super::errno::SyscallRet;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -72,7 +75,7 @@ impl Default for Tms {
 /// fake uname  
 ///
 /// Todo?:
-pub fn sys_uname(uts: usize) -> isize {
+pub fn sys_uname(uts: usize) -> SyscallRet {
     log::info!("[sys_uname] uts: {:#x}", uts);
     let uts = uts as *mut Utsname;
     //Todo!: check validarity
@@ -81,20 +84,20 @@ pub fn sys_uname(uts: usize) -> isize {
     //     core::ptr::write(uts, utsname);
     // }
     copy_to_user(uts, &utsname as *const Utsname, 1).unwrap();
-    0
+    Ok(0)
 }
 
 /// fake sys_times
 /// Todo?:
 #[allow(unused)]
-pub fn sys_times(buf: usize) -> isize {
+pub fn sys_times(buf: usize) -> SyscallRet {
     let buf = buf as *mut Tms;
     let tms = Tms::default();
     // unsafe {
     //     core::ptr::write(buf, tms);
     // }
     copy_to_user(buf, &tms as *const Tms, 1).unwrap();
-    0
+    Ok(0)
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -135,7 +138,7 @@ impl TryFrom<usize> for SyslogAction {
     }
 }
 
-pub fn sys_syslog(log_type: usize, buf: *mut u8, len: usize) -> isize {
+pub fn sys_syslog(log_type: usize, buf: *mut u8, len: usize) -> SyscallRet {
     const LOG_BUF_LEN: usize = 4096;
     const LOG: &str = "<5>[    0.000000] Linux version 5.10.102.1-microsoft-standard-WSL2 (rtrt@TEAM-NPUCORE) (gcc (Ubuntu 9.4.0-1ubuntu1~20.04) 9.4.0, GNU ld (GNU Binutils for Ubuntu) 2.34) #1 SMP Thu Mar 10 13:31:47 CST 2022";
     // let token = current_user_token();
@@ -143,23 +146,17 @@ pub fn sys_syslog(log_type: usize, buf: *mut u8, len: usize) -> isize {
     let log = LOG.as_bytes();
     let len = LOG.len().min(len as usize);
     match log_type {
-        SyslogAction::CLOSE | SyslogAction::OPEN => 0,
-        SyslogAction::READ => {
-            copy_to_user(buf, log.as_ptr(), len).unwrap();
-            len as isize
-        }
-        SyslogAction::READ_ALL => {
-            copy_to_user(buf, log.as_ptr(), len).unwrap();
-            len as isize
-        }
+        SyslogAction::CLOSE | SyslogAction::OPEN => Ok(0),
+        SyslogAction::READ => copy_to_user(buf, log.as_ptr(), len),
+        SyslogAction::READ_ALL => copy_to_user(buf, log.as_ptr(), len),
         SyslogAction::READ_CLEAR => todo!(),
         SyslogAction::CLEAR => todo!(),
         SyslogAction::CONSOLE_OFF => todo!(),
         SyslogAction::CONSOLE_ON => todo!(),
         SyslogAction::CONSOLE_LEVEL => todo!(),
         SyslogAction::SIZE_UNREAD => todo!(),
-        SyslogAction::SIZE_BUFFER => LOG_BUF_LEN as isize,
-        SyslogAction::ILLEAGAL => -1,
+        SyslogAction::SIZE_BUFFER => Ok(LOG_BUF_LEN),
+        SyslogAction::ILLEAGAL => return Err(Errno::EINVAL),
     }
 }
 
@@ -169,7 +166,7 @@ pub fn sys_prlimit64(
     resource: i32,
     new_limit: *const RLimit,
     old_limit: *mut RLimit,
-) -> isize {
+) -> SyscallRet {
     // 根据tid获取操作的进程
     let task = if pid == 0 {
         current_task()
@@ -192,7 +189,7 @@ pub fn sys_prlimit64(
         task.set_rlimit(resource, &new_limit)
             .expect("[sys_prlimit64]: set rlimit failed");
     }
-    0
+    Ok(0)
 }
 
 // clockid
@@ -205,24 +202,24 @@ pub const CLOCK_MONOTONIC: usize = 1;
 pub const CLOCK_PROCESS_CPUTIME_ID: usize = 2;
 /// 用于测量调用线程消耗的CPU时间
 pub const CLOCK_THREAD_CPUTIME_ID: usize = 3;
-pub fn sys_clock_gettime(clock_id: usize, timespec: *mut TimeSpec) -> isize {
+pub fn sys_clock_gettime(clock_id: usize, timespec: *mut TimeSpec) -> SyscallRet {
     //如果tp是NULL, 函数不会存储时间值, 但仍然会执行其他检查（如 `clockid` 是否有效）。
     if timespec.is_null() {
-        return 0;
+        return Ok(0);
     }
     match clock_id {
         CLOCK_REALTIME => {
             let time = TimeSpec::new_wall_time();
-            copy_to_user(timespec, &time as *const TimeSpec, 1).unwrap();
+            copy_to_user(timespec, &time as *const TimeSpec, 1)?;
         }
         CLOCK_MONOTONIC => {
             let time = TimeSpec::new_machine_time();
-            copy_to_user(timespec, &time as *const TimeSpec, 1).unwrap();
+            copy_to_user(timespec, &time as *const TimeSpec, 1)?;
         }
         _ => {
             panic!("[sys_clock_gettime] invalid clock_id: {}", clock_id);
-            return -1;
+            return Err(Errno::EINVAL);
         }
     }
-    0
+    Ok(0)
 }

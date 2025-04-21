@@ -9,6 +9,7 @@ pub use page_table::{map_temp, PTEFlags, PageTable, PageTableEntry};
 
 use crate::{
     mm::{MapPermission, VPNRange, VirtAddr},
+    syscall::errno::{Errno, SyscallRet},
     task::current_task,
 };
 
@@ -32,9 +33,9 @@ pub fn check_va_mapping(va: usize) {
 /// Toread: linux/lib/usercopy.c
 /// 逐字节复制数据到用户空间, n为元素个数, 注意不是字节数
 /// 一般T是u8, 但是也可以是其他类型,
-pub fn copy_to_user<T: Copy>(to: *mut T, from: *const T, n: usize) -> Result<usize, &'static str> {
+pub fn copy_to_user<T: Copy>(to: *mut T, from: *const T, n: usize) -> SyscallRet {
     if to.is_null() || from.is_null() {
-        return Err("null pointer");
+        return Err(Errno::EINVAL);
     }
     // 没有数据复制
     if n == 0 {
@@ -45,6 +46,7 @@ pub fn copy_to_user<T: Copy>(to: *mut T, from: *const T, n: usize) -> Result<usi
     let start_vpn = VirtAddr::from(to as usize).floor();
     let end_vpn = VirtAddr::from(to as usize + n * core::mem::size_of::<T>()).ceil();
     let vpn_range = VPNRange::new(start_vpn, end_vpn);
+    log::error!("checked vpn range: {:?}", vpn_range);
     current_task().op_memory_set_mut(|memory_set| {
         memory_set.check_valid_user_vpn_range(vpn_range, MapPermission::W)?;
         memory_set.pre_handle_cow(vpn_range)

@@ -6,7 +6,7 @@ use crate::{
         mm::PageTable,
         tlbrelo::{TLBRELo0, TLBRELo1},
         Interrupt, TLBRBadV, TLBREHi, PGDL, PWCL, TLBRERA,
-    }, mm::VirtAddr, signal::handle_signal, syscall::syscall, task::{current_task, yield_current_task}
+    }, mm::VirtAddr, signal::handle_signal, syscall::{errno::Errno, syscall}, task::{current_task, yield_current_task}
 };
 
 use super::{register, Exception, TIClr, Trap, ERA};
@@ -66,9 +66,28 @@ pub fn trap_handler(cx: &mut TrapContext) {
     match cause {
         Trap::Exception(Exception::Syscall) => {
             cx.era += 4;
-            cx.r[4] = syscall(
-                cx.r[4], cx.r[5], cx.r[6], cx.r[7], cx.r[8], cx.r[9], cx.r[10], cx.r[11],
-            ) as usize;
+            // cx.r[4] = syscall(
+            //     cx.r[4], cx.r[5], cx.r[6], cx.r[7], cx.r[8], cx.r[9], cx.r[10], cx.r[11],
+            // ) as usize;
+            cx.r[4] = match syscall(
+                cx.r[4],
+                cx.r[5],
+                cx.r[6],
+                cx.r[7],
+                cx.r[8],
+                cx.r[9],
+                cx.r[10],
+                cx.r[11],
+            ) {
+                Ok(ret) => ret as usize,
+                Err(e) => {
+                    // 在开发阶段, 发生EFAULT时, 直接panic
+                    if e == Errno::EFAULT {
+                        panic!("EFAULT in syscall");
+                    }
+                    e as usize
+                }
+            };
         }
         Trap::Exception(Exception::PagePrivilegeIllegal)
         | Trap::Exception(Exception::PageNonReadableFault)

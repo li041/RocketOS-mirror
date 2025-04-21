@@ -23,7 +23,7 @@ pub fn init_tmpfs(root_path: Arc<Path>) {
             parent_inode.mkdir(dentry, tmp_mode);
         }
         Err(e) => {
-            panic!("create {} failed: {}", tmp_path, e);
+            panic!("create {} failed: {:?}", tmp_path, e);
         }
     };
 }

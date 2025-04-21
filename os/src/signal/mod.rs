@@ -167,7 +167,7 @@ pub fn handle_signal() {
                 };
                 let sig_context_ptr = &sig_context as *const SigContext;
                 if let Err(err) = copy_to_user(user_sig_context_ptr, sig_context_ptr, 1) {
-                    panic!("[handle_signal] copy_to_user failed: {}", err);
+                    panic!("[handle_signal] copy_to_user failed: {:?}", err);
                 }
                 // 修改栈顶trap的a0
                 trap_cx.set_a0(sig.raw() as usize);

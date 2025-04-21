@@ -8,19 +8,22 @@ use crate::{
     fs::file::File,
     index_list::{IndexList, ListIndex},
     mm::{MapArea, MapPermission, VPNRange, VirtAddr, VirtPageNum},
+    syscall::errno::Errno,
     task::current_task,
     utils::{ceil_to_page_size, floor_to_page_size},
 };
 use alloc::{string::String, vec::Vec};
 use bitflags::bitflags;
 
-pub fn sys_brk(brk: usize) -> isize {
+use super::errno::SyscallRet;
+
+pub fn sys_brk(brk: usize) -> SyscallRet {
     log::info!("sys_brk: brk: {:#x}", brk);
     let task = current_task();
     task.op_memory_set_mut(|memory_set| {
         // sbrk(0)是获取当前program brk(堆顶)
         if brk == 0 {
-            return memory_set.brk as isize;
+            return Ok(memory_set.brk);
         }
         let current_brk = memory_set.brk;
         let heap_bottom = memory_set.heap_bottom;
@@ -30,7 +33,7 @@ pub fn sys_brk(brk: usize) -> isize {
         if brk < heap_bottom {
             // brk小于堆底, 不合法
             log::error!("[sys_brk] brk {:#x} < heap_bottom {:#x}", brk, heap_bottom);
-            return -1;
+            return Err(Errno::EINVAL);
         } else if brk > ceil_to_page_size(current_brk) {
             // 需要分配页
             if current_brk == heap_bottom {
@@ -59,7 +62,7 @@ pub fn sys_brk(brk: usize) -> isize {
             // 页内偏移
         }
         memory_set.brk = brk;
-        0
+        Ok(0)
     })
 }
 
@@ -144,7 +147,7 @@ pub fn sys_mmap(
     flags: usize,
     fd: i32,
     offset: usize,
-) -> isize {
+) -> SyscallRet {
     use crate::mm::{MapArea, MapType};
 
     log::error!(
@@ -167,7 +170,7 @@ pub fn sys_mmap(
         || offset % PAGE_SIZE != 0
         || (flags.contains(MmapFlags::MAP_SHARED) && flags.contains(MmapFlags::MAP_PRIVATE))
     {
-        return -1;
+        return Err(Errno::EINVAL);
     }
 
     let mut map_perm: MapPermission = prot.into();
@@ -197,7 +200,7 @@ pub fn sys_mmap(
         // 需要fd为-1, offset为0
         // Todo: 支持lazy_allocation
         if fd != -1 || offset != 0 {
-            return -1;
+            return Err(Errno::EINVAL);
         }
         task.op_memory_set_mut(|memory_set| {
             let vpn_range = if flags.contains(MmapFlags::MAP_FIXED) {
@@ -214,7 +217,7 @@ pub fn sys_mmap(
                 "[sys_mmap] anonymous return {:#x}",
                 vpn_range.get_start().0 << PAGE_SIZE_BITS
             );
-            return (vpn_range.get_start().0 << PAGE_SIZE_BITS) as isize;
+            return Ok(vpn_range.get_start().0 << PAGE_SIZE_BITS);
         })
     } else {
         // 文件私有映射, 写时复制, 不会影响页缓存, 共享映射会影响页缓存, 并且可能会写回磁盘(`msync`)
@@ -235,16 +238,16 @@ pub fn sys_mmap(
                 "[sys_mmap] file return {:#x}",
                 vpn_range.get_start().0 << PAGE_SIZE_BITS
             );
-            return (vpn_range.get_start().0 << PAGE_SIZE_BITS) as isize;
+            return Ok(vpn_range.get_start().0 << PAGE_SIZE_BITS);
         })
     }
 }
 
 // Todo: 目前只支持取消文件映射, 需要支持匿名映射
-pub fn sys_munmap(start: usize, len: usize) -> isize {
+pub fn sys_munmap(start: usize, len: usize) -> SyscallRet {
     // start必须页对齐, 且要大于等于MMAP_MIN_ADDR
     if start % PAGE_SIZE != 0 || len == 0 || start < MMAP_MIN_ADDR {
-        return -22;
+        return Err(Errno::EINVAL);
     }
     let start_vpn = VirtPageNum::from(start >> PAGE_SIZE_BITS);
     let end_vpn = VirtPageNum::from(ceil_to_page_size(start + len) >> PAGE_SIZE_BITS);
@@ -263,11 +266,11 @@ pub fn sys_munmap(start: usize, len: usize) -> isize {
             log::warn!("[sys_munmap] {:#x} not found", start);
         }
     });
-    0
+    Ok(0)
 }
 
 ///
-pub fn sys_mprotect(addr: usize, size: usize, prot: i32) -> isize {
+pub fn sys_mprotect(addr: usize, size: usize, prot: i32) -> SyscallRet {
     log::info!(
         "sys_mprotect: addr: {:#x}, size: {:#x}, prot: {:#x}",
         addr,
@@ -276,7 +279,7 @@ pub fn sys_mprotect(addr: usize, size: usize, prot: i32) -> isize {
     );
     // addr必须页对齐
     if addr % PAGE_SIZE != 0 {
-        return -1;
+        return Err(Errno::EINVAL);
     }
     let prot = MmapProt::from_bits(prot as u32).unwrap();
     let map_perm_from_prot: MapPermission = prot.into();
@@ -352,15 +355,15 @@ pub fn sys_mprotect(addr: usize, size: usize, prot: i32) -> isize {
                         .into_iter()
                         .map(|area| (area.vpn_range.get_start(), area)),
                 );
-                return 0;
+                return Ok(0);
             }
-            // 没有找到指定地址范围的映射, 直接返回-1
-            return -1;
+            // 没有找到指定地址范围的映射
+            return Err(Errno::ENOMEM);
         }
-        // 没有找到指定地址范围的映射, 直接返回-1
-        return -1;
+        // 没有找到指定地址范围的映射
+        return Err(Errno::ENOMEM);
     });
-    return found;
+    found
 }
 
 pub fn sys_mremap(
@@ -384,7 +387,7 @@ pub fn sys_mremap(
     }
 }
 // Todo:
-pub fn sys_madvise(addr: usize, len: usize, advice: i32) -> isize {
+pub fn sys_madvise(addr: usize, len: usize, advice: i32) -> SyscallRet {
     log::info!(
         "sys_madvise: addr: {:#x}, len: {:#x}, advice: {:#x}",
         addr,
@@ -394,8 +397,8 @@ pub fn sys_madvise(addr: usize, len: usize, advice: i32) -> isize {
     log::warn!("[sys_madvise] Unimplemented");
     // addr必须页对齐
     if addr % PAGE_SIZE != 0 {
-        return -1;
+        return Err(Errno::EINVAL);
     }
     // Todo:
-    0
+    Ok(0)
 }

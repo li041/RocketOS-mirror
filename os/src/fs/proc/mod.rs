@@ -32,7 +32,7 @@ pub fn init_procfs(root_path: Arc<Path>) {
             parent_inode.mkdir(dentry, proc_mode);
         }
         Err(e) => {
-            panic!("create {} failed: {}", proc_path, e);
+            panic!("create {} failed: {:?}", proc_path, e);
         }
     };
     // /proc/mounts
@@ -59,7 +59,7 @@ pub fn init_procfs(root_path: Arc<Path>) {
             MOUNTS.call_once(|| mounts_file.clone());
         }
         Err(e) => {
-            panic!("create {} failed: {}", mounts_path, e);
+            panic!("create {} failed: {:?}", mounts_path, e);
         }
     };
     // /proc/meminfo
@@ -86,7 +86,7 @@ pub fn init_procfs(root_path: Arc<Path>) {
             MEMINFO.call_once(|| meminfo_file.clone());
         }
         Err(e) => {
-            panic!("create {} failed: {}", mounts_path, e);
+            panic!("create {} failed: {:?}", mounts_path, e);
         }
     };
 }
