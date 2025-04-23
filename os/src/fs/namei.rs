@@ -20,7 +20,7 @@ use crate::{
     },
     fs::{
         dentry::DentryFlags,
-        dev::{null::NULL, rtc::RTC},
+        dev::{null::NULL, rtc::RTC, zero::ZERO},
         fdtable::{FdEntry, FdFlags},
         AT_FDCWD,
     },
@@ -280,7 +280,8 @@ fn create_file_from_dentry(
                     NULL.get().unwrap().clone()
                 } // /dev/null
                 (1, 5) => {
-                    unimplemented!();
+                    assert!(dentry.absolute_path == "/dev/zero");
+                    ZERO.get().unwrap().clone()
                 } // /dev/zero
                 (5, 0) => {
                     assert!(dentry.absolute_path == "/dev/tty");
@@ -290,7 +291,10 @@ fn create_file_from_dentry(
                     assert!(dentry.absolute_path == "/dev/rtc");
                     RTC.get().unwrap().clone()
                 } // /dev/rtc
-                _ => panic!("[create_file_from_dentry]Unsupported device"),
+                _ => panic!(
+                    "[create_file_from_dentry]Unsupported device, devt: {:?}",
+                    inode.get_devt()
+                ),
             }
         }
         _ => {

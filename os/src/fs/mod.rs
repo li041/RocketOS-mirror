@@ -21,6 +21,7 @@ pub use old::{FileMeta, FileOld};
 
 pub mod dentry;
 pub mod dev;
+pub mod etc;
 pub mod fdtable;
 pub mod file;
 pub mod inode;

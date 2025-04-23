@@ -14,8 +14,9 @@ use errno::{Errno, SyscallRet};
 use fs::{
     sys_chdir, sys_close, sys_dup, sys_dup3, sys_faccessat, sys_fcntl, sys_fstat, sys_fstatat,
     sys_getcwd, sys_getdents64, sys_ioctl, sys_linkat, sys_lseek, sys_mkdirat, sys_mknodat,
-    sys_mount, sys_openat, sys_pipe2, sys_ppoll, sys_read, sys_readv, sys_renameat2, sys_sendfile,
-    sys_statfs, sys_statx, sys_umount2, sys_unlinkat, sys_utimensat, sys_write, sys_writev,
+    sys_mount, sys_openat, sys_pipe2, sys_ppoll, sys_pread, sys_read, sys_readv, sys_renameat2,
+    sys_sendfile, sys_statfs, sys_statx, sys_umount2, sys_unlinkat, sys_utimensat, sys_write,
+    sys_writev,
 };
 use mm::{sys_brk, sys_madvise, sys_mmap, sys_mprotect, sys_munmap};
 use signal::{
@@ -23,8 +24,9 @@ use signal::{
     sys_rt_sigsuspend, sys_rt_sigtimedwait, sys_tgkill, sys_tkill,
 };
 use task::{
-    sys_clone, sys_execve, sys_futex, sys_get_time, sys_getpid, sys_getppid, sys_gettid,
-    sys_nanosleep, sys_set_tid_address, sys_waitpid, sys_yield,
+    sys_clone, sys_execve, sys_futex, sys_get_time, sys_getegid, sys_geteuid, sys_getpid,
+    sys_getppid, sys_gettid, sys_getuid, sys_nanosleep, sys_set_tid_address, sys_waitpid,
+    sys_yield,
 };
 use util::{sys_clock_gettime, sys_prlimit64, sys_syslog, sys_times, sys_uname};
 
@@ -68,6 +70,7 @@ const SYSCALL_READ: usize = 63;
 const SYSCALL_WRITE: usize = 64;
 const SYSCALL_READV: usize = 65;
 const SYSCALL_WRITEV: usize = 66;
+const SYSCALL_PREAD: usize = 67;
 const SYSCALL_SENDFILE: usize = 71;
 const SYSCALL_PPOLL: usize = 73;
 const SYSCALL_FSTATAT: usize = 79;
@@ -101,7 +104,9 @@ const SYSCALL_GET_TIME: usize = 169;
 const SYSCALL_GITPID: usize = 172;
 const SYSCALL_GETPPID: usize = 173;
 const SYSCALL_GETUID: usize = 174;
+const SYSCALL_GETEUID: usize = 175;
 const SYSCALL_GETGID: usize = 176;
+const SYSCALL_GETEGID: usize = 177;
 const SYSCALL_GETTID: usize = 178;
 const SYSCALL_BRK: usize = 214;
 const SYSCALL_MUNMAP: usize = 215;
@@ -117,8 +122,7 @@ const SYSCALL_STATX: usize = 291;
 
 const CARELESS_SYSCALLS: [usize; 4] = [63, 64, 124, 260];
 // const SYSCALL_NUM_2_NAME: [(&str, usize); 4] = [
-const SYSCALL_NUM_2_NAME: [(usize, &str); 6] = [
-    (SYSCALL_GETUID, "SYS_GETUID"),
+const SYSCALL_NUM_2_NAME: [(usize, &str); 5] = [
     (SYSCALL_SET_ROBUST_LIST, "SYS_SET_ROBUST_LIST"),
     (SYSCALL_SETGID, "SYS_SETGID"),
     (SYSCALL_SETUID, "SYS_SETUID"),
@@ -183,6 +187,7 @@ pub fn syscall(
         SYSCALL_WRITE => sys_write(a0, a1 as *const u8, a2),
         SYSCALL_READV => sys_readv(a0, a1 as *const IoVec, a2),
         SYSCALL_WRITEV => sys_writev(a0, a1 as *const IoVec, a2),
+        SYSCALL_PREAD => sys_pread(a0, a1 as *mut u8, a2, a3),
         SYSCALL_SENDFILE => sys_sendfile(a0, a1, a2 as *mut usize, a3),
         SYSCALL_PPOLL => sys_ppoll(a0 as *mut PollFd, a1, a2 as *const TimeSpec, a3),
         SYSCALL_FSTATAT => sys_fstatat(a0 as i32, a1 as *const u8, a2 as *mut Stat, a3 as i32),
@@ -202,7 +207,7 @@ pub fn syscall(
         SYSCALL_TGKILL => sys_tgkill(a0 as isize, a1 as isize, a2 as i32),
         // SYSCALL_SIGALTSTACK => sys_sigaltstack()
         // SYSCALL_RT_SIGSUSPEND => sys_rt_sigsuspend(a0),
-        // SYSCALL_RT_SIGACTION => sys_rt_sigaction(a0 as i32, a1, a2),
+        SYSCALL_RT_SIGACTION => sys_rt_sigaction(a0 as i32, a1, a2),
         SYSCALL_RT_SIGPROCMASK => sys_rt_sigprocmask(a0, a1, a2),
         SYSCALL_RT_SIGPENDING => sys_rt_sigpending(a0),
         SYSCALL_RT_SIGTIMEDWAIT => sys_rt_sigtimedwait(
@@ -217,6 +222,9 @@ pub fn syscall(
         SYSCALL_GET_TIME => sys_get_time(a0),
         SYSCALL_GITPID => sys_getpid(),
         SYSCALL_GETPPID => sys_getppid(),
+        SYSCALL_GETUID => sys_getuid(),
+        SYSCALL_GETEUID => sys_geteuid(),
+        SYSCALL_GETEGID => sys_getegid(),
         SYSCALL_GETTID => sys_gettid(),
         SYSCALL_BRK => sys_brk(a0),
         SYSCALL_MUNMAP => sys_munmap(a0, a1),

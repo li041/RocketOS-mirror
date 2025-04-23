@@ -369,7 +369,7 @@ impl InodeOp for Ext4Inode {
         assert!(mode & S_IFCHR != 0);
         // 提取主,次设备号
         let (major, minor) = dev.unpack();
-        /// 主设备号1表示mem
+        // 主设备号1表示mem
         match (major, minor) {
             (1, 3) => {
                 assert!(dentry.absolute_path == "/dev/null");
@@ -385,7 +385,17 @@ impl InodeOp for Ext4Inode {
                 dentry.inner.lock().inode = Some(null_inode);
             } // /dev/null
             (1, 5) => {
-                unimplemented!();
+                assert!(dentry.absolute_path == "/dev/zero");
+                let new_inode_num = self
+                    .ext4_fs
+                    .upgrade()
+                    .unwrap()
+                    .alloc_inode(self.block_device.clone(), true);
+                let zero_inode = NullInode::new(new_inode_num, mode, 1, 5);
+                // 在父目录中添加对应项
+                self.add_entry(dentry.clone(), new_inode_num as u32, EXT4_DT_CHR);
+                // 关联到dentry
+                dentry.inner.lock().inode = Some(zero_inode);
             } // /dev/zero
             (5, 0) => {
                 // /dev/tty

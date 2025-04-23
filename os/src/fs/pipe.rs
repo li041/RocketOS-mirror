@@ -3,6 +3,7 @@ use alloc::sync::{Arc, Weak};
 use core::ptr::copy_nonoverlapping;
 use spin::Mutex;
 
+use crate::syscall::errno::{Errno, SyscallRet};
 use crate::task::yield_current_task;
 
 use super::file::FileOp;
@@ -213,8 +214,8 @@ impl FileOp for Pipe {
     fn writable(&self) -> bool {
         self.writable
     }
-    fn seek(&self, offset: isize, whence: super::uapi::Whence) -> usize {
-        return ESPIPE;
+    fn seek(&self, offset: isize, whence: super::uapi::Whence) -> SyscallRet {
+        return Err(Errno::ESPIPE);
     }
     fn r_ready(&self) -> bool {
         if self.readable {

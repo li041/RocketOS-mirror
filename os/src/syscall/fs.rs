@@ -50,10 +50,7 @@ pub fn sys_lseek(fd: usize, offset: isize, whence: usize) -> SyscallRet {
     let whence = Whence::try_from(whence).unwrap_or(Whence::SeekSet);
     if let Some(file) = file {
         let file = file.clone();
-        let ret = file.seek(offset, whence);
-        // Debug
-        log::info!("[sys_lseek] ret: {}", ret);
-        Ok(ret)
+        file.seek(offset, whence)
     } else {
         log::error!("[sys_lseek] fd {} not opened", fd);
         Err(Errno::EBADF)
@@ -170,7 +167,7 @@ pub fn sys_readv(fd: usize, iov: *const IoVec, iovcnt: usize) -> SyscallRet {
 
 pub fn sys_writev(fd: usize, iov: *const IoVec, iovcnt: usize) -> SyscallRet {
     if fd >= 3 {
-    log::info!("sys_writev: fd: {}, iovcnt: {}", fd, iovcnt);
+        log::info!("sys_writev: fd: {}, iovcnt: {}", fd, iovcnt);
     }
     let task = current_task();
     let file = task.fd_table().get_file(fd);
@@ -182,7 +179,7 @@ pub fn sys_writev(fd: usize, iov: *const IoVec, iovcnt: usize) -> SyscallRet {
         return Err(Errno::EBADF);
     }
     let mut total_written = 0;
-    let iov = copy_from_user(iov, iovcnt).unwrap();
+    let iov = copy_from_user(iov, iovcnt)?;
     for iovec in iov.iter() {
         if iovec.len == 0 {
             continue;
@@ -212,6 +209,32 @@ pub fn sys_writev(fd: usize, iov: *const IoVec, iovcnt: usize) -> SyscallRet {
     // Debug
     log::info!("sys_writev: total_written: {}", total_written);
     Ok(total_written)
+}
+
+pub fn sys_pread(fd: usize, buf: *mut u8, count: usize, offest: usize) -> SyscallRet {
+    log::info!(
+        "[sys_pread] fd: {}, buf: {:?}, count: {}, offset: {}",
+        fd,
+        buf,
+        count,
+        offest
+    );
+    let task = current_task();
+    let file = task.fd_table().get_file(fd as usize);
+    if let Some(file) = file {
+        let file = file.clone();
+        if !file.readable() {
+            return Err(Errno::EBADF);
+        }
+        let mut ker_buf = vec![0u8; count];
+        let read_len = file.pread(&mut ker_buf, offest);
+        let ker_buf_ptr = ker_buf.as_ptr();
+        // 写回用户空间
+        copy_to_user(buf, ker_buf_ptr, read_len as usize)
+    } else {
+        log::error!("[sys_pread] fd {} not opened", fd);
+        Err(Errno::EBADF)
+    }
 }
 
 /// 注意Fd_flags并不会在dup中继承
@@ -756,6 +779,8 @@ pub fn sys_fcntl(fd: i32, op: i32, arg: usize) -> SyscallRet {
                 );
             }
             FcntlOp::F_GETFD => {
+                // 获取fd entry的flags
+                // 这里的flags是FdFlags, 不是OpenFlags
                 return Ok(i32::from(entry.get_flags()) as usize);
             }
             FcntlOp::F_SETFD => {
@@ -765,8 +790,20 @@ pub fn sys_fcntl(fd: i32, op: i32, arg: usize) -> SyscallRet {
                 return Ok(0);
             }
             FcntlOp::F_GETFL => {
-                // 获取flags
-                return Ok(i32::from(entry.get_flags()) as usize);
+                // 获取文件的状态标志(OpenFlags)
+                let flags = entry.get_file().get_flags();
+                log::error!("[sys_fcntl] get flags: {:?}", flags);
+                return Ok(flags.bits() as usize);
+            }
+            FcntlOp::F_SETFL => {
+                // 设置flags
+                let mut flags = OpenFlags::from_bits_truncate(arg as i32);
+                // 忽略访问模式和文件创建标志
+                flags.remove(OpenFlags::O_ACCMODE);
+                flags.remove(OpenFlags::CREATION_FLAGS);
+                log::error!("[sys_fcntl] set flags: {:?}", flags);
+                entry.get_file().set_flags(flags);
+                return Ok(0);
             }
             _ => {
                 panic!("[sys_fcntl] Unimplemented");

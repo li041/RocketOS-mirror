@@ -1,7 +1,7 @@
 //!Stdin & Stdout
 use super::{file::FileOp, uapi::Whence, FileMeta, FileOld};
 // use crate::mm::UserBuffer;
-use crate::{arch::sbi::console_getchar, task::yield_current_task};
+use crate::{arch::sbi::console_getchar, syscall::errno::SyscallRet, task::yield_current_task};
 // use crate::task::yield_task;
 ///Standard input
 pub struct Stdin;
@@ -40,7 +40,7 @@ impl FileOp for Stdin {
     fn write(&self, _buf: &[u8]) -> usize {
         panic!("Cannot write to stdin!");
     }
-    fn seek(&self, _offset: isize, _whence: Whence) -> usize {
+    fn seek(&self, _offset: isize, _whence: Whence) -> SyscallRet {
         panic!("Cannot seek stdin!");
     }
     fn get_offset(&self) -> usize {
@@ -70,7 +70,7 @@ impl FileOp for Stdout {
         }
         buf.len()
     }
-    fn seek(&self, _offset: isize, _whence: Whence) -> usize {
+    fn seek(&self, _offset: isize, _whence: Whence) -> SyscallRet {
         panic!("Cannot seek stdin!");
     }
     fn get_offset(&self) -> usize {

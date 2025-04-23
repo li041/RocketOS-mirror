@@ -46,6 +46,10 @@ pub trait FileOp: Any + Send + Sync {
     fn read<'a>(&'a self, buf: &'a mut [u8]) -> usize {
         unimplemented!();
     }
+    // 从文件偏移量为offset处读取数据到buf中, 返回读取的字节数, 不会更新文件偏移量
+    fn pread<'a>(&'a self, buf: &'a mut [u8], offset: usize) -> usize {
+        unimplemented!();
+    }
     fn read_all(&self) -> Vec<u8> {
         unimplemented!();
     }
@@ -60,7 +64,7 @@ pub trait FileOp: Any + Send + Sync {
         unimplemented!();
     }
     // move the file offset
-    fn seek(&self, offset: isize, whence: Whence) -> usize {
+    fn seek(&self, offset: isize, whence: Whence) -> SyscallRet {
         unimplemented!();
     }
     // Get the file offset
@@ -86,6 +90,13 @@ pub trait FileOp: Any + Send + Sync {
     }
     fn ioctl(&self, _op: usize, _arg_ptr: usize) -> SyscallRet {
         Err(Errno::ENOTTY)
+    }
+    // 获取文件的OpenFlags(在openat初始化)
+    fn get_flags(&self) -> OpenFlags {
+        unimplemented!()
+    }
+    fn set_flags(&self, _flags: OpenFlags) {
+        unimplemented!()
     }
 }
 
@@ -153,6 +164,10 @@ impl FileOp for File {
         self.add_offset(read_size);
         read_size
     }
+    fn pread<'a>(&'a self, buf: &'a mut [u8], offset: usize) -> usize {
+        let read_size = self.inner_handler(|inner| inner.inode.read(offset, buf));
+        read_size
+    }
     fn read_all(&self) -> Vec<u8> {
         self.read_all()
     }
@@ -176,7 +191,7 @@ impl FileOp for File {
         self.add_offset(write_size);
         write_size
     }
-    fn seek(&self, offset: isize, whence: Whence) -> usize {
+    fn seek(&self, offset: isize, whence: Whence) -> SyscallRet {
         self.inner_handler(|inner| {
             match whence {
                 Whence::SeekSet => {
@@ -191,7 +206,7 @@ impl FileOp for File {
                     inner.offset = size.checked_add_signed(offset).unwrap();
                 }
             }
-            return inner.offset;
+            return Ok(inner.offset);
         })
     }
     fn get_offset(&self) -> usize {
@@ -207,6 +222,16 @@ impl FileOp for File {
         let inner_guard = self.inner.lock();
         inner_guard.flags.contains(OpenFlags::O_WRONLY)
             || inner_guard.flags.contains(OpenFlags::O_RDWR)
+    }
+    fn get_flags(&self) -> OpenFlags {
+        self.inner_handler(|inner| inner.flags)
+    }
+    // 保留本身的CREATION_FLAGS, AccessMode, 其余位使用flags设置
+    // flags由上层调用者处理, 不设置access mode及creation flags
+    fn set_flags(&self, flags: OpenFlags) {
+        self.inner_handler(|inner| {
+            inner.flags = inner.flags & (OpenFlags::CREATION_FLAGS | OpenFlags::O_ACCMODE) | flags;
+        });
     }
 }
 
@@ -252,4 +277,15 @@ bitflags::bitflags! {
         const O_PATH        = 0o10000000;
         const O_TMPFILE     = 0o20200000;
     }
+}
+
+impl OpenFlags {
+    pub const CREATION_FLAGS: OpenFlags = OpenFlags::O_CREAT
+        .union(OpenFlags::O_EXCL)
+        .union(OpenFlags::O_TMPFILE)
+        .union(OpenFlags::O_NOCTTY)
+        .union(OpenFlags::O_NOFOLLOW)
+        .union(OpenFlags::O_DIRECTORY)
+        .union(OpenFlags::O_CLOEXEC)
+        .union(OpenFlags::O_TRUNC);
 }

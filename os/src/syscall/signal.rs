@@ -156,6 +156,7 @@ pub fn sys_rt_sigsuspend(mask: usize) -> SyscallRet {
 /// 返回值 sigaction() 在成功时返回 0；在错误时返回 -1，并设置 errno 以指示错误。
 /// EFAULT act 或 oldact 指向的内存不是进程地址空间的有效部分。EINVAL 指定了无效信号。
 pub fn sys_rt_sigaction(signum: i32, act: usize, oldact: usize) -> SyscallRet {
+    log::trace!("[sys_rt_sigaction]");
     let task = current_task();
     // 信号值不合法
     if (signum <= 0) || (signum > 64) {
@@ -370,5 +371,5 @@ pub fn sys_rt_sigreturn() -> SyscallRet {
     } else if sig_context.info == 1 {
         // Todo: SigInfo恢复
     }
-    Ok(0)
+    Ok(ret as usize)
 }

@@ -4,7 +4,10 @@ use crate::{
     mm::{MapPermission, VPNRange, VirtAddr, KERNEL_SPACE},
 };
 
-use super::{id::kid_alloc, wait};
+use super::{
+    id::{kid_alloc, kid_dealloc},
+    wait,
+};
 
 pub const KSTACK_TOP: usize = 0xffff_ffff_ffff_f000;
 pub const KSTACK_SIZE: usize = (PAGE_SIZE << 4) - PAGE_SIZE;
@@ -39,7 +42,9 @@ pub fn kstack_alloc() -> usize {
 impl Drop for KernelStack {
     fn drop(&mut self) {
         // let kstack_top = KSTACK_TOP - self.0 * (KSTACK_SIZE + PAGE_SIZE);
-        let kstack_top = get_stack_top_by_sp(self.0);
+        let kstack_id = get_kstack_id(self.0);
+        // kid_dealloc(kstack_id);
+        let kstack_top = KSTACK_TOP - kstack_id * (KSTACK_SIZE + PAGE_SIZE);
         let kstack_bottom = kstack_top - KSTACK_SIZE;
         KERNEL_SPACE
             .lock()
