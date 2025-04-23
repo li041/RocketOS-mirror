@@ -378,3 +378,15 @@ pub fn sys_nanosleep(time_val_ptr: usize) -> SyscallRet {
     }
     Ok(0)
 }
+
+/* fake */
+pub fn sys_getuid() -> SyscallRet {
+    Ok(0)
+}
+pub fn sys_geteuid() -> SyscallRet {
+    Ok(0)
+}
+
+pub fn sys_getegid() -> SyscallRet {
+    Ok(0)
+}

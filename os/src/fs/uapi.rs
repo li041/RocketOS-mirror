@@ -63,6 +63,9 @@ impl DevT {
     pub fn null_devt() -> Self {
         Self::makedev(1, 3)
     }
+    pub fn zero_devt() -> Self {
+        Self::makedev(1, 5)
+    }
 }
 
 impl DevT {

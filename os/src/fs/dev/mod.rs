@@ -13,10 +13,12 @@ use alloc::sync::Arc;
 use null::{NullFile, NULL};
 use rtc::{RtcFile, RTC};
 use tty::{TtyFile, TTY};
+use zero::{ZeroFile, ZERO};
 
 pub mod null;
 pub mod rtc;
 pub mod tty;
+pub mod zero;
 
 // Todo: /dev/zero, /dev/null
 pub fn init_devfs(root_path: Arc<Path>) {
@@ -114,6 +116,31 @@ pub fn init_devfs(root_path: Arc<Path>) {
         }
         Err(e) => {
             panic!("create {} failed: {:?}", null_path, e);
+        }
+    }
+    // /dev/zero
+    let zero_path = "/dev/zero";
+    let zero_mode = S_IFCHR as u16 | 0o666;
+    let zero_devt = DevT::zero_devt();
+    nd = Nameidata {
+        path_segments: parse_path(zero_path),
+        dentry: root_path.dentry.clone(),
+        mnt: root_path.mnt.clone(),
+        depth: 0,
+    };
+    match filename_create(&mut nd, 0) {
+        Ok(dentry) => {
+            let parent_inode = nd.dentry.get_inode();
+            parent_inode.mknod(dentry.clone(), zero_mode, zero_devt);
+            let zero_file = ZeroFile::new(
+                Path::new(root_path.mnt.clone(), dentry.clone()),
+                dentry.get_inode().clone(),
+                OpenFlags::O_RDWR,
+            );
+            ZERO.call_once(|| zero_file.clone());
+        }
+        Err(e) => {
+            panic!("create {} failed: {:?}", zero_path, e);
         }
     }
 }

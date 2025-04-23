@@ -13,6 +13,7 @@ use crate::{
         path::Path,
         FileOld,
     },
+    syscall::errno::SyscallRet,
 };
 
 use alloc::sync::Arc;
@@ -126,7 +127,7 @@ impl FileOp for MountsFile {
         self.add_offset(len);
         len
     }
-    fn seek(&self, offset: isize, whence: crate::fs::uapi::Whence) -> usize {
+    fn seek(&self, offset: isize, whence: crate::fs::uapi::Whence) -> SyscallRet {
         let mut inner_guard = self.inner.write();
         match whence {
             crate::fs::uapi::Whence::SeekSet => {
@@ -142,7 +143,7 @@ impl FileOp for MountsFile {
                 inner_guard.offset = read_proc_mounts().len().checked_add_signed(offset).unwrap();
             }
         }
-        inner_guard.offset
+        Ok(inner_guard.offset)
     }
     fn readable(&self) -> bool {
         true

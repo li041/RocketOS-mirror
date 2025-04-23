@@ -14,6 +14,7 @@ use crate::{
         uapi::Whence,
         FileOld,
     },
+    syscall::errno::SyscallRet,
 };
 
 use alloc::{
@@ -133,7 +134,7 @@ impl FileOp for MemInfoFile {
     fn readable(&self) -> bool {
         true
     }
-    fn seek(&self, offset: isize, whence: Whence) -> usize {
+    fn seek(&self, offset: isize, whence: Whence) -> SyscallRet {
         let mut inner_guard = self.inner.write();
         match whence {
             crate::fs::uapi::Whence::SeekSet => {
@@ -154,7 +155,7 @@ impl FileOp for MemInfoFile {
                     .unwrap();
             }
         }
-        inner_guard.offset
+        Ok(inner_guard.offset)
     }
 }
 

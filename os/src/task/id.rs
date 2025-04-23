@@ -17,6 +17,10 @@ pub fn kid_alloc() -> usize {
     KID_ALLOCATOR.lock().alloc()
 }
 
+pub fn kid_dealloc(kid: usize) {
+    KID_ALLOCATOR.lock().dealloc(kid);
+}
+
 /// 申请进程（线程）号
 pub fn tid_alloc() -> TidHandle {
     TidHandle(TID_ALLOCATOR.lock().alloc())

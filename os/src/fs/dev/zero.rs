@@ -1,3 +1,6 @@
+use alloc::sync::Arc;
+use spin::{Once, RwLock};
+
 use crate::{
     arch::{mm::copy_to_user, timer::TimeSpec},
     ext4::inode::{Ext4InodeDisk, S_IFCHR},
@@ -11,40 +14,36 @@ use crate::{
     syscall::errno::{Errno, SyscallRet},
     utils::DateTime,
 };
+pub static ZERO: Once<Arc<ZeroFile>> = Once::new();
 
-use alloc::sync::Arc;
-
-use spin::{Once, RwLock};
-
-pub static NULL: Once<Arc<dyn FileOp>> = Once::new();
-
-pub struct NullInode {
+pub struct ZeroInode {
     pub inode_num: usize,
-    pub inner: RwLock<NullInodeInner>,
+    pub inner: RwLock<ZeroInodeInner>,
 }
 
-struct NullInodeInner {
+struct ZeroInodeInner {
     pub inode_on_disk: Ext4InodeDisk,
 }
 
-impl NullInodeInner {
+impl ZeroInodeInner {
     pub fn new(inode_on_disk: Ext4InodeDisk) -> Self {
         Self { inode_on_disk }
     }
 }
-impl NullInode {
+
+impl ZeroInode {
     pub fn new(ino: usize, inode_mode: u16, major: u32, minor: u32) -> Arc<Self> {
         assert!(inode_mode & S_IFCHR == S_IFCHR);
-        let inner = NullInodeInner::new(Ext4InodeDisk::new_chr(inode_mode, major, minor));
-        Arc::new(NullInode {
+        let inner = ZeroInodeInner::new(Ext4InodeDisk::new_chr(inode_mode, major, minor));
+        Arc::new(ZeroInode {
             inode_num: ino,
             inner: RwLock::new(inner),
         })
     }
 }
-impl InodeOp for NullInode {
+impl InodeOp for ZeroInode {
     fn can_lookup(&self) -> bool {
-        // /dev/null是一个特殊文件, 不是目录
+        // /dev/zero是一个特殊文件, 不是目录
         false
     }
     fn getattr(&self) -> Kstat {
@@ -97,22 +96,22 @@ impl InodeOp for NullInode {
     }
 }
 
-pub struct NullFile {
+pub struct ZeroFile {
     pub path: Arc<Path>,
     pub inode: Arc<dyn InodeOp>,
     pub flags: OpenFlags,
 }
-
-impl NullFile {
+// 读时返回无限个 0，写时忽略内容（通常成功返回写入长度但不实际存储）
+impl ZeroFile {
     pub fn new(path: Arc<Path>, inode: Arc<dyn InodeOp>, flags: OpenFlags) -> Arc<Self> {
         Arc::new(Self { path, inode, flags })
     }
 }
 
-impl FileOp for NullFile {
-    fn read(&self, _buf: &mut [u8]) -> usize {
-        // 从/dev/null读取数据, 总是会立刻返回EOF, 表示没有数据可读
-        0
+impl FileOp for ZeroFile {
+    fn read(&self, buf: &mut [u8]) -> usize {
+        buf.fill(0);
+        buf.len()
     }
     fn write(&self, buf: &[u8]) -> usize {
         buf.len()

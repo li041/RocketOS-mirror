@@ -950,7 +950,7 @@ impl MemorySet {
             }
 
             if !found {
-                println!(
+                log::error!(
                     "[check_valid_user_vpn_range] can't find area with vpn {:#x}",
                     current_vpn.0
                 );

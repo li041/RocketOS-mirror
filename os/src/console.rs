@@ -5,10 +5,30 @@ use crate::arch::sbi::console_putchar;
 
 struct Stdout;
 
+#[cfg(target_arch = "riscv64")]
 impl Write for Stdout {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         for c in s.chars() {
             console_putchar(c as usize);
+        }
+        Ok(())
+    }
+}
+#[cfg(target_arch = "loongarch64")]
+impl Write for Stdout {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        use crate::arch::sbi::console_flush;
+        let mut i = 0;
+        for c in s.chars() {
+            console_putchar(c as usize);
+            i += 1;
+            if i >= 4 {
+                console_flush();
+                i = 0;
+            }
+        }
+        if i != 0 {
+            console_flush();
         }
         Ok(())
     }

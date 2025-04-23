@@ -298,9 +298,19 @@ impl FileOp for TtyFile {
         }
         1
     }
+    // #[cfg(target_arch = "riscv64")]
     fn write<'a>(&'a self, buf: &'a [u8]) -> usize {
+        let mut _inner = self.inner.write();
+        // print!("{}", core::str::from_utf8(buf).unwrap());
         print!("{}", core::str::from_utf8(buf).unwrap());
         buf.len()
+    }
+    // #[cfg(target_arch = "loongarch64")]
+    // fn write<'a>(&'a self, buf: &'a [u8]) -> usize {
+
+    // }
+    fn seek(&self, _offset: isize, _whence: crate::fs::uapi::Whence) -> SyscallRet {
+        Err(Errno::ESPIPE)
     }
     fn ioctl(&self, op: usize, arg_ptr: usize) -> SyscallRet {
         log::info!("[TtyFile::ioctl] op: {:#x}, arg_ptr: {:#x}", op, arg_ptr);
@@ -399,5 +409,8 @@ impl FileOp for TtyFile {
     }
     fn w_ready(&self) -> bool {
         true
+    }
+    fn get_flags(&self) -> OpenFlags {
+        self.flags
     }
 }

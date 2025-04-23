@@ -55,7 +55,8 @@ impl FileSystemOp for Ext4FileSystem {
         statfs.f_frsize = super_block.block_size as i64; // 片段大小（通常等于块大小）
         statfs.f_flags = 0; // 挂载标志（需要根据实际情况设置）
         statfs.f_spare = [0; 4]; // 保留字段
-                                 // 写回到用户空间
+        statfs.f_namelen = 255; // 最大文件名长度
+                                // 写回到用户空间
         copy_to_user(buf, &statfs as *const StatFs, 1)
     }
 }

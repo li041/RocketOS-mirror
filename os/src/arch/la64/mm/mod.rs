@@ -53,8 +53,8 @@ pub fn copy_to_user<T: Copy>(to: *mut T, from: *const T, n: usize) -> SyscallRet
     let to_pa = current_task().op_memory_set_mut(|memory_set| {
         memory_set
             .translate_va_to_pa(VirtAddr::from(to as usize))
-            .unwrap()
-    });
+            .map_or(Err(Errno::EFAULT), |pa| Ok(pa))
+    })?;
     // 执行复制
     unsafe {
         let from_slice = from_raw_parts(from, n);
