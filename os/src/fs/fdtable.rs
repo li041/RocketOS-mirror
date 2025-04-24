@@ -109,7 +109,7 @@ impl FdTable {
     }
 
     pub fn from_existed_user(parent_table: &FdTable) -> Arc<Self> {
-        let mut vec = Vec::with_capacity(MAX_FDS);
+        let mut vec = Vec::with_capacity(parent_table.table.read().len());
         for i in 0..MAX_FDS {
             if let Some(entry) = parent_table.table.read().get(i) {
                 vec.push(entry.clone());
@@ -221,6 +221,9 @@ impl FdTable {
         let mut rlimit_lock = self.rlimit.write();
         rlimit_lock.rlim_cur = rlimit.rlim_cur;
         rlimit_lock.rlim_max = rlimit.rlim_max;
+        if self.table.read().len() > rlimit.rlim_cur as usize {
+            self.table.write().truncate(rlimit.rlim_cur as usize);
+        }
     }
 
     // 设置某个fd的flag（例如 FD_CLOEXEC）

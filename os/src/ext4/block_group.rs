@@ -204,6 +204,24 @@ impl GroupDesc {
         }
         return None;
     }
+    pub fn dealloc_block(
+        &self,
+        block_device: Arc<dyn BlockDevice>,
+        local_block_num: usize,
+        ext4_block_size: usize,
+        block_bitmap_size: usize,
+    ) {
+        let mut inner = self.inner.write();
+        let block_id = self.block_bitmap as usize + local_block_num / (ext4_block_size * 8);
+        let block_offset = local_block_num % (ext4_block_size * 8);
+        Ext4Bitmap::new(
+            get_block_cache(block_id, block_device.clone(), ext4_block_size)
+                .lock()
+                .get_mut(0),
+        )
+        .dealloc(block_offset);
+        inner.free_blocks_count += 1;
+    }
 }
 
 pub struct GroupDescInner {

@@ -13,10 +13,10 @@
 use errno::{Errno, SyscallRet};
 use fs::{
     sys_chdir, sys_close, sys_dup, sys_dup3, sys_faccessat, sys_fcntl, sys_fstat, sys_fstatat,
-    sys_getcwd, sys_getdents64, sys_ioctl, sys_linkat, sys_lseek, sys_mkdirat, sys_mknodat,
-    sys_mount, sys_openat, sys_pipe2, sys_ppoll, sys_pread, sys_read, sys_readv, sys_renameat2,
-    sys_sendfile, sys_statfs, sys_statx, sys_umount2, sys_unlinkat, sys_utimensat, sys_write,
-    sys_writev,
+    sys_fsync, sys_ftruncate, sys_getcwd, sys_getdents64, sys_ioctl, sys_linkat, sys_lseek,
+    sys_mkdirat, sys_mknodat, sys_mount, sys_openat, sys_pipe2, sys_ppoll, sys_pread, sys_read,
+    sys_readv, sys_renameat2, sys_sendfile, sys_statfs, sys_statx, sys_sync, sys_umount2,
+    sys_unlinkat, sys_utimensat, sys_write, sys_writev,
 };
 use mm::{sys_brk, sys_madvise, sys_mmap, sys_mprotect, sys_munmap};
 use signal::{
@@ -59,6 +59,7 @@ const SYSCALL_LINKAT: usize = 37;
 const SYSCALL_UMOUNT2: usize = 39;
 const SYSCALL_MOUNT: usize = 40;
 const SYSCALL_STATFS: usize = 43;
+const SYSCALL_FTRUNCATE: usize = 46;
 const SYSCALL_FACCESSAT: usize = 48;
 const SYSCALL_CHDIR: usize = 49;
 const SYSCALL_OPENAT: usize = 56;
@@ -75,6 +76,8 @@ const SYSCALL_SENDFILE: usize = 71;
 const SYSCALL_PPOLL: usize = 73;
 const SYSCALL_FSTATAT: usize = 79;
 const SYSCALL_FSTAT: usize = 80;
+const SYSCALL_SYNC: usize = 81;
+const SYSCALL_FSYNC: usize = 82;
 const SYSCALL_UTIMENSAT: usize = 88;
 const SYSCALL_EXIT: usize = 93;
 const SYSCALL_EXIT_GROUP: usize = 94;
@@ -108,6 +111,7 @@ const SYSCALL_GETEUID: usize = 175;
 const SYSCALL_GETGID: usize = 176;
 const SYSCALL_GETEGID: usize = 177;
 const SYSCALL_GETTID: usize = 178;
+const SYCALL_SHMGET: usize = 194;
 const SYSCALL_BRK: usize = 214;
 const SYSCALL_MUNMAP: usize = 215;
 const SYSCALL_FORK: usize = 220;
@@ -176,6 +180,7 @@ pub fn syscall(
             a4 as *const u8,
         ),
         SYSCALL_STATFS => sys_statfs(a0 as *const u8, a1 as *mut StatFs),
+        SYSCALL_FTRUNCATE => sys_ftruncate(a0, a1),
         SYSCALL_FACCESSAT => sys_faccessat(a0 as usize, a1 as *const u8, a2 as i32, a3 as i32),
         SYSCALL_CHDIR => sys_chdir(a0 as *const u8),
         SYSCALL_OPENAT => sys_openat(a0 as i32, a1 as *const u8, a2 as i32, a3),
@@ -192,6 +197,8 @@ pub fn syscall(
         SYSCALL_PPOLL => sys_ppoll(a0 as *mut PollFd, a1, a2 as *const TimeSpec, a3),
         SYSCALL_FSTATAT => sys_fstatat(a0 as i32, a1 as *const u8, a2 as *mut Stat, a3 as i32),
         SYSCALL_FSTAT => sys_fstat(a0 as i32, a1 as *mut Stat),
+        SYSCALL_SYNC => sys_sync(a0),
+        SYSCALL_FSYNC => sys_fsync(a0),
         SYSCALL_UTIMENSAT => {
             sys_utimensat(a0 as i32, a1 as *const u8, a2 as *const TimeSpec, a3 as i32)
         }

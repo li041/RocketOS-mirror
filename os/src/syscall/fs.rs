@@ -59,9 +59,9 @@ pub fn sys_lseek(fd: usize, offset: isize, whence: usize) -> SyscallRet {
 
 #[cfg(target_arch = "riscv64")]
 pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> SyscallRet {
-    if fd >= 3 {
-        log::info!("sys_read: fd: {}, len: {}", fd, len);
-    }
+    // if fd >= 3 {
+    //     log::info!("sys_read: fd: {}, len: {}", fd, len);
+    // }
     let task = current_task();
     let file = task.fd_table().get_file(fd);
     if let Some(file) = file {
@@ -115,6 +115,9 @@ pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> SyscallRet {
     if len == 0 {
         return Ok(0);
     }
+    // if fd >= 3 {
+    //     log::info!("sys_write: fd: {}, len: {}", fd, len);
+    // }
     let task = current_task();
     let file = task.fd_table().get_file(fd);
     if let Some(file) = file {
@@ -1158,6 +1161,20 @@ pub fn sys_sendfile(
     Ok(ret as usize)
 }
 
+pub fn sys_ftruncate(fildes: usize, length: usize) -> SyscallRet {
+    log::info!("[sys_ftruncate] fd: {}, length: {}", fildes, length);
+    let task = current_task();
+    if let Some(file) = task.fd_table().get_file(fildes) {
+        if file.get_inode().get_mode() & S_IFDIR != 0 {
+            log::error!("[sys_ftruncate] ftruncate on a directory");
+            return Err(Errno::EISDIR);
+        }
+        file.truncate(length)
+    } else {
+        Err(Errno::EBADF)
+    }
+}
+
 /* loongarch */
 // Todo: 使用mask指示内核需要返回哪些信息
 pub fn sys_statx(
@@ -1221,6 +1238,8 @@ pub fn sys_statx(
     }
 }
 
+/* loongarch end */
+
 pub fn sys_statfs(path: *const u8, buf: *mut StatFs) -> SyscallRet {
     let path = c_str_to_string(path);
     if path.is_empty() {
@@ -1258,8 +1277,6 @@ pub fn sys_statfs(path: *const u8, buf: *mut StatFs) -> SyscallRet {
         }
     }
 }
-
-/* loongarch end */
 
 /* Todo: fake  */
 pub fn sys_mount(
@@ -1340,6 +1357,16 @@ pub fn sys_faccessat(fd: usize, pathname: *const u8, mode: i32, flags: i32) -> S
             return Err(e);
         }
     }
+}
+
+pub fn sys_sync(fd: usize) -> SyscallRet {
+    log::info!("[sys_sync] fd: {} Unimplemented", fd);
+    Ok(0)
+}
+
+pub fn sys_fsync(fd: usize) -> SyscallRet {
+    log::info!("[sys_fsync] fd: {} Unimplemented", fd);
+    Ok(0)
 }
 
 /* fake end */

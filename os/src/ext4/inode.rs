@@ -11,6 +11,7 @@ use crate::arch::timer::TimeSpec;
 use crate::fat32::inode;
 use crate::fs::inode::InodeOp;
 use crate::fs::kstat::Kstat;
+use crate::syscall::errno::SyscallRet;
 // use crate::fs::inode::InodeMeta;
 use crate::{
     arch::config::{PAGE_SIZE, PAGE_SIZE_BITS},
@@ -24,6 +25,8 @@ use crate::{
     mutex::SpinNoIrqLock,
 };
 
+use super::block_op::Ext4ExtentBlock;
+use super::extent_tree;
 use super::{
     block_group::GroupDesc,
     dentry::Ext4DirEntry,
@@ -376,42 +379,74 @@ impl Ext4InodeDisk {
         let current_block = logical_start_block;
 
         // 获取根节点的extent_header
-        let mut extent_header = self.extent_header();
-
+        let extent_header = self.extent_header();
         // 遍历extent B+树，直到找到所有需要的块范围
-        while extent_header.depth > 0 {
-            // 当前节点是索引节点
+        if extent_header.depth > 0 {
+            // 根节点是索引节点
             let extent_idxs = self.extent_idxs(&extent_header);
 
-            // 在索引节点中找到包含目标块的子节点
             if let Some(idx) = extent_idxs.iter().find(|idx| idx.block <= current_block) {
-                let next_block = idx.physical_leaf_block();
-                // 加载子节点的ExtentHeader
-                extent_header = get_block_cache(next_block, block_device.clone(), ext4_block_size)
-                    .lock()
-                    .read(0, |header: &Ext4ExtentHeader| header.clone());
+                let child_block_num = idx.physical_leaf_block();
+                // 递归查找子节点
+                return Ext4ExtentBlock::new(
+                    get_block_cache(child_block_num, block_device.clone(), ext4_block_size)
+                        .lock()
+                        .get_mut(0),
+                )
+                .lookup_extent(logical_start_block, block_device, ext4_block_size);
             } else {
                 // 未找到对应的索引节点
                 return None;
             }
         }
-        // 当前节点是叶子节点
+        // 根节点就是叶子节点
         let extents = self.extents(&extent_header);
         // 遍历叶子节点的所有extent
         for extent in &extents {
             let start_block = extent.logical_block;
             let end_block = start_block + extent.len as u32;
             if logical_start_block >= start_block && logical_start_block < end_block {
-                // log::info!(
-                //     "[Ext4InodeDisk::find_extent]: hit\nlogical_start_block: {}, start_block: {}, end_block: {}",
-                //     logical_start_block,
-                //     start_block,
-                //     end_block
-                // );
                 return Some(*extent);
             }
         }
         return None;
+    }
+    // Todo: 未实现根节点非叶子节点的情况
+    pub fn truncate_extents(
+        &mut self,
+        new_block_count: u64,
+        block_device: Arc<dyn BlockDevice>,
+        ext4_block_size: usize,
+    ) -> Result<(), &'static str> {
+        let mut extent_header = self.extent_header();
+
+        if extent_header.depth > 0 {
+            panic!("[truncate_extents]Extent header depth > 0, Unimplemented");
+        }
+        // 如果depth == 0, 处理叶子节点
+        let mut extents = self.extents(&extent_header);
+        let truncate_index = extents
+            .iter()
+            .position(|extent| extent.logical_block >= new_block_count as u32)
+            .unwrap_or(extents.len());
+        if truncate_index == extents.len() {
+            return Ok(());
+        }
+        // 更新header的entries
+        extent_header.entries = truncate_index as u16;
+        extents[truncate_index].len =
+            (new_block_count as u32 - extents[truncate_index].logical_block) as u16;
+
+        unsafe {
+            let header_ptr = self.block.as_mut_ptr() as *mut Ext4ExtentHeader;
+            header_ptr.write_volatile(extent_header);
+            // 更新对应的extent
+            let extent_ptr = self.block.as_mut_ptr().add(12) as *mut Ext4Extent;
+            extent_ptr
+                .add(truncate_index)
+                .write_volatile(extents[truncate_index]);
+        }
+        Ok(())
     }
     /// 更新 extent 结构，加入新的逻辑块
     /// Todo: 未实现, 没有考虑索引节点分裂
@@ -468,7 +503,7 @@ impl Ext4InodeDisk {
                 unsafe {
                     let extent_ptr = self.block.as_ptr().add(12 + i * 12) as *mut Ext4Extent;
                     (*extent_ptr).len += blocks_count as u16;
-                    log::info!("[update_extent] Extend existing extent");
+                    // log::info!("[update_extent] Extend existing extent");
                     return Ok(());
                 }
             }
@@ -496,33 +531,6 @@ impl Ext4InodeDisk {
         }
         Ok(())
     }
-    // fn read_all(&self, block_device: Arc<dyn BlockDevice>, ext4_block_size: usize) -> Vec<Ext4Extent> {
-    //     assert!(self.is_dir(), "not a directory");
-    //     // 使用队列来遍历extent tree
-    //     let mut queue= VecDeque::new();
-    //     queue.push_back(self.extent_header());
-    //     let mut ret = Vec::new();
-
-    //     while let Some(extent_header) = queue.pop_front() {
-    //         if extent_header.depth > 0 {
-    //             let extent_idxs = self.extent_idxs(&extent_header);
-    //             for idx in extent_idxs.iter() {
-    //                 let next_block = idx.physical_leaf_block();
-    //                 let next_extent_header = get_block_cache(next_block, block_device.clone(), ext4_block_size)
-    //                     .lock()
-    //                     .read(0, |header: &Ext4ExtentHeader| header.clone());
-    //                 queue.push_back(next_extent_header);
-    //             }
-    //         } else {
-    //             let extents = self.extents(&extent_header);
-    //             for extent in extents {
-    //                 ret.push(extent);
-    //             }
-    //         }
-    //     }
-    //     // 由B+树的性质确保了, Extents是有序的(从小到大)
-    //     ret
-    // }
 }
 
 pub struct Ext4Inode {
@@ -978,40 +986,42 @@ impl Ext4Inode {
             return wbuf_len;
         }
 
-        let inode_guard = self.inner.read();
-        let inode_on_disk = &inode_guard.inode_on_disk;
-        let inode_size_before = self.inner.read().inode_on_disk.get_size();
-        // 2. 若写入后文件大小超过60字节, 转换为extent tree
-        // 同样会调用write_extent_tree, 但是如果size > 0, 说明有inline_data, 会先将inline_data写入新的block
-        if inode_size_before <= 60 {
-            // 申请新的block
-            let new_block = self.alloc_block();
-            // 写入inline_data内容到新的block
-            // 注意这里应该写入页缓存(在页缓存drop时写回), 而不是直接写入block_cache
-            if inode_size_before > 0 {
-                let page = self.get_page_cache(0).unwrap();
-                // 复制原来的inline_data, 同时写入新的block
-                page.modify(0, |data: &mut [u8; PAGE_SIZE]| {
-                    data[0..EXT4_MAX_INLINE_DATA]
-                        .copy_from_slice(&inode_on_disk.block[..EXT4_MAX_INLINE_DATA]);
-                });
-            }
-            drop(inode_guard);
-            let mut inode_guard = self.inner.write();
-            let inode_on_disk = &mut inode_guard.inode_on_disk;
-            // 清除原来的inline_data flag, 设置新的extent tree flag
-            inode_on_disk.flags &= !EXT4_INLINE_DATA_FL;
-            inode_on_disk.flags |= EXT4_EXTENTS_FL;
-            // 创建新的extent
-            let new_extent = Ext4Extent::new(0, 1, new_block);
-            // 初始化extent tree, extent_header + extent
-            let header_ptr = inode_on_disk.block.as_mut_ptr() as *mut Ext4ExtentHeader;
-            unsafe {
-                let mut extent_header = Ext4ExtentHeader::default();
-                extent_header.entries = 1;
-                header_ptr.write_volatile(extent_header);
-                let extent_ptr = inode_on_disk.block.as_mut_ptr().add(12) as *mut Ext4Extent;
-                extent_ptr.write(new_extent);
+        {
+            let inode_guard = self.inner.read();
+            let inode_on_disk = &inode_guard.inode_on_disk;
+            let inode_size_before = self.inner.read().inode_on_disk.get_size();
+            // 2. 若写入后文件大小超过60字节, 转换为extent tree
+            // 同样会调用write_extent_tree, 但是如果size > 0, 说明有inline_data, 会先将inline_data写入新的block
+            if inode_size_before <= 60 {
+                // 申请新的block
+                let new_block = self.alloc_block();
+                // 写入inline_data内容到新的block
+                // 注意这里应该写入页缓存(在页缓存drop时写回), 而不是直接写入block_cache
+                if inode_size_before > 0 {
+                    let page = self.get_page_cache(0).unwrap();
+                    // 复制原来的inline_data, 同时写入新的block
+                    page.modify(0, |data: &mut [u8; PAGE_SIZE]| {
+                        data[0..EXT4_MAX_INLINE_DATA]
+                            .copy_from_slice(&inode_on_disk.block[..EXT4_MAX_INLINE_DATA]);
+                    });
+                }
+                drop(inode_guard);
+                let mut inode_guard = self.inner.write();
+                let inode_on_disk = &mut inode_guard.inode_on_disk;
+                // 清除原来的inline_data flag, 设置新的extent tree flag
+                inode_on_disk.flags &= !EXT4_INLINE_DATA_FL;
+                inode_on_disk.flags |= EXT4_EXTENTS_FL;
+                // 创建新的extent
+                let new_extent = Ext4Extent::new(0, 1, new_block);
+                // 初始化extent tree, extent_header + extent
+                let header_ptr = inode_on_disk.block.as_mut_ptr() as *mut Ext4ExtentHeader;
+                unsafe {
+                    let mut extent_header = Ext4ExtentHeader::default();
+                    extent_header.entries = 1;
+                    header_ptr.write_volatile(extent_header);
+                    let extent_ptr = inode_on_disk.block.as_mut_ptr().add(12) as *mut Ext4Extent;
+                    extent_ptr.write(new_extent);
+                }
             }
         }
         // 3. 使用extent tree写入
@@ -1085,6 +1095,103 @@ impl Ext4Inode {
     // 检查是否是目录, 且有目录项可以lookup
     pub fn can_lookup(&self) -> bool {
         self.inner.read().inode_on_disk.is_dir() && self.inner.read().inode_on_disk.get_size() > 0
+    }
+}
+
+// Truncate
+impl Ext4Inode {
+    pub fn truncate(&self, new_size: u64) {
+        let current_size = self.get_size();
+        if current_size == new_size {
+            return;
+        }
+        if new_size < current_size {
+            // shrink
+            log::warn!(
+                "[Ext4Inode::truncate] Unimplemented shrink size from {} to {}",
+                current_size,
+                new_size
+            );
+            self.truncate_shrink(current_size, new_size)
+        } else {
+            // extend
+            log::warn!(
+                "[Ext4Inode::truncate] Unimplemented extend size from {} to {}",
+                new_size,
+                current_size
+            );
+            self.truncate_extend(current_size, new_size)
+        }
+    }
+    fn truncate_shrink(&self, current_size: u64, new_size: u64) {
+        let mut inner = self.inner.write();
+        // 处理inline data类型
+        if inner.inode_on_disk.has_inline_data() {
+            assert!(current_size <= EXT4_MAX_INLINE_DATA as u64);
+            inner.inode_on_disk.block[new_size as usize..current_size as usize].fill(0);
+            return;
+        }
+        // 清理页缓存
+        let first_page_to_clear = (new_size as usize + PAGE_SIZE - 1) / PAGE_SIZE;
+        let last_page = (current_size as usize + PAGE_SIZE - 1) / PAGE_SIZE;
+        for page_num in first_page_to_clear..last_page {
+            self.address_space.remove_page_cache(page_num);
+        }
+        // 释放block
+        let block_size = self.get_block_size() as u64;
+        let new_block_count = (new_size + block_size - 1) / block_size;
+        let current_block_count = (current_size + block_size - 1) / block_size;
+        for logical_block_num in new_block_count..current_block_count {
+            if let Some(extent) = inner.inode_on_disk.lookup_extent(
+                logical_block_num as u32,
+                self.block_device.clone(),
+                block_size as usize,
+            ) {
+                self.ext4_fs.upgrade().unwrap().dealloc_block(
+                    self.block_device.clone(),
+                    extent.physical_start_block() as usize,
+                );
+            }
+        }
+        // 更新extent tree
+        self.inner.write().inode_on_disk.truncate_extents(
+            new_block_count,
+            self.block_device.clone(),
+            block_size as usize,
+        );
+    }
+    // 目前仅设置大小
+    // Todo:
+    fn truncate_extend(&self, current_size: u64, new_size: u64) {
+        let mut inner_guard = self.inner.write();
+        let inode_on_disk = &mut inner_guard.inode_on_disk;
+        if inode_on_disk.has_inline_data() {
+            assert!(current_size <= EXT4_MAX_INLINE_DATA as u64);
+            // 将inline data转换为extent tree
+            let new_block = self.alloc_block();
+            if current_size > 0 {
+                let page = self.get_page_cache(0).unwrap();
+                // 复制原来的inline_data, 同时写入新的block
+                page.modify(0, |data: &mut [u8; PAGE_SIZE]| {
+                    data[0..EXT4_MAX_INLINE_DATA].copy_from_slice(
+                        &self.inner.read().inode_on_disk.block[..EXT4_MAX_INLINE_DATA],
+                    );
+                });
+                inode_on_disk.flags &= !EXT4_INLINE_DATA_FL;
+                inode_on_disk.flags |= EXT4_EXTENTS_FL;
+                // 创建新的extent
+                let new_extent = Ext4Extent::new(0, 1, new_block);
+                let header_ptr = inode_on_disk.block.as_mut_ptr() as *mut Ext4ExtentHeader;
+                unsafe {
+                    let mut extent_header = Ext4ExtentHeader::default();
+                    extent_header.entries = 1;
+                    header_ptr.write_volatile(extent_header);
+                    let extent_ptr = inode_on_disk.block.as_mut_ptr().add(12) as *mut Ext4Extent;
+                    extent_ptr.write_volatile(new_extent);
+                }
+            }
+        }
+        inode_on_disk.set_size(new_size);
     }
 }
 
