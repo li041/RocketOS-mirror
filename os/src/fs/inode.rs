@@ -34,6 +34,9 @@ pub trait InodeOp: Any + Send + Sync {
     fn write<'a>(&'a self, page_offset: usize, buf: &'a [u8]) -> usize {
         unimplemented!();
     }
+    fn truncate<'a>(&'a self, size: usize) {
+        unimplemented!();
+    }
     // 返回目录项
     // 先查找Denrty的children, 如果没有再查找目录
     // 注意这里的返回值不是`Option<..>`, 对于没有查找的情况, 返回负目录项`dentry.inode = NULL`

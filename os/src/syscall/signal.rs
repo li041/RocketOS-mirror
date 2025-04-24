@@ -267,6 +267,54 @@ pub fn sys_rt_sigpending(set: usize) -> SyscallRet {
 /// 如果 timeout 为空指针，则行为未指定。
 /// Todo: 涉及到时间
 /// 先检查是否有set中的信号pending，如果有则消耗该信号并返回, 否则就等待timeout时间
+// pub fn sys_rt_sigtimedwait(
+//     set: *const SigSet,
+//     info: *const SigInfo,
+//     timeout: *const TimeSpec,
+// ) -> SyscallRet {
+//     let mut wanted_set = copy_from_user(set, 1).unwrap()[0];
+//     wanted_set.remove(SigSet::SIGKILL | SigSet::SIGSTOP);
+//     let timeout = if timeout.is_null() {
+//         // timeout是空指针, 行为未定义
+//         panic!("[sys_rt_sigtimedwait] timeout is null");
+//     } else {
+//         let timeout = copy_from_user(timeout, 1).unwrap()[0];
+//         timeout
+//     };
+
+//     let sig = current_task().op_sig_pending_mut(|pending| pending.fetch_signal(Some(wanted_set)));
+//     if let Some((sig, siginfo)) = sig {
+//         // log::info!("[sys_rt_sigtimedwait] sig: {:?}", sig);
+//         if !info.is_null() {
+//             let info_ptr = info as *mut SigInfo;
+//             copy_to_user(info_ptr, &siginfo as *const SigInfo, 1)?;
+//         }
+//         return Ok(sig.raw() as usize);
+//     }
+//     // 等待timeout时间
+//     // Todo: 阻塞
+//     let wait_until = TimeSpec::new_machine_time() + timeout;
+//     loop {
+//         let current_time = TimeSpec::new_machine_time();
+//         if current_time >= wait_until {
+//             break;
+//         }
+//         yield_current_task();
+//     }
+//     let sig = current_task().op_sig_pending_mut(|pending| pending.fetch_signal(Some(wanted_set)));
+//     if let Some((sig, siginfo)) = sig {
+//         // log::info!("[sys_rt_sigtimedwait] sig: {:?}", sig);
+//         if !info.is_null() {
+//             let info_ptr = info as *mut SigInfo;
+//             copy_to_user(info_ptr, &siginfo as *const SigInfo, 1)?;
+//         }
+//         return Ok(sig.raw() as usize);
+//     } else {
+//         // 超时
+//         return Err(Errno::ETIMEDOUT);
+//     }
+// }
+
 pub fn sys_rt_sigtimedwait(
     set: *const SigSet,
     info: *const SigInfo,
@@ -282,39 +330,27 @@ pub fn sys_rt_sigtimedwait(
         timeout
     };
 
-    let sig = current_task().op_sig_pending_mut(|pending| pending.fetch_signal(Some(wanted_set)));
-    if let Some((sig, siginfo)) = sig {
-        // log::info!("[sys_rt_sigtimedwait] sig: {:?}", sig);
-        if !info.is_null() {
-            let info_ptr = info as *mut SigInfo;
-            copy_to_user(info_ptr, &siginfo as *const SigInfo, 1)?;
-        }
-        return Ok(sig.raw() as usize);
-    }
     // 等待timeout时间
     // Todo: 阻塞
     let wait_until = TimeSpec::new_machine_time() + timeout;
     loop {
-        let current_time = TimeSpec::new_machine_time();
-        if current_time >= wait_until {
-            break;
+        let sig =
+            current_task().op_sig_pending_mut(|pending| pending.fetch_signal(Some(wanted_set)));
+        if let Some((sig, siginfo)) = sig {
+            // log::info!("[sys_rt_sigtimedwait] sig: {:?}", sig);
+            if !info.is_null() {
+                let info_ptr = info as *mut SigInfo;
+                copy_to_user(info_ptr, &siginfo as *const SigInfo, 1)?;
+            }
+            return Ok(sig.raw() as usize);
         }
         yield_current_task();
-    }
-    let sig = current_task().op_sig_pending_mut(|pending| pending.fetch_signal(Some(wanted_set)));
-    if let Some((sig, siginfo)) = sig {
-        // log::info!("[sys_rt_sigtimedwait] sig: {:?}", sig);
-        if !info.is_null() {
-            let info_ptr = info as *mut SigInfo;
-            copy_to_user(info_ptr, &siginfo as *const SigInfo, 1)?;
+        let current_time = TimeSpec::new_machine_time();
+        if current_time >= wait_until {
+            return Err(Errno::ETIMEDOUT);
         }
-        return Ok(sig.raw() as usize);
-    } else {
-        // 超时
-        return Err(Errno::ETIMEDOUT);
     }
 }
-
 /// sigqueue() 将 sig 中指定的信号发送给 pid 中给出其 PID 的进程。
 /// 发送信号所需的权限与 kill(2) 相同。与 kill(2) 一样，可以使用空信号 (0) 检查是否存在具有给定 PID 的进程。
 /// Todo: 跟kill差不多，回来再说

@@ -1,9 +1,13 @@
 //! 用于处理EXT4文件系统的块操作, 如读取目录项, 操作位图等
+use alloc::sync::Arc;
 use alloc::vec;
 use alloc::{string::String, vec::Vec};
 
+use crate::drivers::block::block_cache::get_block_cache;
+use crate::drivers::block::block_dev::BlockDevice;
 use crate::ext4::dentry::Ext4DirEntry;
 
+use super::extent_tree::{Ext4Extent, Ext4ExtentHeader, Ext4ExtentIdx};
 use super::{dentry::EXT4_DT_DIR, fs::EXT4_BLOCK_SIZE};
 
 use crate::arch::config::PAGE_SIZE;
@@ -301,8 +305,8 @@ impl<'a> Ext4Bitmap<'a> {
     /// 注意: inode_num从1开始, 而bitmap的索引从0开始, bit_index = inode_num - 1
     /// 注意: inode_bitmap_size的单位是byte
     pub fn alloc(&mut self, inode_bitmap_size: usize) -> Option<usize> {
-        log::warn!("self.buffer: {:?}", self.bitmap[4095]);
-        log::warn!("inode_bitmap_size: {}", inode_bitmap_size);
+        // log::warn!("self.buffer: {:?}", self.bitmap[4095]);
+        // log::warn!("inode_bitmap_size: {}", inode_bitmap_size);
         // 逐字节处理, 加速alloc过程
         for (i, byte) in self.bitmap.iter_mut().enumerate() {
             if *byte != 0xff {
@@ -329,5 +333,68 @@ impl<'a> Ext4Bitmap<'a> {
         let byte_offset = block_offset / 8;
         let bit_offset = block_offset % 8;
         self.bitmap[byte_offset] &= !(1 << bit_offset);
+    }
+}
+
+// 硬编码, 对于ext4块大小为4096的情况
+pub const EXTENT_BLOCK_MAX_ENTRIES: usize = 340; // (ext4_block_size - 12(extent_header)) / 12(ext4_extent_idx)
+pub struct Ext4ExtentBlock<'a> {
+    block: &'a mut [u8; EXT4_BLOCK_SIZE],
+}
+
+impl<'a> Ext4ExtentBlock<'a> {
+    pub fn new(block: &'a mut [u8; EXT4_BLOCK_SIZE]) -> Self {
+        Self { block }
+    }
+    fn extent_header(&self) -> &Ext4ExtentHeader {
+        unsafe { &*(self.block.as_ptr() as *const Ext4ExtentHeader) }
+    }
+}
+
+impl<'a> Ext4ExtentBlock<'a> {
+    // 递归查找
+    pub fn lookup_extent(
+        &self,
+        logical_block: u32,
+        block_device: Arc<dyn BlockDevice>,
+        ext4_block_size: usize,
+    ) -> Option<Ext4Extent> {
+        let header = self.extent_header();
+        if header.depth == 0 {
+            // 叶子节点
+            let extents = unsafe {
+                core::slice::from_raw_parts(
+                    self.block.as_ptr().add(12) as *const Ext4Extent,
+                    header.entries as usize,
+                )
+            };
+            for extent in extents {
+                if logical_block >= extent.logical_block
+                    && logical_block < extent.logical_block + extent.len as u32
+                {
+                    return Some(*extent);
+                }
+            }
+            return None;
+        } else {
+            // 索引节点
+            let idxs = unsafe {
+                core::slice::from_raw_parts(
+                    self.block.as_ptr().add(12) as *const Ext4ExtentIdx,
+                    header.entries as usize,
+                )
+            };
+            if let Some(idx) = idxs.iter().find(|idx| logical_block >= idx.block) {
+                let block_num = idx.physical_leaf_block();
+                return Ext4ExtentBlock::new(
+                    get_block_cache(block_num, block_device.clone(), ext4_block_size)
+                        .lock()
+                        .get_mut(0),
+                )
+                .lookup_extent(logical_block, block_device, ext4_block_size);
+            } else {
+                return None;
+            }
+        }
     }
 }

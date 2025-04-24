@@ -67,6 +67,10 @@ pub trait FileOp: Any + Send + Sync {
     fn seek(&self, offset: isize, whence: Whence) -> SyscallRet {
         unimplemented!();
     }
+    // truncate the file to a given length
+    fn truncate(&self, length: usize) -> SyscallRet {
+        unimplemented!();
+    }
     // Get the file offset
     fn get_offset(&self) -> usize {
         unimplemented!();
@@ -200,14 +204,26 @@ impl FileOp for File {
                     }
                     inner.offset = offset as usize;
                 }
-                Whence::SeekCur => inner.offset = inner.offset.checked_add_signed(offset).unwrap(),
+                Whence::SeekCur => {
+                    inner.offset = inner
+                        .offset
+                        .checked_add_signed(offset)
+                        .ok_or(Errno::EINVAL)?;
+                }
                 Whence::SeekEnd => {
                     let size = inner.inode.get_size();
-                    inner.offset = size.checked_add_signed(offset).unwrap();
+                    inner.offset = size.checked_add_signed(offset).ok_or(Errno::EINVAL)?;
                 }
             }
             return Ok(inner.offset);
         })
+    }
+    fn truncate(&self, length: usize) -> SyscallRet {
+        if self.get_flags().contains(OpenFlags::O_APPEND) {
+            return Err(Errno::EPERM);
+        }
+        self.inner_handler(|inner| inner.inode.truncate(length));
+        Ok(0)
     }
     fn get_offset(&self) -> usize {
         self.inner_handler(|inner| inner.offset)

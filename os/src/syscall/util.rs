@@ -202,13 +202,17 @@ pub const CLOCK_MONOTONIC: usize = 1;
 pub const CLOCK_PROCESS_CPUTIME_ID: usize = 2;
 /// 用于测量调用线程消耗的CPU时间
 pub const CLOCK_THREAD_CPUTIME_ID: usize = 3;
+/// 一个不可设置的系统级时钟，代表自某个未指定的过去时间点以来的单调时间
+pub const CLOCK_MONOTONIC_RAW: usize = 4;
+/// 一个不可设置的系统级实时时钟，用于测量真实（即墙上时钟）时间
+pub const CLOCK_REALTIME_COARSE: usize = 5;
 pub fn sys_clock_gettime(clock_id: usize, timespec: *mut TimeSpec) -> SyscallRet {
     //如果tp是NULL, 函数不会存储时间值, 但仍然会执行其他检查（如 `clockid` 是否有效）。
     if timespec.is_null() {
         return Ok(0);
     }
     match clock_id {
-        CLOCK_REALTIME => {
+        CLOCK_REALTIME | CLOCK_REALTIME_COARSE => {
             let time = TimeSpec::new_wall_time();
             copy_to_user(timespec, &time as *const TimeSpec, 1)?;
         }

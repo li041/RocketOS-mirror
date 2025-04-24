@@ -152,6 +152,18 @@ impl Ext4FileSystem {
         }
         panic!("No available block!");
     }
+    pub fn dealloc_block(&self, block_device: Arc<dyn BlockDevice>, block_num: usize) {
+        let group_id = block_num / self.super_block.blocks_per_group as usize;
+        let local_block_num = block_num % self.super_block.blocks_per_group as usize;
+        let block_bitmap_size = self.super_block.blocks_per_group as usize / 8;
+        self.block_groups[group_id].dealloc_block(
+            block_device.clone(),
+            local_block_num,
+            self.super_block.block_size as usize,
+            block_bitmap_size,
+        );
+        self.super_block.inner.write().free_blocks_count += 1;
+    }
 }
 
 impl Ext4FileSystem {

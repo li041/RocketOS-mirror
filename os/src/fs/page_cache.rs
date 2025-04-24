@@ -36,6 +36,13 @@ impl AddressSpace {
             None
         }
     }
+    pub fn remove_page_cache(self: &Self, page_offset: usize) {
+        // 删除页缓存
+        self.i_pages.write().remove(&page_offset).or_else(|| {
+            log::error!("remove_page_cache: page_offset {} not found", page_offset);
+            None
+        });
+    }
     pub fn new_page_cache(
         self: &Self,
         page_offset: usize,
