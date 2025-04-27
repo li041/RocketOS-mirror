@@ -20,15 +20,15 @@ use crate::mm::PhysPageNum;
 use super::{frame_allocator::frame_alloc_ppn, frame_dealloc};
 
 pub enum PageKind {
-    Private,
-    Shared(RwLock<ShreadPageInfo>),
+    Framed,
+    Filebe(RwLock<ShreadPageInfo>),
     // Todo: inline_data
     Inline(RwLock<InlinePageInfo>),
 }
 impl PageKind {
     pub fn is_private(&self) -> bool {
         match self {
-            PageKind::Private => true,
+            PageKind::Framed => true,
             _ => false,
         }
     }
@@ -54,7 +54,7 @@ pub struct Page {
 }
 
 impl Page {
-    pub fn new_shared(
+    pub fn new_filebe(
         fs_block_id: usize,
         block_device: Arc<dyn BlockDevice>,
         inode: Weak<dyn InodeOp>,
@@ -74,7 +74,7 @@ impl Page {
             }
             return Self {
                 vaddr: vaddr as usize,
-                page_kind: PageKind::Shared(RwLock::new(ShreadPageInfo {
+                page_kind: PageKind::Filebe(RwLock::new(ShreadPageInfo {
                     start_block_id,
                     block_device: Arc::downgrade(&block_device),
                     inode,
@@ -83,8 +83,8 @@ impl Page {
             };
         };
     }
-    // 写时复制
-    pub fn new_private(data: Option<&[u8; PAGE_SIZE]>) -> Self {
+    /// 用于私有页面, 匿名共享映射和System V shm
+    pub fn new_framed(data: Option<&[u8; PAGE_SIZE]>) -> Self {
         unsafe {
             let ppn = frame_alloc_ppn().unwrap();
             let vaddr = (ppn.0 << PAGE_SIZE_BITS) + KERNEL_BASE;
@@ -98,7 +98,7 @@ impl Page {
             }
             return Self {
                 vaddr: vaddr as usize,
-                page_kind: PageKind::Private,
+                page_kind: PageKind::Framed,
                 modified: false,
             };
         }
@@ -150,8 +150,8 @@ impl Page {
 
     pub fn read<T, V>(&self, offset: usize, f: impl FnOnce(&T) -> V) -> V {
         match &self.page_kind {
-            PageKind::Private => f(self.get_ref(offset)),
-            PageKind::Shared(info) => {
+            PageKind::Framed => f(self.get_ref(offset)),
+            PageKind::Filebe(info) => {
                 let _guard = info.read(); // 加读锁
                 let ptr = unsafe {
                     let addr = self.addr_of_offset(offset);
@@ -173,8 +173,8 @@ impl Page {
     }
     pub fn modify<T, V>(&self, offset: usize, f: impl FnOnce(&mut T) -> V) -> V {
         match &self.page_kind {
-            PageKind::Private => self.modify_private(offset, f),
-            PageKind::Shared(info) => {
+            PageKind::Framed => self.modify_private(offset, f),
+            PageKind::Filebe(info) => {
                 let _guard = info.write(); // 加写锁
                 let ptr = unsafe {
                     let addr = self.addr_of_offset(offset);
@@ -207,7 +207,7 @@ impl Page {
     pub fn sync(&mut self) {
         if self.modified {
             match &self.page_kind {
-                PageKind::Shared(info) => {
+                PageKind::Filebe(info) => {
                     // 判断文件是否已删除, 若已删除, 则不需要回写
                     // 注意ext4可能有稀疏文件, 当第一次读extent_tree时发现空洞, 页缓存直接分配一个全0页面, 并没有对应磁盘的block
                     if let Some(_) = info.read().inode.upgrade() {

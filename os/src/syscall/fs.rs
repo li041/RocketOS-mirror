@@ -451,25 +451,14 @@ pub fn sys_getcwd(buf: *mut u8, buf_size: usize) -> SyscallRet {
 
 // 仅仅是根据初赛的文档要求, 后续需要根据man7修改
 pub fn sys_fstat(dirfd: i32, statbuf: *mut Stat) -> SyscallRet {
-    if let Some(file_dyn) = current_task().fd_table().get_file(dirfd as usize) {
-        // let file = file_dyn.as_any().downcast_ref::<File>().unwrap();
-        match file_dyn.as_any().downcast_ref::<File>() {
-            Some(file) => {
-                let inode = file.inner_handler(|inner| inner.inode.clone());
-                let stat = Stat::from(inode.getattr());
-                // 4.21
-                // log::error!("fstat: stat: {:?}", stat);
-                if let Err(e) = copy_to_user(statbuf, &stat as *const Stat, 1) {
-                    log::error!("fstat: copy_to_user failed: {:?}", e);
-                    return Err(e);
-                }
-                return Ok(0);
-            }
-            None => {
-                log::error!("fstat: downcast_ref failed");
-                return Err(Errno::EBADF);
-            }
+    if let Some(file) = current_task().fd_table().get_file(dirfd as usize) {
+        let inode = file.get_inode();
+        let stat = Stat::from(inode.getattr());
+        if let Err(e) = copy_to_user(statbuf, &stat as *const Stat, 1) {
+            log::error!("fstat: copy_to_user failed: {:?}", e);
+            return Err(e);
         }
+        return Ok(0);
     }
     // 根据fd获取文件失败
     return Err(Errno::EBADF);
@@ -1240,6 +1229,7 @@ pub fn sys_statx(
 
 /* loongarch end */
 
+// Todo: 需要支持除根目录以外的vfs挂载
 pub fn sys_statfs(path: *const u8, buf: *mut StatFs) -> SyscallRet {
     let path = c_str_to_string(path);
     if path.is_empty() {
@@ -1248,34 +1238,35 @@ pub fn sys_statfs(path: *const u8, buf: *mut StatFs) -> SyscallRet {
     }
     log::info!("[sys_statfs] path: {:?}, buf: {:?}", path, buf);
     // 特殊处理根目录, 因为根目录的dentry是空字符串, path传入的是"/"
-    if path == "/" {
-        let root_dentry = current_task().root().dentry.clone();
-        let mount = get_mount_by_dentry(root_dentry).unwrap();
-        match mount.statfs(buf) {
-            Ok(_) => {
-                log::info!("[sys_statfs] success to statfs");
-                return Ok(0);
-            }
-            Err(e) => {
-                log::info!("[sys_statfs] fail to statfs: {}, {:?}", path, e);
-                return Err(e);
-            }
+    // if path == "/" {
+    let root_dentry = current_task().root().dentry.clone();
+    let mount = get_mount_by_dentry(root_dentry).unwrap();
+    match mount.statfs(buf) {
+        Ok(_) => {
+            log::info!("[sys_statfs] success to statfs");
+            return Ok(0);
         }
-    } else {
-        let mut nd = Nameidata::new(&path, AT_FDCWD);
-        let target_dentry = lookup_dentry(&mut nd);
-        let mount = get_mount_by_dentry(target_dentry).unwrap();
-        match mount.statfs(buf) {
-            Ok(_) => {
-                log::info!("[sys_statfs] success to statfs");
-                return Ok(0);
-            }
-            Err(e) => {
-                log::info!("[sys_statfs] fail to statfs: {}, {:?}", path, e);
-                return Err(e);
-            }
+        Err(e) => {
+            log::info!("[sys_statfs] fail to statfs: {}, {:?}", path, e);
+            return Err(e);
         }
     }
+    // } else {
+    // Todo: 需要支持/tmp的tmpfs
+    // let mut nd = Nameidata::new(&path, AT_FDCWD);
+    // let target_dentry = lookup_dentry(&mut nd);
+    // let mount = get_mount_by_dentry(target_dentry).unwrap();
+    // match mount.statfs(buf) {
+    //     Ok(_) => {
+    //         log::info!("[sys_statfs] success to statfs");
+    //         return Ok(0);
+    //     }
+    //     Err(e) => {
+    //         log::info!("[sys_statfs] fail to statfs: {}, {:?}", path, e);
+    //         return Err(e);
+    //     }
+    // }
+    // }
 }
 
 /* Todo: fake  */
@@ -1369,4 +1360,11 @@ pub fn sys_fsync(fd: usize) -> SyscallRet {
     Ok(0)
 }
 
+pub fn sys_fchmodat(fd: usize, mode: usize) -> SyscallRet {
+    Ok(0)
+}
+
+pub fn sys_fchownat(fd: usize, path: *const u8, owner: usize, group: usize) -> SyscallRet {
+    Ok(0)
+}
 /* fake end */

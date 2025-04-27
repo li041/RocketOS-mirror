@@ -157,6 +157,9 @@ impl FileOp for MemInfoFile {
         }
         Ok(inner_guard.offset)
     }
+    fn get_inode(&self) -> Arc<dyn InodeOp> {
+        self.inode.clone()
+    }
 }
 
 lazy_static! {

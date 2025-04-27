@@ -40,6 +40,24 @@ pub fn init_devfs(root_path: Arc<Path>) {
             panic!("create {} failed: {:?}", dev_path, e);
         }
     };
+    // /dev/shm
+    let shm_path = "/dev/shm";
+    let shm_mode = S_IFDIR as u16 | 0o755;
+    nd = Nameidata {
+        path_segments: parse_path(shm_path),
+        dentry: root_path.dentry.clone(),
+        mnt: root_path.mnt.clone(),
+        depth: 0,
+    };
+    match filename_create(&mut nd, 0) {
+        Ok(dentry) => {
+            let parent_inode = nd.dentry.get_inode();
+            parent_inode.mkdir(dentry, shm_mode);
+        }
+        Err(e) => {
+            panic!("create {} failed: {:?}", shm_path, e);
+        }
+    };
     // /dev/tty
     let tty_path = "/dev/tty";
     let tty_mode = S_IFCHR as u16 | 0o666;

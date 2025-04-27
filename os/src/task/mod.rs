@@ -2,11 +2,11 @@ pub mod aux;
 mod context;
 mod id;
 mod kstack;
+mod manager;
 mod processor;
 mod scheduler;
-mod task;
-mod manager;
 mod signal;
+mod task;
 mod wait;
 
 use crate::{
@@ -26,14 +26,17 @@ use alloc::{string::String, vec};
 use core::arch::asm;
 use lazy_static::lazy_static;
 
-pub use task::{Task,INIT_PROC_PID};
 pub use context::TaskContext;
-pub use processor::{current_task, run_tasks};
-pub use scheduler::{add_task, remove_task, schedule, yield_current_task, WaitOption, get_scheduler_len};
-pub use task::kernel_exit;
+pub use id::IdAllocator;
 pub use kstack::get_stack_top_by_sp;
-pub use manager::{get_task, for_each_task, wakeup_timeout, wait, wait_timeout, wakeup};
+pub use manager::{for_each_task, get_task, wait, wait_timeout, wakeup, wakeup_timeout};
+pub use processor::{current_task, run_tasks};
+pub use scheduler::{
+    add_task, get_scheduler_len, remove_task, schedule, yield_current_task, WaitOption,
+};
+pub use task::kernel_exit;
 pub use task::CloneFlags;
+pub use task::{Task, INIT_PROC_PID};
 
 pub type Tid = usize;
 

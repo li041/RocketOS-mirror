@@ -173,6 +173,13 @@ pub fn sys_getpid() -> SyscallRet {
     Ok(current_task().tgid())
 }
 
+// fake
+pub fn sys_setpgid(pid: usize, pgid: usize) -> SyscallRet {
+    log::info!("[sys_setpgid] pid: {}, pgid: {}", pid, pgid);
+    log::warn!("[sys_setpgid] Uimplemented");
+    Ok(0)
+}
+
 pub fn sys_set_tid_address(tidptr: usize) -> SyscallRet {
     let task = current_task();
     log::info!("[sys_set_tid_address] tidptr:{:#x}", tidptr);
