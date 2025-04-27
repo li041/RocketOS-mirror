@@ -14,6 +14,7 @@ mod area;
 mod frame_allocator;
 mod memory_set;
 mod page;
+pub mod shm;
 
 pub use address::{PhysAddr, PhysPageNum, VPNRange, VirtAddr, VirtPageNum};
 pub use area::{MapArea, MapPermission, MapType};

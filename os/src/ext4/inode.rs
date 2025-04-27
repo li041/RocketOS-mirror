@@ -1117,8 +1117,8 @@ impl Ext4Inode {
             // extend
             log::warn!(
                 "[Ext4Inode::truncate] Unimplemented extend size from {} to {}",
+                current_size,
                 new_size,
-                current_size
             );
             self.truncate_extend(current_size, new_size)
         }
@@ -1168,7 +1168,6 @@ impl Ext4Inode {
         if inode_on_disk.has_inline_data() {
             assert!(current_size <= EXT4_MAX_INLINE_DATA as u64);
             // 将inline data转换为extent tree
-            let new_block = self.alloc_block();
             if current_size > 0 {
                 let page = self.get_page_cache(0).unwrap();
                 // 复制原来的inline_data, 同时写入新的block
@@ -1177,18 +1176,29 @@ impl Ext4Inode {
                         &self.inner.read().inode_on_disk.block[..EXT4_MAX_INLINE_DATA],
                     );
                 });
-                inode_on_disk.flags &= !EXT4_INLINE_DATA_FL;
-                inode_on_disk.flags |= EXT4_EXTENTS_FL;
-                // 创建新的extent
-                let new_extent = Ext4Extent::new(0, 1, new_block);
-                let header_ptr = inode_on_disk.block.as_mut_ptr() as *mut Ext4ExtentHeader;
-                unsafe {
-                    let mut extent_header = Ext4ExtentHeader::default();
-                    extent_header.entries = 1;
-                    header_ptr.write_volatile(extent_header);
-                    let extent_ptr = inode_on_disk.block.as_mut_ptr().add(12) as *mut Ext4Extent;
-                    extent_ptr.write_volatile(new_extent);
-                }
+            }
+            inode_on_disk.flags &= !EXT4_INLINE_DATA_FL;
+            inode_on_disk.flags |= EXT4_EXTENTS_FL;
+
+            let new_block = self.alloc_block();
+            let current_blocks = (current_size as usize + PAGE_SIZE - 1) / PAGE_SIZE;
+            let new_blocks = (new_size as usize + PAGE_SIZE - 1) / PAGE_SIZE;
+            let mut prev_block = new_block;
+            // Todo: 目前只支持连续分配的block
+            for _ in current_blocks..new_blocks - 1 {
+                // 申请新的block
+                let new_block = self.alloc_block();
+                assert!(new_block == prev_block + 1);
+                prev_block = new_block;
+            }
+            let new_extent = Ext4Extent::new(0, new_blocks as u16, new_block);
+            let header_ptr = inode_on_disk.block.as_mut_ptr() as *mut Ext4ExtentHeader;
+            unsafe {
+                let mut extent_header = Ext4ExtentHeader::default();
+                extent_header.entries = 1;
+                header_ptr.write_volatile(extent_header);
+                let extent_ptr = inode_on_disk.block.as_mut_ptr().add(12) as *mut Ext4Extent;
+                extent_ptr.write_volatile(new_extent);
             }
         }
         inode_on_disk.set_size(new_size);

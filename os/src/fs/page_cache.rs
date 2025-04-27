@@ -54,7 +54,7 @@ impl AddressSpace {
         if fs_block_id == 0 {
             log::error!("new_page_cache: fs_block_id is 0, sparse file");
         }
-        let page = Arc::new(Page::new_shared(fs_block_id, block_device, inode));
+        let page = Arc::new(Page::new_filebe(fs_block_id, block_device, inode));
         self.i_pages.write().insert(page_offset, page.clone());
         page
     }

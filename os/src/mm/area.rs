@@ -13,7 +13,7 @@ use crate::{
     mm::address::StepByOne,
 };
 
-use super::{Page, PhysPageNum, VPNRange, VirtAddr, VirtPageNum};
+use super::{shm::ShmAtFlags, Page, PhysPageNum, VPNRange, VirtAddr, VirtPageNum};
 
 bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq)]
@@ -27,6 +27,21 @@ bitflags! {
         const A = 1 << 6;
         const D = 1 << 7;
         const S = 1 << 9;
+    }
+}
+
+impl From<&ShmAtFlags> for MapPermission {
+    fn from(shm_at_flags: &ShmAtFlags) -> Self {
+        let mut map_perm = MapPermission::U | MapPermission::S;
+        if shm_at_flags.contains(ShmAtFlags::SHM_RDONLY) {
+            map_perm.insert(MapPermission::R);
+        } else {
+            map_perm.insert(MapPermission::R | MapPermission::W);
+        }
+        if shm_at_flags.contains(ShmAtFlags::SHM_EXEC) {
+            map_perm.insert(MapPermission::X);
+        }
+        map_perm
     }
 }
 
@@ -119,7 +134,7 @@ impl MapArea {
             }
             MapType::Framed => {
                 for vpn in self.vpn_range {
-                    let page = Page::new_private(None);
+                    let page = Page::new_framed(None);
                     ppn = page.ppn();
                     self.pages.insert(vpn, Arc::new(page));
                     page_table.map(vpn, ppn, pte_flags.clone());
@@ -148,7 +163,7 @@ impl MapArea {
     /// 在原有的MapArea上增加一个页, 并添加相关映射
     /// used by `sys_brk`
     pub fn alloc_one_page_framed_private(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
-        let page = Page::new_private(None);
+        let page = Page::new_framed(None);
         let ppn = page.ppn();
         let pte_flags = PTEFlags::from(self.map_perm);
         page_table.map(vpn, ppn, pte_flags);
