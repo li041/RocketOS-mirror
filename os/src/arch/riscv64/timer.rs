@@ -1,4 +1,8 @@
-use core::{cmp::Ordering, fmt::Debug, ops::Add};
+use core::{
+    cmp::Ordering,
+    fmt::Debug,
+    ops::{Add, Sub},
+};
 
 use crate::{
     arch::{boards::qemu::CLOCK_FREQ, sbi::set_timer},
@@ -54,6 +58,19 @@ impl Add for TimeSpec {
         if nsec >= 1_000_000_000 {
             sec += 1;
             nsec -= 1_000_000_000;
+        }
+        Self { sec, nsec }
+    }
+}
+
+impl Sub for TimeSpec {
+    type Output = Self;
+    fn sub(self, rhs: Self) -> Self::Output {
+        let mut sec = self.sec - rhs.sec;
+        let mut nsec = self.nsec - rhs.nsec;
+        if nsec < 0 {
+            sec -= 1;
+            nsec += 1_000_000_000;
         }
         Self { sec, nsec }
     }
@@ -148,10 +165,8 @@ pub fn read_rtc() -> u64 {
     let low = unsafe {
         core::ptr::read_volatile((KERNEL_BASE + GOLDFISH_RTC_BASE + TIME_LOW) as *const u32)
     } as u64;
-    log::error!("low: {:#x}", low);
     let high = unsafe {
         core::ptr::read_volatile((KERNEL_BASE + GOLDFISH_RTC_BASE + TIME_HIGH) as *const u32)
     } as u64;
-    log::error!("high: {:#x}", high);
     (high << 32) | low
 }

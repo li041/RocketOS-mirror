@@ -9,10 +9,13 @@ use bitflags::Flag;
 use hashbrown::HashMap;
 use lazy_static::lazy_static;
 use log::set_logger;
-use spin::RwLock;
+use spin::{Mutex, RwLock};
 
 use crate::{
-    ext4::{dentry::Ext4DirEntry, inode::S_IFDIR},
+    ext4::{
+        dentry::Ext4DirEntry,
+        inode::{self, S_IFDIR},
+    },
     mutex::SpinNoIrqLock,
 };
 
@@ -34,7 +37,7 @@ bitflags::bitflags! {
 
 impl DentryFlags {
     pub fn update_type_from_negative(&mut self, flags: DentryFlags) {
-        self.remove(DentryFlags::DCACHE_DIRECTORY_TYPE);
+        self.remove(DentryFlags::DCACHE_MISS_TYPE);
         self.insert(flags);
     }
     pub fn get_type(&self) -> DentryFlags {
@@ -59,6 +62,16 @@ pub struct DentryInner {
     // chrildren 是一个哈希表, 用于存储子目录/文件, name不是绝对路径
     pub children: HashMap<String, Arc<Dentry>>,
 }
+
+// impl Drop for Dentry {
+//     fn drop(&mut self) {
+//         log::warn!(
+//             "[Dentry] Drop dentry {}, negative: {:?}",
+//             self.absolute_path,
+//             self.inner.lock().inode.is_none()
+//         );
+//     }
+// }
 
 impl DentryInner {
     pub fn new(parent: Option<Arc<Dentry>>, inode: Arc<dyn InodeOp>) -> Self {
@@ -180,22 +193,21 @@ impl Dentry {
 }
 
 lazy_static! {
-    pub static ref DENTRY_CACHE: SpinNoIrqLock<DentryCache> =
-        SpinNoIrqLock::new(DentryCache::new(1024));
+    pub static ref DENTRY_CACHE: RwLock<DentryCache> = RwLock::new(DentryCache::new(1024));
 }
 
 pub fn lookup_dcache_with_absolute_path(absolute_path: &str) -> Option<Arc<Dentry>> {
-    DENTRY_CACHE.lock().get(absolute_path)
+    DENTRY_CACHE.read().get(absolute_path)
 }
 
 pub fn lookup_dcache(parent: &Arc<Dentry>, name: &str) -> Option<Arc<Dentry>> {
     let absolute_path = format!("{}/{}", parent.absolute_path, name);
-    DENTRY_CACHE.lock().get(&absolute_path)
+    DENTRY_CACHE.read().get(&absolute_path)
 }
 
 pub fn insert_dentry(dentry: Arc<Dentry>) {
     DENTRY_CACHE
-        .lock()
+        .write()
         .insert(dentry.absolute_path.clone(), dentry);
 }
 
@@ -203,42 +215,57 @@ pub fn insert_dentry(dentry: Arc<Dentry>) {
 /// 从dentry cache中删除对应的dentry, 并且设置被删除的dentry为负目录项
 pub fn delete_dentry(dentry: Arc<Dentry>) {
     assert!(!dentry.is_negative());
-    DENTRY_CACHE.lock().remove(dentry.absolute_path.as_str());
+    DENTRY_CACHE.write().remove(dentry.absolute_path.as_str());
     dentry.inner.lock().inode = None;
 }
 
 // 哈希键是由父目录的地址和当前文件名生成的, 确保全局唯一性
+// 全局单例, 外层拿锁
+// 注意管理器中对于Dentry的管理应该是Weak
 pub struct DentryCache {
-    cache: SpinNoIrqLock<HashMap<String, Arc<Dentry>>>,
+    cache: RwLock<HashMap<String, Weak<Dentry>>>,
     // 用于LRU策略的列表
-    lru_list: SpinNoIrqLock<VecDeque<String>>,
+    lru_list: Mutex<VecDeque<String>>,
     capacity: usize,
 }
 
 impl DentryCache {
     fn new(capacity: usize) -> Self {
         DentryCache {
-            cache: SpinNoIrqLock::new(HashMap::new()),
-            lru_list: SpinNoIrqLock::new(VecDeque::new()),
+            cache: RwLock::new(HashMap::new()),
+            lru_list: Mutex::new(VecDeque::new()),
             capacity,
         }
     }
 
     fn get(&self, absolute_path: &str) -> Option<Arc<Dentry>> {
+        let cache = self.cache.read();
         let mut lru_list = self.lru_list.lock();
-        if let Some(dentry) = self.cache.lock().get(absolute_path) {
+        if let Some(dentry) = cache.get(absolute_path) {
             // 更新 LRU 列表
             if let Some(pos) = lru_list.iter().position(|x| x == absolute_path) {
                 lru_list.remove(pos);
             }
             lru_list.push_back(absolute_path.to_string());
-            return Some(Arc::clone(dentry));
+            // 返回 dentry 的引用
+            if let Some(dentry) = dentry.upgrade() {
+                return Some(dentry);
+            } else {
+                // 如果 Weak 引用已经失效，则从缓存中移除
+                log::error!(
+                    "[DentryCache] Weak reference to dentry {} has expired",
+                    absolute_path
+                );
+                drop(cache);
+                let mut cache = self.cache.write();
+                cache.remove(absolute_path);
+            }
         }
         None
     }
 
     fn insert(&self, absolute_path: String, dentry: Arc<Dentry>) {
-        let mut cache = self.cache.lock();
+        let mut cache = self.cache.write();
         let mut lru_list = self.lru_list.lock();
 
         // 如果已经存在，则更新
@@ -253,12 +280,12 @@ impl DentryCache {
             }
         }
 
-        cache.insert(absolute_path.clone(), Arc::clone(&dentry));
+        cache.insert(absolute_path.clone(), Arc::downgrade(&dentry));
         lru_list.push_back(absolute_path);
     }
 
     fn remove(&self, absolute_path: &str) {
-        let mut cache = self.cache.lock();
+        let mut cache = self.cache.write();
         let mut lru_list = self.lru_list.lock();
         if let Some(pos) = lru_list.iter().position(|x| x == absolute_path) {
             lru_list.remove(pos);

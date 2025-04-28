@@ -652,11 +652,6 @@ impl MemorySet {
         // 只检查可能与unmap_vpn_range重叠的区域
         // self.areas.range_mut(..=unmap_vpn_end).rev().for_each(|(vpn, area)| {
         for (vpn, area) in self.areas.range_mut(..=unmap_vpn_start).rev() {
-            log::error!(
-                "[MemorySet::remove_area_with_overlap] area: {:#x} {:#x}",
-                area.vpn_range.get_start().0,
-                area.vpn_range.get_end().0
-            );
             if area.vpn_range.is_intersect_with(&unmap_vpn_range) {
                 let old_vpn_start = area.vpn_range.get_start();
                 let old_vpn_end = area.vpn_range.get_end();
@@ -670,12 +665,6 @@ impl MemorySet {
                     unmap_start.0,
                     unmap_end.0
                 );
-                // // 释放`unmap_vpn_range`范围内的页
-                // for vpn in unmap_vpn_range {
-                //     if area.vpn_range.contains_vpn(vpn) {
-                //         area.dealloc_one_page(&mut self.page_table, vpn);
-                //     }
-                // }
                 // 调整区域
                 if unmap_start <= old_vpn_start && unmap_end >= old_vpn_end {
                     // `unmap_vpn_range` 完全覆盖 `vpn_range`，删除 `area`
@@ -689,7 +678,13 @@ impl MemorySet {
                     for vpn in VPNRange::new(old_vpn_start, unmap_end) {
                         area.dealloc_one_page(&mut self.page_table, vpn);
                     }
-                    area.vpn_range.set_start(unmap_end);
+                    // 注意: 这里不能直接设置原来vpn_range, 因为修改了vpn_range的start, 而BTreeMap是根据start排序的
+                    // 需要先删除原来的区域, 再插入新的区域
+                    // area.vpn_range.set_start(unmap_end);
+                    areas_to_remove.push(*vpn);
+                    let mut new_area = area.clone();
+                    new_area.vpn_range.set_start(unmap_end);
+                    split_new_areas.push(new_area);
                 } else if unmap_end >= old_vpn_end {
                     // `unmap_vpn_range` 覆盖了后部分，调整 `vpn_end`
                     for vpn in VPNRange::new(unmap_start, old_vpn_end) {
@@ -859,11 +854,6 @@ impl MemorySet {
                             .clone()
                             .get_page(offset)
                             .map_err(|_| Errno::EFAULT)?;
-                        // Debug, 打印页的内容
-                        let mut buf: [u8; PAGE_SIZE] = [0; PAGE_SIZE];
-                        page.read(0, |data: &[u8; PAGE_SIZE]| {
-                            buf[..].copy_from_slice(&data[..]);
-                        });
                         // 增加页表映射
                         let pte_flags = PTEFlags::from(area.map_perm);
                         let ppn = page.ppn();
@@ -960,7 +950,7 @@ impl MemorySet {
                     "[check_valid_user_vpn_range] can't find area with vpn {:#x}",
                     current_vpn.0
                 );
-                self.page_table.dump_all_user_mapping();
+                // self.page_table.dump_all_user_mapping();
                 return Err(Errno::EFAULT);
             }
         }

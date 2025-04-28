@@ -161,12 +161,6 @@ pub fn futex_wait(
     }
     // 比较后相等，放入等待队列
     {
-        // Debug 4.20
-        log::warn!(
-            "[futex_wait] futex_key: {:?}, hash_value: {}",
-            key,
-            futex_hash(&key)
-        );
         let mut hash_bucket = FUTEXQUEUES.buckets[futex_hash(&key)].lock();
         let cur_futexq = FutexQ::new(key, current_task().clone(), bitset);
         hash_bucket.push_back(cur_futexq);
@@ -221,8 +215,6 @@ pub fn futex_wake(uaddr: usize, flags: i32, nr_waken: u32) -> SyscallRet {
     let mut ret = 0;
     let key = get_futex_key(uaddr, flags)?;
     {
-        // Debug 4.20
-        log::warn!("futex_key: {:?}, hash_value: {}", key, futex_hash(&key));
         let mut hash_bucket = FUTEXQUEUES.buckets[futex_hash(&key)].lock();
 
         if hash_bucket.is_empty() {

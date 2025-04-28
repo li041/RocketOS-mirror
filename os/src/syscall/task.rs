@@ -6,7 +6,8 @@ use crate::arch::trap::context::{dump_trap_context, get_trap_context, save_trap_
 use crate::fs::file::OpenFlags;
 use crate::futex::do_futex;
 use crate::syscall::errno::Errno;
-use crate::task::{get_scheduler_len, wait, wait_timeout, CloneFlags, Task};
+use crate::syscall::util::{CLOCK_MONOTONIC, CLOCK_REALTIME};
+use crate::task::{get_scheduler_len, get_task, wait, wait_timeout, CloneFlags, Task};
 use crate::{
     arch::mm::copy_to_user,
     arch::timer::get_time_ms,
@@ -19,8 +20,7 @@ use crate::{
     },
     utils::{c_str_to_string, extract_cstrings},
 };
-use alloc::sync::Arc;
-use alloc::task;
+use alloc::{sync::Arc, vec};
 use bitflags::bitflags;
 
 use super::errno::SyscallRet;
@@ -218,6 +218,28 @@ pub fn sys_exit(exit_code: i32) -> ! {
     panic!("Unreachable in sys_exit");
 }
 
+pub fn sys_exit_group(exit_code: i32) -> SyscallRet {
+    log::warn!(
+        "[sys_exit_group] thread-group {} do exit!",
+        current_task().tgid()
+    );
+    let task = current_task();
+    let mut to_exit = vec![];
+    task.op_thread_group_mut(|tg| {
+        for thread in tg.iter() {
+            to_exit.push(thread.tid());
+        }
+    });
+    for tid in to_exit {
+        if let Some(thread) = get_task(tid) {
+            kernel_exit(thread, exit_code);
+        }
+    }
+    drop(task);
+    schedule();
+    Ok(0) // 这里不会返回
+}
+
 pub fn sys_waitpid(pid: isize, exit_code_ptr: usize, option: i32) -> SyscallRet {
     log::trace!("[sys_waitpid]");
     let option = WaitOption::from_bits(option).unwrap();
@@ -384,6 +406,70 @@ pub fn sys_nanosleep(time_val_ptr: usize) -> SyscallRet {
         yield_current_task();
     }
     Ok(0)
+}
+
+pub const TIMER_ABSTIME: i32 = 0x01;
+pub fn sys_clock_nansleep(clock_id: usize, flags: i32, t: usize, remain: usize) -> SyscallRet {
+    log::info!(
+        "[sys_clock_nanosleep] clock_id: {}, flags: {}, req: {:x}, rem: {:x}",
+        clock_id,
+        flags,
+        t,
+        remain
+    );
+    let t = copy_from_user(t as *const TimeSpec, 1)?[0];
+    match clock_id {
+        CLOCK_REALTIME => {
+            if flags == TIMER_ABSTIME {
+                // 绝对时间
+                // Todo: 阻塞
+                loop {
+                    let current_time = TimeSpec::new_wall_time();
+                    if current_time >= t {
+                        return Ok(0);
+                    }
+                    yield_current_task();
+                }
+            } else {
+                // 相对时间
+                let start_time = TimeSpec::new_wall_time();
+                loop {
+                    let current_time = TimeSpec::new_wall_time();
+                    if current_time >= t + start_time {
+                        return Ok(0);
+                    }
+                    yield_current_task();
+                }
+            }
+        }
+        CLOCK_MONOTONIC => {
+            if flags == TIMER_ABSTIME {
+                // 绝对时间
+                // Todo: 阻塞 + 信号中断
+                loop {
+                    let current_time = TimeSpec::new_machine_time();
+                    if current_time >= t {
+                        return Ok(0);
+                    }
+                    yield_current_task();
+                }
+            } else {
+                // 相对时间
+                let start_time = TimeSpec::new_machine_time();
+                loop {
+                    let current_time = TimeSpec::new_machine_time();
+                    if current_time >= t + start_time {
+                        return Ok(0);
+                    }
+                    yield_current_task();
+                }
+            }
+        }
+        _ => {
+            panic!("[sys_clock_nanosleep] clock_id: {} not supported", clock_id);
+            return Err(Errno::EINVAL);
+        }
+    }
 }
 
 /* fake */

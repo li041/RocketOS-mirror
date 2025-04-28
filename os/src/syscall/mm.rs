@@ -74,6 +74,7 @@ pub fn sys_brk(brk: usize) -> SyscallRet {
 
 bitflags! {
     /// MMAP memeory protection
+    /// 注意: PROT_WRITE不直接对应MapPermission的W, 因为对于私有文件映射
     pub struct MmapProt: u32 {
         /// Readable
         const PROT_READ = 0x1;
@@ -180,6 +181,9 @@ pub fn sys_mmap(
     }
 
     let mut map_perm: MapPermission = prot.into();
+    if flags.contains(MmapFlags::MAP_DENYWRITE) {
+        log::warn!("[sys_mmap] MAP_DENYWRITE not implemented");
+    }
     // 加上U权限
     map_perm |= MapPermission::U;
     if flags.contains(MmapFlags::MAP_SHARED) {
@@ -218,11 +222,6 @@ pub fn sys_mmap(
                 memory_set.get_unmapped_area(len)
             };
             memory_set.insert_framed_area(vpn_range, map_perm);
-            // Debug
-            log::error!(
-                "[sys_mmap] anonymous return {:#x}",
-                vpn_range.get_start().0 << PAGE_SIZE_BITS
-            );
             return Ok(vpn_range.get_start().0 << PAGE_SIZE_BITS);
         })
     } else {
@@ -238,6 +237,11 @@ pub fn sys_mmap(
             } else {
                 memory_set.get_unmapped_area(len)
             };
+            // 处理map_perm
+            if map_perm.contains(MapPermission::W) && !map_perm.contains(MapPermission::S) {
+                map_perm.remove(MapPermission::W);
+                map_perm.insert(MapPermission::COW);
+            }
             let mmap_area = MapArea::new(vpn_range, MapType::Filebe, map_perm, Some(file), offset);
             memory_set.insert_filebe_area_lazily(mmap_area);
             log::error!(
@@ -271,7 +275,7 @@ pub fn sys_munmap(start: usize, len: usize) -> SyscallRet {
     task.op_memory_set_mut(|memory_set| {
         if !memory_set.remove_area_with_overlap(unmap_vpn_range) {
             log::warn!("[sys_munmap] {:#x} not found", start);
-            memory_set.page_table.dump_all_user_mapping();
+            // memory_set.page_table.dump_all_user_mapping();
         }
     });
     Ok(0)

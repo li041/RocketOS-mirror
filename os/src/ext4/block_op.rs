@@ -305,8 +305,6 @@ impl<'a> Ext4Bitmap<'a> {
     /// 注意: inode_num从1开始, 而bitmap的索引从0开始, bit_index = inode_num - 1
     /// 注意: inode_bitmap_size的单位是byte
     pub fn alloc(&mut self, inode_bitmap_size: usize) -> Option<usize> {
-        // log::warn!("self.buffer: {:?}", self.bitmap[4095]);
-        // log::warn!("inode_bitmap_size: {}", inode_bitmap_size);
         // 逐字节处理, 加速alloc过程
         for (i, byte) in self.bitmap.iter_mut().enumerate() {
             if *byte != 0xff {
@@ -346,8 +344,8 @@ impl<'a> Ext4ExtentBlock<'a> {
     pub fn new(block: &'a mut [u8; EXT4_BLOCK_SIZE]) -> Self {
         Self { block }
     }
-    fn extent_header(&self) -> &Ext4ExtentHeader {
-        unsafe { &*(self.block.as_ptr() as *const Ext4ExtentHeader) }
+    fn extent_header(&self) -> &mut Ext4ExtentHeader {
+        unsafe { &mut *(self.block.as_ptr() as *mut Ext4ExtentHeader) }
     }
 }
 
@@ -394,6 +392,97 @@ impl<'a> Ext4ExtentBlock<'a> {
                 .lookup_extent(logical_block, block_device, ext4_block_size);
             } else {
                 return None;
+            }
+        }
+    }
+    // 递归插入
+    pub fn insert_extent(
+        &mut self,
+        logical_block_num: u32,
+        physical_block_num: u64,
+        blocks_count: u32,
+    ) -> Result<(), &'static str> {
+        let header = self.extent_header();
+        if header.depth == 0 {
+            // 叶子节点
+            let extents = unsafe {
+                core::slice::from_raw_parts_mut(
+                    self.block.as_ptr().add(12) as *mut Ext4Extent,
+                    header.entries as usize,
+                )
+            };
+            // 遍历, 查找合适的extent合并
+            for (i, extent) in extents.iter().enumerate() {
+                let lend_block = extent.logical_block + extent.len as u32;
+                let pend_block = extent.physical_start_block() as u32 + extent.len as u32;
+
+                // 情况 0: 直接合并, 物理块号连续, 且逻辑块号连续
+                if logical_block_num == lend_block
+                    && physical_block_num as u32 == pend_block
+                    && extent.len < 32768
+                {
+                    unsafe {
+                        let extent_ptr = self.block.as_ptr().add(12 + i * 12) as *mut Ext4Extent;
+                        (*extent_ptr).len += blocks_count as u16;
+                        // log::info!("[update_extent] Extend existing extent");
+                        return Ok(());
+                    }
+                }
+            }
+            // 情况 1: extent entries 超出最大数量, 需要创建索引节点
+            if header.entries as usize >= EXTENT_BLOCK_MAX_ENTRIES {
+                panic!("Extent block is full, Uimplement split_extent_block");
+            }
+            // 情况 2: 插入新的 extent, 并按logical_block排序, 更新header.entries
+            // 情况1已经保证了有位置可插入
+            let new_extent = Ext4Extent::new(
+                logical_block_num,
+                blocks_count as u16,
+                physical_block_num as usize,
+            );
+            let insert_pos = extents
+                .iter()
+                .position(|extent| extent.logical_block > logical_block_num)
+                .unwrap_or(extents.len());
+            unsafe {
+                let extents_ptr = self.block.as_ptr().add(12) as *mut Ext4Extent;
+                core::ptr::copy(
+                    extents_ptr.add(insert_pos),
+                    extents_ptr.add(insert_pos + 1),
+                    (header.entries as usize) - insert_pos,
+                );
+                // 写入新的 extent
+                core::ptr::write(extents_ptr.add(insert_pos), new_extent);
+            }
+            header.entries += 1;
+            Ok(())
+        } else {
+            // 索引节点
+            unimplemented!()
+        }
+    }
+    /// 初始化当前 block 成为一个叶子节点
+    /// right_extents: 要拷贝到这个叶子节点的新 extent 列表
+    pub fn init_as_leaf(&mut self, extents: &[Ext4Extent]) {
+        // 清零整个 block（防止脏数据）
+        self.block.fill(0);
+
+        // 初始化 extent_header
+        let header = unsafe { &mut *(self.block.as_mut_ptr() as *mut Ext4ExtentHeader) };
+        header.magic = 0xf30a; // EXT4_EXT_MAGIC
+        header.entries = extents.len() as u16;
+        header.max = EXTENT_BLOCK_MAX_ENTRIES as u16;
+        header.depth = 0; // 叶子节点
+
+        // 拷贝 right_extents 到 block中
+        for (i, extent) in extents.iter().enumerate() {
+            unsafe {
+                let dst_ptr = self
+                    .block
+                    .as_mut_ptr()
+                    .add(12 + i * core::mem::size_of::<Ext4Extent>())
+                    as *mut Ext4Extent;
+                dst_ptr.write(*extent);
             }
         }
     }
