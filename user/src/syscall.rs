@@ -15,6 +15,8 @@ const SYSCALL_FORK: usize = 220;
 const SYSCALL_EXECVE: usize = 221;
 const SYSCALL_WAITPID: usize = 260;
 const SYSCALL_PIPE2: usize = 59;
+const SYSCALL_CHDIR: usize = 49;
+const SYSCALL_GETCWD: usize = 17;
 
 #[cfg(target_arch = "riscv64")]
 fn syscall(id: usize, args: [usize; 6]) -> isize {
@@ -109,6 +111,14 @@ pub fn sys_fork() -> isize {
 }
 pub fn sys_pipe2(pipe: *mut i32, flags: i32) -> isize {
     syscall(SYSCALL_PIPE2, [pipe as usize, flags as usize, 0, 0, 0, 0])
+}
+
+pub fn sys_chdir(path: &str) -> isize {
+    syscall(SYSCALL_CHDIR, [path.as_ptr() as usize, 0, 0, 0, 0, 0])
+}
+
+pub fn sys_getcwd(buf: *mut u8, size: usize) -> isize {
+    syscall(SYSCALL_GETCWD, [buf as usize, size, 0, 0, 0, 0])
 }
 
 // pub fn sys_exec(path: &str) -> isize {

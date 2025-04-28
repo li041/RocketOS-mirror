@@ -4,7 +4,7 @@ use alloc::{
     vec,
     vec::Vec,
 };
-use user_lib::{execve, exit};
+use user_lib::{chdir, execve, exit};
 
 pub struct Pipeline {
     commands: Vec<Command>,

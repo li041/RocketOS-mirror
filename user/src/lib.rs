@@ -13,7 +13,12 @@ extern crate bitflags;
 
 use core::ptr::null;
 
-use alloc::{ffi::CString, vec::Vec};
+use alloc::vec;
+use alloc::{
+    ffi::CString,
+    string::{String, ToString},
+    vec::Vec,
+};
 use buddy_system_allocator::LockedHeap;
 use syscall::*;
 
@@ -91,6 +96,10 @@ pub fn fork() -> isize {
 pub fn pipe(pipe: *mut i32, flags: i32) -> isize {
     sys_pipe2(pipe, flags)
 }
+pub fn chdir(path: &str) -> isize {
+    sys_chdir(path)
+}
+
 // pub fn exec(path: &str) -> isize {
 //     sys_exec(path)
 // }
@@ -142,4 +151,12 @@ pub fn sleep(period_ms: usize) {
     while sys_get_time() < start + period_ms as isize {
         sys_yield();
     }
+}
+
+pub fn getcwd() -> String {
+    let mut buf = [0u8; 256];
+    sys_getcwd(buf.as_mut_ptr(), buf.len());
+    String::from_utf8_lossy(&buf)
+        .trim_end_matches('\0')
+        .to_string()
 }
