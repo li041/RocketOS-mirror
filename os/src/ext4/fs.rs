@@ -72,22 +72,6 @@ impl Ext4FileSystem {
             super_block,
             block_groups,
         });
-
-        let root_inode = Ext4Inode::new_root(block_device, ext4_fs.clone(), root_group_desc);
-        // root_inode Ok
-        // Debug
-        {
-            let mut read_buf: [u8; 4096] = [0; 4096];
-            root_inode
-                .read(0, &mut read_buf)
-                .expect("Inode::read failed");
-
-            // generic_inode.load_children_from_disk();
-            let dir_content = Ext4DirContentRO::new(&read_buf[..]);
-            dir_content.getdents();
-        }
-        // Debug end
-
         return ext4_fs;
     }
     // 先使用最简单的first fit算法

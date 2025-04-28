@@ -1,5 +1,5 @@
 use crate::arch::mm::sfence_vma_vaddr;
-use core::ops::Range;
+use core::{fmt::Debug, ops::Range};
 
 use alloc::{collections::btree_map::BTreeMap, sync::Arc};
 use bitflags::bitflags;
@@ -26,6 +26,7 @@ bitflags! {
         const G = 1 << 5;
         const A = 1 << 6;
         const D = 1 << 7;
+        const COW = 1 << 8;
         const S = 1 << 9;
     }
 }
@@ -71,6 +72,16 @@ pub struct MapArea {
     /// 文件映射
     pub backend_file: Option<Arc<dyn FileOp>>,
     pub offset: usize,
+}
+
+impl Debug for MapArea {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("MapArea")
+            .field("vpn_range", &self.vpn_range)
+            .field("map_perm", &self.map_perm)
+            .field("map_type", &self.map_type)
+            .finish()
+    }
 }
 
 impl PartialEq for MapArea {

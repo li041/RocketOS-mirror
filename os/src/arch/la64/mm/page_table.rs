@@ -71,6 +71,9 @@ impl From<MapPermission> for PTEFlags {
         if perm.contains(MapPermission::S) {
             flags |= PTEFlags::S;
         }
+        if perm.contains(MapPermission::COW) {
+            flags |= PTEFlags::COW;
+        }
         flags
     }
 }

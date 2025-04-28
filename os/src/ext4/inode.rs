@@ -329,7 +329,7 @@ impl Ext4InodeDisk {
         // 初始化extent tree
         let header_ptr = self.block.as_mut_ptr() as *mut Ext4ExtentHeader;
         unsafe {
-            header_ptr.write(Ext4ExtentHeader::default());
+            header_ptr.write(Ext4ExtentHeader::new_root());
         }
     }
     fn extent_header(&self) -> Ext4ExtentHeader {
@@ -460,18 +460,13 @@ impl Ext4InodeDisk {
         blocks_count: u32,
         block_device: Arc<dyn BlockDevice>,
         ext4_block_size: usize,
+        ext4_fs: Arc<Ext4FileSystem>,
     ) -> Result<(), &'static str> {
         // 获取当前的 extent 头
         let mut extent_header = self.extent_header();
 
-        // 情况 0: extent entries 超出最大数量, 需要创建索引节点
-        // Todo: 未实现节点的分裂
-        if extent_header.entries == extent_header.max {
-            panic!("[update_extent]Extent entries exceed max, need index node");
-        }
-
         // 1. 遍历找到对应的叶子节点
-        while extent_header.depth > 0 {
+        if extent_header.depth > 0 {
             let extent_idxs = self.extent_idxs(&extent_header);
 
             // 在索引节点中找到对应的叶子节点
@@ -479,10 +474,14 @@ impl Ext4InodeDisk {
                 .iter()
                 .find(|idx| idx.block <= logical_block_num)
             {
-                let next_block = idx.physical_leaf_block();
-                extent_header = get_block_cache(next_block, block_device.clone(), ext4_block_size)
-                    .lock()
-                    .read(0, |header: &Ext4ExtentHeader| header.clone());
+                let child_block_num = idx.physical_leaf_block();
+                // 递归插入子节点
+                return Ext4ExtentBlock::new(
+                    get_block_cache(child_block_num, block_device.clone(), ext4_block_size)
+                        .lock()
+                        .get_mut(0),
+                )
+                .insert_extent(logical_block_num, physical_block_num, blocks_count);
             } else {
                 return Err("No valid extent index found");
             }
@@ -495,7 +494,7 @@ impl Ext4InodeDisk {
             let lend_block = extent.logical_block + extent.len as u32;
             let pend_block = extent.physical_start_block() as u32 + extent.len as u32;
 
-            // 情况 1: 直接合并, 物理块号连续, 且逻辑块号连续
+            // 情况 0: 直接合并, 物理块号连续, 且逻辑块号连续
             if logical_block_num == lend_block
                 && physical_block_num as u32 == pend_block
                 && extent.len < 32768
@@ -509,7 +508,36 @@ impl Ext4InodeDisk {
             }
         }
 
-        // 情况 2: 插入新的 extent, 情况0已经保证了有位置可插入
+        // 情况 1: extent entries 超出最大数量, 需要创建索引节点
+        if extent_header.entries == extent_header.max {
+            // let extents = self.extents(&extent_header);
+            // for extent in extents {
+            //     log::error!("{:?}", extent);
+            // }
+            // panic!("[update_extent]Extent entries exceed max, need index node");
+            self.split_leaf_block(block_device.clone(), ext4_block_size, ext4_fs);
+            // 重新获取extent_header
+            let extent_header = self.extent_header();
+            let extent_idxs = self.extent_idxs(&extent_header);
+            // 在索引节点中找到对应的叶子节点插入
+            if let Some(idx) = extent_idxs
+                .iter()
+                .find(|idx| idx.block <= logical_block_num)
+            {
+                let child_block_num = idx.physical_leaf_block();
+                // 递归插入子节点
+                return Ext4ExtentBlock::new(
+                    get_block_cache(child_block_num, block_device, ext4_block_size)
+                        .lock()
+                        .get_mut(0),
+                )
+                .insert_extent(logical_block_num, physical_block_num, blocks_count);
+            } else {
+                return Err("No valid extent index found");
+            }
+        }
+
+        // 情况 2: 插入新的 extent, 情况1已经保证了有位置可插入
         let new_extent = Ext4Extent::new(
             logical_block_num,
             blocks_count as u16,
@@ -531,6 +559,60 @@ impl Ext4InodeDisk {
         }
         Ok(())
     }
+    // 应该把所有entry, 分为两部分, 左边的entry和右边的entry
+    fn split_leaf_block(
+        &mut self,
+        block_device: Arc<dyn BlockDevice>,
+        ext4_block_size: usize,
+        ext4_fs: Arc<Ext4FileSystem>,
+    ) {
+        // 分配新块
+        let new_left_block_num = ext4_fs.alloc_block(block_device.clone());
+        let new_right_block_num = ext4_fs.alloc_block(block_device.clone());
+        let mut extent_header = self.extent_header();
+        let mut extents = self.extents(&extent_header);
+        let mid = extents.len() / 2;
+        assert!(
+            mid == 2,
+            "split_leaf_block for Ext4InodeDisk should be called when extents.len == 4"
+        );
+        let (left, right) = extents.split_at_mut(mid);
+        let left_logical_start_block = left[0].logical_block;
+        let right_logical_start_block = right[0].logical_block;
+        // 初始化新的left Ext4ExtentBlock
+        Ext4ExtentBlock::new(
+            get_block_cache(new_left_block_num, block_device.clone(), ext4_block_size)
+                .lock()
+                .get_mut(0),
+        )
+        .init_as_leaf(&left);
+        // 初始化新的right Ext4ExtentBlock
+        Ext4ExtentBlock::new(
+            get_block_cache(new_right_block_num, block_device.clone(), ext4_block_size)
+                .lock()
+                .get_mut(0),
+        )
+        .init_as_leaf(&right);
+        // 更新Ext4InodeDisk的extent_header和extents
+        extent_header.entries = 2;
+        extent_header.depth += 1;
+        // 写回Ext4InodeDisk
+        unsafe {
+            let header_ptr = self.block.as_mut_ptr() as *mut Ext4ExtentHeader;
+            header_ptr.write_volatile(extent_header);
+            // 更新对应的extent
+            let left_extent_ptr = self.block.as_mut_ptr().add(12) as *mut Ext4ExtentIdx;
+            left_extent_ptr.write_volatile(Ext4ExtentIdx::new(
+                left_logical_start_block,
+                new_left_block_num,
+            ));
+            let right_extent_ptr = self.block.as_mut_ptr().add(24) as *mut Ext4ExtentIdx;
+            right_extent_ptr.write_volatile(Ext4ExtentIdx::new(
+                right_logical_start_block,
+                new_right_block_num,
+            ));
+        }
+    }
 }
 
 pub struct Ext4Inode {
@@ -547,6 +629,7 @@ impl Drop for Ext4Inode {
     // 释放页缓存, inode bitmap, block bitmap, inode table
     // Todo: 可能有资源还没有释放
     fn drop(&mut self) {
+        log::error!("[Ext4Inode::drop] drop inode {}", self.inode_num);
         // 释放页缓存
         self.address_space.clear();
         // 释放inode bitmap和inode table
@@ -951,6 +1034,7 @@ impl Ext4Inode {
                     1,
                     block_device,
                     ext4_block_size,
+                    self.ext4_fs.upgrade().unwrap(),
                 )
                 .unwrap();
 
@@ -1016,7 +1100,7 @@ impl Ext4Inode {
                 // 初始化extent tree, extent_header + extent
                 let header_ptr = inode_on_disk.block.as_mut_ptr() as *mut Ext4ExtentHeader;
                 unsafe {
-                    let mut extent_header = Ext4ExtentHeader::default();
+                    let mut extent_header = Ext4ExtentHeader::new_root();
                     extent_header.entries = 1;
                     header_ptr.write_volatile(extent_header);
                     let extent_ptr = inode_on_disk.block.as_mut_ptr().add(12) as *mut Ext4Extent;
@@ -1194,7 +1278,7 @@ impl Ext4Inode {
             let new_extent = Ext4Extent::new(0, new_blocks as u16, new_block);
             let header_ptr = inode_on_disk.block.as_mut_ptr() as *mut Ext4ExtentHeader;
             unsafe {
-                let mut extent_header = Ext4ExtentHeader::default();
+                let mut extent_header = Ext4ExtentHeader::new_root();
                 extent_header.entries = 1;
                 header_ptr.write_volatile(extent_header);
                 let extent_ptr = inode_on_disk.block.as_mut_ptr().add(12) as *mut Ext4Extent;
@@ -1296,6 +1380,7 @@ impl Ext4Inode {
             blocks_count,
             block_device,
             ext4_block_size,
+            self.ext4_fs.upgrade().unwrap(),
         )
     }
     pub fn alloc_block(&self) -> usize {

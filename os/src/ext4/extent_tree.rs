@@ -8,8 +8,19 @@ pub struct Ext4ExtentHeader {
     generation: u32, // 本节点的generation, 用于标识节点的版本, used by Lustre, 不是standard ext4
 }
 
-impl Default for Ext4ExtentHeader {
-    fn default() -> Self {
+// impl Default for Ext4ExtentHeader {
+//     fn default() -> Self {
+//         Self {
+//             magic: 0xF30A,
+//             entries: 0,
+//             max: 4,
+//             depth: 0,
+//             generation: 0,
+//         }
+//     }
+// }
+impl Ext4ExtentHeader {
+    pub fn new_root() -> Self {
         Self {
             magic: 0xF30A,
             entries: 0,
@@ -33,6 +44,14 @@ pub struct Ext4ExtentIdx {
 }
 
 impl Ext4ExtentIdx {
+    pub fn new(logical_block: u32, physical_block: usize) -> Self {
+        Self {
+            block: logical_block,
+            leaf_lo: physical_block as u32,
+            leaf_hi: (physical_block >> 32) as u16,
+            unused: 0,
+        }
+    }
     pub fn physical_leaf_block(&self) -> usize {
         (self.leaf_hi as usize) << 32 | self.leaf_lo as usize
     }

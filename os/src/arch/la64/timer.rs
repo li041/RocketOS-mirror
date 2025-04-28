@@ -1,4 +1,9 @@
-use core::{arch::asm, cmp::Ordering, ops::Add, ptr::read_volatile};
+use core::{
+    arch::asm,
+    cmp::Ordering,
+    ops::{Add, Sub},
+    ptr::read_volatile,
+};
 
 use crate::utils::{seconds_to_beijing_datetime, DateTime};
 
@@ -42,7 +47,6 @@ impl Ord for TimeSpec {
     }
 }
 
-
 impl Add for TimeSpec {
     type Output = Self;
     fn add(self, rhs: Self) -> Self::Output {
@@ -51,6 +55,19 @@ impl Add for TimeSpec {
         if nsec >= 1_000_000_000 {
             sec += 1;
             nsec -= 1_000_000_000;
+        }
+        Self { sec, nsec }
+    }
+}
+
+impl Sub for TimeSpec {
+    type Output = Self;
+    fn sub(self, rhs: Self) -> Self::Output {
+        let mut sec = self.sec - rhs.sec;
+        let mut nsec = self.nsec - rhs.nsec;
+        if nsec < 0 {
+            sec -= 1;
+            nsec += 1_000_000_000;
         }
         Self { sec, nsec }
     }

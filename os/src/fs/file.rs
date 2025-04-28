@@ -50,6 +50,11 @@ pub trait FileOp: Any + Send + Sync {
     fn pread<'a>(&'a self, buf: &'a mut [u8], offset: usize) -> usize {
         unimplemented!();
     }
+    // 从文件偏移量为offset处写数据到buf中, 返回写的字节数, 不会更新文件偏移量
+    fn pwrite<'a>(&'a self, buf: &'a [u8], offset: usize) -> usize {
+        unimplemented!();
+    }
+
     fn read_all(&self) -> Vec<u8> {
         unimplemented!();
     }
@@ -172,6 +177,10 @@ impl FileOp for File {
         let read_size = self.inner_handler(|inner| inner.inode.read(offset, buf));
         read_size
     }
+    fn pwrite<'a>(&'a self, buf: &'a [u8], offset: usize) -> usize {
+        let write_size = self.inner_handler(|inner| inner.inode.write(offset, buf));
+        write_size
+    }
     fn read_all(&self) -> Vec<u8> {
         self.read_all()
     }
@@ -238,6 +247,12 @@ impl FileOp for File {
         let inner_guard = self.inner.lock();
         inner_guard.flags.contains(OpenFlags::O_WRONLY)
             || inner_guard.flags.contains(OpenFlags::O_RDWR)
+    }
+    fn r_ready(&self) -> bool {
+        true
+    }
+    fn w_ready(&self) -> bool {
+        true
     }
     fn get_flags(&self) -> OpenFlags {
         self.inner_handler(|inner| inner.flags)

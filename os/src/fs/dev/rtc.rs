@@ -180,7 +180,7 @@ impl FileOp for RtcFile {
                 }
                 let buf_ptr = arg_ptr as *mut RtcTime;
                 log::error!("RTC_RD_TIME: buf_ptr = {:#X}", buf_ptr as usize,);
-                copy_to_user(buf_ptr, &rtc_time as *const RtcTime, 1);
+                copy_to_user(buf_ptr, &rtc_time as *const RtcTime, 1)?;
                 return Ok(0);
             }
             RtcIoctlCmd::RTC_SET_TIME => {
