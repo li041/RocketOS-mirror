@@ -183,7 +183,6 @@ pub fn do_ext4_mount(block_device: Arc<dyn BlockDevice>) -> Arc<Path> {
         ext4_fs.clone(),
         &ext4_fs.block_groups[0],
     );
-    ext4_list_apps(root_inode.clone());
     let root_dentry = Dentry::new(
         "".to_string(),
         None,
@@ -258,15 +257,3 @@ pub fn do_mount(
     Ok(0)
 }
 
-pub fn ext4_list_apps(root_inode: Arc<dyn InodeOp>) {
-    println!("/**** ROOT APPS ****");
-    let dirents = root_inode.getdents(0).1;
-    if dirents.is_empty() {
-        println!("No apps found!");
-    } else {
-        for dirent in dirents.iter() {
-            print!("{}\t", String::from_utf8_lossy(&dirent.d_name));
-        }
-    }
-    println!("\n**************/");
-}

@@ -71,15 +71,12 @@ pub fn copy_from_user<'a, T: Copy>(from: *const T, n: usize) -> Result<&'a [T], 
     return Ok(unsafe { core::slice::from_raw_parts(from, n) });
 }
 
-pub fn copy_from_user_mut<'a, T: Copy>(
-    from: *const T,
-    n: usize,
-) -> Result<&'a mut [T], &'static str> {
+pub fn copy_from_user_mut<'a, T: Copy>(from: *const T, n: usize) -> Result<&'a mut [T], Errno> {
     if from.is_null() {
-        return Err("null pointer");
+        return Err(Errno::EINVAL);
     }
     if n == 0 {
-        return Err("no data to copy");
+        return Err(Errno::EINVAL);
     }
     return Ok(unsafe { core::slice::from_raw_parts_mut(from as *mut T, n) });
 }

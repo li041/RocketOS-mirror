@@ -1,6 +1,7 @@
 use crate::{
     arch::timer::TimeSpec,
     drivers::block::block_cache::get_block_cache,
+    ext4,
     fs::{
         dentry::{Dentry, DentryFlags, LinuxDirent64},
         dev::{null::NullInode, rtc::RtcInode, tty::TtyInode},
@@ -17,7 +18,7 @@ use alloc::{
     string::{String, ToString},
     sync::Arc,
 };
-use block_op::Ext4DirContentWE;
+use block_op::{Ext4DirContentRO, Ext4DirContentWE};
 use dentry::{EXT4_DT_CHR, EXT4_DT_DIR};
 use fs::EXT4_BLOCK_SIZE;
 use inode::{
@@ -436,34 +437,9 @@ impl InodeOp for Ext4Inode {
             .write()
             .update_type_from_negative(DentryFlags::DCACHE_SPECIAL_TYPE);
     }
-    fn getdents(&self, offset: usize) -> (usize, Vec<LinuxDirent64>) {
-        let ext4_dirents: Vec<dentry::Ext4DirEntry> = self.getdents(offset);
-
-        let mut offset = 0;
-        const NAME_OFFSET: usize = 19;
-        let linux_dirents = ext4_dirents
-            .iter()
-            .filter_map(|entry| {
-                // 跳过无效的目录项(inode_num为0)
-                if entry.inode_num == 0 {
-                    offset += entry.rec_len as usize;
-                    return None;
-                }
-                let null_term_name_len = entry.name.len() + 1;
-                // reclen需要对齐到8字节
-                let d_reclen = (NAME_OFFSET + null_term_name_len + 7) & !0x7;
-                let dirent = LinuxDirent64 {
-                    d_ino: entry.inode_num as u64,
-                    d_off: offset as u64,
-                    d_reclen: d_reclen as u16,
-                    d_type: entry.file_type,
-                    d_name: entry.name.clone(),
-                };
-                offset += entry.rec_len as usize;
-                Some(dirent)
-            })
-            .collect();
-        (offset, linux_dirents)
+    // 返回(file_offset, linux_dirents)
+    fn getdents(&self, buf: &mut [u8], offset: usize) -> (usize, usize) {
+        self.getdents(buf, offset)
     }
     fn getattr(&self) -> Kstat {
         self.getattr()

@@ -45,7 +45,7 @@ pre2025:
 
 init_img_2024:
 	rm $(EXT4_OUT)
-	dd if=/dev/zero of=$(EXT4_OUT) count=2048 bs=1M
+	dd if=/dev/zero of=$(EXT4_OUT) count=4096 bs=1M
 	mkfs.ext4 $(EXT4_OUT)
 	mkdir -p mnt_temp
 	sudo mount $(EXT4_OUT) mnt_temp
@@ -58,7 +58,7 @@ init_img_2024:
 
 init_img_2025:
 	rm $(EXT4_OUT)
-	dd if=/dev/zero of=$(EXT4_OUT) count=2048 bs=1M
+	dd if=/dev/zero of=$(EXT4_OUT) count=4096 bs=1M
 	mkfs.ext4 $(EXT4_OUT)
 	mkdir -p mnt_temp
 	sudo mount $(EXT4_OUT) mnt_temp
@@ -71,7 +71,7 @@ init_img_2025:
 
 custom: compile_custom
 	rm $(EXT4_OUT)
-	dd if=/dev/zero of=$(EXT4_OUT) count=2048 bs=1M
+	dd if=/dev/zero of=$(EXT4_OUT) count=4096 bs=1M
 	mkfs.ext4 $(EXT4_OUT)
 	mkdir -p mnt
 	sudo mount $(EXT4_OUT) mnt

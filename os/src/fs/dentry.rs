@@ -1,3 +1,5 @@
+use core::fmt::{Debug, Formatter};
+
 use alloc::{
     collections::vec_deque::VecDeque,
     format,
@@ -297,10 +299,25 @@ impl DentryCache {
 #[repr(C)]
 pub struct LinuxDirent64 {
     pub d_ino: u64,
-    pub d_off: u64, // 文件系统底层磁盘中的偏移 filesystem-specific value with no specific meaning to user space
+    /// the distance from the start of the directory to the start of the next linux_dirent
+    pub d_off: u64, // 文件系统底层磁盘中的偏移 filesystem-specific value with no specific meaning to user space,
     pub d_reclen: u16, // linux_dirent的长度, 对齐到8字节
     pub d_type: u8,
     pub d_name: Vec<u8>, // d_name是变长的, 在复制会用户空间时需要以'\0'结尾
+}
+
+impl Debug for LinuxDirent64 {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "LinuxDirent64 {{ d_ino: {}, d_off: {}, d_reclen: {}, d_type: {}, d_name: {} }}",
+            self.d_ino,
+            self.d_off,
+            self.d_reclen,
+            self.d_type,
+            String::from_utf8_lossy(&self.d_name)
+        )
+    }
 }
 
 impl LinuxDirent64 {
@@ -317,5 +334,6 @@ impl LinuxDirent64 {
         buf[18] = self.d_type;
         let name_len = self.d_name.len();
         buf[NAME_OFFSET..NAME_OFFSET + name_len].copy_from_slice(&self.d_name[..]);
+        buf[NAME_OFFSET + name_len] = b'\0'; // 添加结尾的'\0'
     }
 }

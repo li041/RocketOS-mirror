@@ -3,11 +3,10 @@ use core::any::Any;
 
 use alloc::{sync::Arc, vec::Vec};
 use log::info;
-use spin::RwLock;
 use virtio_drivers::PAGE_SIZE;
 
 use crate::{
-    arch::config::PAGE_SIZE_BITS,
+    arch::{config::PAGE_SIZE_BITS, mm::copy_from_user_mut},
     mm::Page,
     mutex::SpinNoIrqLock,
     syscall::errno::{Errno, SyscallRet},
@@ -153,12 +152,15 @@ impl File {
         self.inner_handler(|inner| inner.inode.can_lookup())
     }
 
-    pub fn readdir(&self) -> Result<Vec<LinuxDirent64>, Errno> {
+    /// dirp是用户空间的指针
+    pub fn readdir(&self, dirp: usize, count: usize) -> SyscallRet {
         if self.is_dir() {
-            let (offset, linux_dirents) =
-                self.inner_handler(|inner| inner.inode.getdents(inner.offset));
-            self.add_offset(offset);
-            return Ok(linux_dirents);
+            // let mut buf = vec![0u8; count];
+            let buf = copy_from_user_mut(dirp as *mut u8, count)?;
+            let (file_offset, buf_offset) =
+                self.inner_handler(|inner| inner.inode.getdents(buf, inner.offset));
+            self.add_offset(file_offset);
+            return Ok(buf_offset);
         }
         return Err(Errno::ENOTDIR);
     }

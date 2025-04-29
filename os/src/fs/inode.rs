@@ -96,7 +96,8 @@ pub trait InodeOp: Any + Send + Sync {
         unimplemented!();
     }
     // 上层readdir调用
-    fn getdents(&self, offset: usize) -> (usize, Vec<LinuxDirent64>) {
+    // 返回(file_offset, buf_offset)
+    fn getdents(&self, buf: &mut [u8], offset: usize) -> (usize, usize) {
         unimplemented!();
     }
     // 上层fstat调用

@@ -206,7 +206,7 @@ pub fn syscall(
         SYSCALL_OPENAT => sys_openat(a0 as i32, a1 as *const u8, a2 as i32, a3),
         SYSCALL_CLOSE => sys_close(a0),
         SYSCALL_PIPE2 => sys_pipe2(a0 as *mut i32, a1 as i32),
-        SYSCALL_GETDENTS64 => sys_getdents64(a0, a1 as *mut u8, a2),
+        SYSCALL_GETDENTS64 => sys_getdents64(a0, a1, a2),
         SYSCALL_LSEEK => sys_lseek(a0, a1 as isize, a2),
         SYSCALL_READ => sys_read(a0, a1 as *mut u8, a2),
         SYSCALL_WRITE => sys_write(a0, a1 as *const u8, a2),
