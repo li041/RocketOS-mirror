@@ -24,7 +24,7 @@ use crate::{
         dentry::{delete_dentry, LinuxDirent64},
         file::File,
         kstat::Stat,
-        mount::{do_mount, ext4_list_apps},
+        mount::do_mount,
         namei::{filename_create, filename_lookup, path_openat, Nameidata},
         path::Path,
         pipe::Pipe,
@@ -521,7 +521,7 @@ pub fn sys_fstatat(dirfd: i32, pathname: *const u8, statbuf: *mut Stat, flags: i
     }
 }
 
-pub fn sys_getdents64(fd: usize, dirp: *mut u8, count: usize) -> SyscallRet {
+pub fn sys_getdents64(fd: usize, dirp: usize, count: usize) -> SyscallRet {
     log::info!(
         "[sys_getdents64] fd: {}, dirp: {:?}, count: {}",
         fd,
@@ -531,35 +531,7 @@ pub fn sys_getdents64(fd: usize, dirp: *mut u8, count: usize) -> SyscallRet {
     let task = current_task();
     if let Some(file_dyn) = task.fd_table().get_file(fd as usize) {
         if let Some(file) = file_dyn.as_any().downcast_ref::<File>() {
-            let mut buf = vec![0u8; count];
-            match file.readdir() {
-                Ok(dirents) => {
-                    let mut offset = 0;
-                    for dirent in dirents {
-                        log::error!("dirent_name: {}", String::from_utf8_lossy(&dirent.d_name));
-                        let dirent_size = dirent.d_reclen as usize;
-                        if offset + dirent_size > count {
-                            break;
-                        }
-                        dirent.write_to_mem(&mut buf[offset..offset + dirent_size]);
-                        offset += dirent_size;
-                    }
-                    if offset > count {
-                        log::error!("getdents64: buffer overflow");
-                        return Err(Errno::EINVAL);
-                    }
-
-                    if let Err(e) = copy_to_user(dirp, buf.as_ptr(), offset) {
-                        log::error!("getdents64: copy_to_user failed: {:?}", e);
-                        return Err(e);
-                    }
-                    return Ok(offset);
-                }
-                Err(e) => {
-                    log::error!("getdents64: readdir failed: {:?}", e);
-                    return Err(e);
-                }
-            }
+            return file.readdir(dirp, count);
         }
     }
     Err(Errno::EBADF)
@@ -705,7 +677,7 @@ pub fn sys_renameat2(
             let old_dir_entry = old_dentry.get_parent();
             let new_dir_entry = new_dentry.get_parent();
             let old_dir_inode = old_dir_entry.get_inode();
-            let new_dir_inode = new_dir_entry.get_parent().get_inode();
+            let new_dir_inode = new_dir_entry.get_inode();
             let should_mv = Arc::ptr_eq(&old_dir_inode, &new_dir_inode);
             // inode层次的操作 + dentry层次的操作
             match old_dir_inode.rename(
@@ -717,6 +689,7 @@ pub fn sys_renameat2(
             ) {
                 Ok(_) => {
                     delete_dentry(old_dentry);
+                    // new_dentry在lookup时已insert到dentry cache中
                     return Ok(0);
                 }
                 Err(e) => {

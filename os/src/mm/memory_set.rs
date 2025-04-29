@@ -308,9 +308,9 @@ impl MemorySet {
         if argv.len() > 0 {
             let file_name = &argv[0];
             if file_name.ends_with(".sh") {
-                let prepend_args = vec![String::from("busybox"), String::from("sh")];
+                let prepend_args = vec![String::from("./busybox"), String::from("sh")];
                 argv.splice(0..0, prepend_args);
-                if let Ok(busybox) = path_openat("/busybox", OpenFlags::empty(), AT_FDCWD, 0) {
+                if let Ok(busybox) = path_openat("./busybox", OpenFlags::empty(), AT_FDCWD, 0) {
                     elf_data = busybox.read_all()
                 }
             }

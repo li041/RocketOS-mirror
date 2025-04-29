@@ -6,6 +6,7 @@ use alloc::{string::String, vec::Vec};
 use crate::drivers::block::block_cache::get_block_cache;
 use crate::drivers::block::block_dev::BlockDevice;
 use crate::ext4::dentry::Ext4DirEntry;
+use crate::fs::dentry::LinuxDirent64;
 
 use super::extent_tree::{Ext4Extent, Ext4ExtentHeader, Ext4ExtentIdx};
 use super::{dentry::EXT4_DT_DIR, fs::EXT4_BLOCK_SIZE};
@@ -34,24 +35,47 @@ impl<'a> Ext4DirContentRO<'a> {
     // 遍历目录项
     // 在文件系统的一个块中, 目录项是连续存储的, 每个目录项的长度不一定相同, 根据目录项的rec_len字段来判断, 到达ext4块尾部即为结束
     // 这个由调用者保证, 传入的buf是目录所有内容
-    pub fn getdents(&self) -> Vec<Ext4DirEntry> {
-        let mut entries = Vec::new();
-        let mut rec_len_total = 0;
+    // 注意: 目录项可能被截断
+    // buf在内核空间
+    // 返回: (file_offset, buf_offset)文件偏移的增加量和读取的字节数
+    pub fn getdents(&self, buf: &mut [u8]) -> (usize, usize) {
+        const NAME_OFFSET: usize = 19;
+        let mut buf_offset = 0;
+        let mut file_offset = 0;
+        let buf_len = buf.len();
         let content_len = self.content.len();
-        while rec_len_total < content_len {
+        while file_offset + 5 < content_len {
             // rec_len是u16, 2字节
-            let rec_len = u16::from_le_bytes([
-                self.content[rec_len_total + 4],
-                self.content[rec_len_total + 5],
-            ]);
-            let dentry = Ext4DirEntry::try_from(
-                &self.content[rec_len_total..rec_len_total + rec_len as usize],
-            )
-            .expect("DirEntry::try_from failed");
-            entries.push(dentry);
-            rec_len_total += rec_len as usize;
+            let rec_len =
+                u16::from_le_bytes([self.content[file_offset + 4], self.content[file_offset + 5]]);
+            if rec_len == 0 || file_offset + rec_len as usize > buf_len {
+                break;
+            }
+            let dentry =
+                Ext4DirEntry::try_from(&self.content[file_offset..file_offset + rec_len as usize])
+                    .expect("DirEntry::try_from failed");
+            file_offset += rec_len as usize;
+            // 将Ext4DirEntry转换为LinuxDirent64
+            if dentry.inode_num == 0 {
+                continue;
+            }
+            let null_term_name_len = dentry.name.len() + 1;
+            // LinuxDirent64的reclen需要对齐到8字节
+            let d_reclen = (NAME_OFFSET + null_term_name_len + 7) & !0x7;
+            let dirent = LinuxDirent64 {
+                d_ino: dentry.inode_num as u64,
+                d_off: file_offset as u64,
+                d_reclen: d_reclen as u16,
+                d_type: dentry.file_type,
+                d_name: dentry.name.clone(),
+            };
+            if buf_offset + d_reclen as usize > buf_len {
+                break;
+            }
+            dirent.write_to_mem(&mut buf[buf_offset..buf_offset + d_reclen]);
+            buf_offset += d_reclen as usize;
         }
-        entries
+        (file_offset, buf_offset)
     }
     pub fn find(&self, name: &str) -> Option<Ext4DirEntry> {
         let mut rec_len_total = 0;
@@ -93,8 +117,8 @@ impl<'a> Ext4DirContentWE<'a> {
     ) -> Result<(), &'static str> {
         // 新的目录项长度为name长度加上8字节
         let new_entry_name_len = name.len() as u16;
-        // rec_len对齐到4字节
-        let needed_len = (new_entry_name_len + 8 + 3) & !3;
+        // Ext4Dirent rec_len对齐到4字节
+        let needed_len = (new_entry_name_len + 8 + 3) & !(3 as u16);
         let mut rec_len_total = 0;
 
         let content_len = self.content.len();

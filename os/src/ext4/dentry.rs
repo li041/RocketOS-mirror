@@ -35,6 +35,20 @@ pub struct Ext4DirEntry {
     pub name: Vec<u8>, // 文件名, 这里只存储有效字符
 }
 
+impl Debug for Ext4DirEntry {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // let name = c_str_to_string(self.name.as_ptr());
+        let name = String::from_utf8(self.name[..].to_vec()).unwrap();
+        f.debug_struct("DirEntry")
+            .field("inode_num", &self.inode_num)
+            .field("rec_len", &self.rec_len)
+            .field("name_len", &self.name_len)
+            .field("file_type", &self.file_type)
+            .field("name", &name)
+            .finish()
+    }
+}
+
 impl Ext4DirEntry {
     pub fn write_to_mem(&self, buf: &mut [u8]) {
         buf[0..4].copy_from_slice(&self.inode_num.to_le_bytes());
@@ -69,19 +83,5 @@ impl TryFrom<&[u8]> for Ext4DirEntry {
             file_type,
             name,
         })
-    }
-}
-
-impl Debug for Ext4DirEntry {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // let name = c_str_to_string(self.name.as_ptr());
-        let name = String::from_utf8(self.name[..].to_vec()).unwrap();
-        f.debug_struct("DirEntry")
-            .field("inode_num", &self.inode_num)
-            .field("rec_len", &self.rec_len)
-            .field("name_len", &self.name_len)
-            .field("file_type", &self.file_type)
-            .field("name", &name)
-            .finish()
     }
 }

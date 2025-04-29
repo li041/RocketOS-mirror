@@ -1127,19 +1127,18 @@ impl Ext4Inode {
         let dir_content = Ext4DirContentRO::new(&buf);
         dir_content.find(name)
     }
-    // 注意: 这里没有检查目录项是否存在(inode_num != 0), 由上层调用者检查
-    pub fn getdents(&self, offset: usize) -> Vec<Ext4DirEntry> {
+    pub fn getdents(&self, buf: &mut [u8], offset: usize) -> (usize, usize) {
         assert!(self.inner.read().inode_on_disk.is_dir(), "not a directory");
         let dir_size = self.inner.read().inode_on_disk.get_size();
         assert!(
             dir_size & (PAGE_SIZE as u64 - 1) == 0,
             "dir_size is not page aligned"
         );
-        let mut buf = vec![0u8; (dir_size as usize - offset) as usize];
+        let mut dir_content = vec![0u8; (dir_size as usize - offset) as usize];
         // buf中是目录的所有内容
-        self.read(offset, &mut buf).expect("read failed");
-        let dir_content = Ext4DirContentRO::new(&buf);
-        dir_content.getdents()
+        self.read(offset, &mut dir_content).expect("read failed");
+        let dir_content = Ext4DirContentRO::new(&dir_content);
+        dir_content.getdents(buf)
     }
     // Todo: result mask要设置
     pub fn getattr(&self) -> Kstat {
@@ -1323,7 +1322,7 @@ impl Ext4Inode {
     /// Todo: 1. 目前没有考虑目录扩容的情况
     pub fn add_entry(&self, dentry: Arc<Dentry>, inode_num: u32, file_type: u8) {
         assert!(self.inner.read().inode_on_disk.is_dir(), "not a directory");
-        log::info!(
+        log::error!(
             "[Ext4Inode::add_entry] name: {}, inode_num: {}, file_type: {}",
             dentry.get_last_name(),
             inode_num,
@@ -1348,7 +1347,7 @@ impl Ext4Inode {
     }
     pub fn delete_entry(&self, name: &str, inode_num: u32) {
         assert!(self.inner.read().inode_on_disk.is_dir(), "not a directory");
-        log::info!("[Ext4Inode::delete_entry] name: {}", name);
+        log::error!("[Ext4Inode::delete_entry] name: {}", name);
         let dir_size = self.inner.read().inode_on_disk.get_size();
         assert!(
             dir_size & (PAGE_SIZE as u64 - 1) == 0,
