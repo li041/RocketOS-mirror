@@ -40,6 +40,7 @@ use crate::{
         kstat::{Stat, Statx},
         uapi::{IoVec, PollFd, RLimit, StatFs},
     },
+    futex::robust_list::{sys_get_robust_list, sys_set_robust_list},
     mm::shm::ShmId,
     signal::{SigInfo, SigSet},
 };
@@ -93,6 +94,7 @@ const SYSCALL_EXIT_GROUP: usize = 94;
 const SYSCALL_SET_TID_ADDRESS: usize = 96;
 const SYSCALL_FUTEX: usize = 98;
 const SYSCALL_SET_ROBUST_LIST: usize = 99;
+const SYSCALL_GET_ROBUST_LIST: usize = 100;
 const SYSCALL_NANOSLEEP: usize = 101;
 const SYSCALL_CLOCK_GETTIME: usize = 113;
 const SYSCALL_CLOCK_NANOSLEEP: usize = 115;
@@ -141,8 +143,7 @@ const SYSCALL_STATX: usize = 291;
 
 const CARELESS_SYSCALLS: [usize; 5] = [62, 63, 64, 124, 260];
 // const SYSCALL_NUM_2_NAME: [(&str, usize); 4] = [
-const SYSCALL_NUM_2_NAME: [(usize, &str); 8] = [
-    (SYSCALL_SET_ROBUST_LIST, "SYS_SET_ROBUST_LIST"),
+const SYSCALL_NUM_2_NAME: [(usize, &str); 7] = [
     (SYSCALL_SETGID, "SYS_SETGID"),
     (SYSCALL_SETUID, "SYS_SETUID"),
     (SYSCALL_GETGID, "SYS_GETGID"),
@@ -228,6 +229,8 @@ pub fn syscall(
         SYSCALL_EXIT_GROUP => sys_exit_group(a0 as i32),
         SYSCALL_SET_TID_ADDRESS => sys_set_tid_address(a0),
         SYSCALL_FUTEX => sys_futex(a0, a1 as i32, a2 as u32, a3, a4, a5 as u32),
+        SYSCALL_SET_ROBUST_LIST => sys_set_robust_list(a0, a1),
+        SYSCALL_GET_ROBUST_LIST => sys_get_robust_list(a0, a1, a2),
         SYSCALL_NANOSLEEP => sys_nanosleep(a0),
         SYSCALL_CLOCK_GETTIME => sys_clock_gettime(a0, a1 as *mut TimeSpec),
         SYSCALL_CLOCK_NANOSLEEP => sys_clock_nansleep(a0, a1 as i32, a2, a3),

@@ -20,6 +20,7 @@ pub const FUTEX_CMP_REQUEUE_PI: i32 = 12;
 pub const FUTEX_LOCK_PI2: i32 = 13;
 
 // Futex flags
+pub const FLAGS_SIZE_32: i32 = 0x2;
 pub const FLAGS_SHARED: i32 = 0x10;
 pub const FLAGS_CLOCKRT: i32 = 0x20;
 

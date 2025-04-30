@@ -21,6 +21,7 @@ use crate::{
         uapi::{RLimit, Resource},
         FileOld, Stdin, Stdout,
     },
+    futex::robust_list::RobustListHead,
     mm::{MapArea, MapPermission, MapType, MemorySet, VPNRange, VirtAddr},
     mutex::{Spin, SpinNoIrq, SpinNoIrqLock},
     signal::{SiField, Sig, SigHandler, SigInfo, SigPending, SigSet, SignalStack, UContext},
@@ -46,7 +47,7 @@ use core::{
     assert_ne, mem,
     sync::atomic::{AtomicI32, AtomicUsize},
 };
-use spin::RwLock;
+use spin::{Mutex, RwLock};
 
 pub const INIT_PROC_PID: usize = 0;
 
@@ -75,8 +76,10 @@ pub struct Task {
     exit_code: AtomicI32,                                   // 退出码
 
     // 内存管理
-    // ToDo: 共享内存区域
+    // 包括System V shm管理
     memory_set: Arc<SpinNoIrqLock<MemorySet>>, // 地址空间
+    // futex管理
+    robust_list_head: AtomicUsize, // struct robust_list_head* head
 
     // 文件系统
     // ToDo: 对接ext4
@@ -121,6 +124,7 @@ impl Task {
             thread_group: Arc::new(SpinNoIrqLock::new(ThreadGroup::new())),
             exit_code: AtomicI32::new(0),
             memory_set: Arc::new(SpinNoIrqLock::new(MemorySet::new_bare())),
+            robust_list_head: AtomicUsize::new(0),
             fd_table: FdTable::new(),
             root: Arc::new(SpinNoIrqLock::new(Path::zero_init())),
             pwd: Arc::new(SpinNoIrqLock::new(Path::zero_init())),
@@ -158,6 +162,7 @@ impl Task {
             thread_group: Arc::new(SpinNoIrqLock::new(ThreadGroup::new())),
             exit_code: AtomicI32::new(0),
             memory_set: Arc::new(SpinNoIrqLock::new(memory_set)),
+            robust_list_head: AtomicUsize::new(0),
             fd_table: FdTable::new(),
             root: Arc::new(SpinNoIrqLock::new(root_path.clone())),
             pwd: Arc::new(SpinNoIrqLock::new(root_path)),
@@ -293,6 +298,7 @@ impl Task {
             exit_code,
             thread_group,
             memory_set,
+            robust_list_head: AtomicUsize::new(0),
             fd_table,
             root,
             pwd,
@@ -609,6 +615,10 @@ impl Task {
     pub fn TAC(&self) -> Option<usize> {
         self.tid_address.lock().clear_child_tid
     }
+    pub fn get_robust_list_head(&self) -> usize {
+        self.robust_list_head
+            .load(core::sync::atomic::Ordering::SeqCst)
+    }
 
     /*********************************** setter *************************************/
     pub fn set_root(&self, root: Arc<Path>) {
@@ -634,6 +644,10 @@ impl Task {
     // tid_address 中的 clear_child_tid
     pub fn set_TAC(&self, tac: usize) {
         self.tid_address.lock().clear_child_tid = Some(tac);
+    }
+    pub fn set_robust_list_head(&self, head: usize) {
+        self.robust_list_head
+            .store(head, core::sync::atomic::Ordering::SeqCst);
     }
 
     /*********************************** operator *************************************/
