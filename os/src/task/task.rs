@@ -1,8 +1,10 @@
 use super::{
     aux::{AuxHeader, AT_EXECFN, AT_NULL, AT_RANDOM},
     context::TaskContext,
+    get_task,
     id::{tid_alloc, TidAddress, TidHandle},
     kstack::{get_stack_top_by_sp, kstack_alloc, KernelStack},
+    manager::unregister_task,
     remove_task, String, Tid,
 };
 use crate::{
@@ -21,18 +23,18 @@ use crate::{
         uapi::{RLimit, Resource},
         FileOld, Stdin, Stdout,
     },
-    futex::robust_list::RobustListHead,
+    futex::{
+        do_futex,
+        flags::{FUTEX_PRIVATE_FLAG, FUTEX_WAKE},
+        robust_list::RobustListHead,
+    },
     mm::{MapArea, MapPermission, MapType, MemorySet, VPNRange, VirtAddr},
     mutex::{Spin, SpinNoIrq, SpinNoIrqLock},
     signal::{SiField, Sig, SigHandler, SigInfo, SigPending, SigSet, SignalStack, UContext},
     task::{
-        aux,
+        self, add_task,
         context::write_task_cx,
-        kstack,
-        manager::{
-            cancel_alarm, delete_wait, dump_task_queue, get_task, register_task, unregister_task,
-        },
-        scheduler::{add_task, dump_scheduler},
+        manager::{cancel_alarm, delete_wait, register_task},
         wakeup, INITPROC,
     },
 };
@@ -77,7 +79,7 @@ pub struct Task {
 
     // 内存管理
     // 包括System V shm管理
-    memory_set: Arc<SpinNoIrqLock<MemorySet>>, // 地址空间
+    memory_set: Arc<RwLock<MemorySet>>, // 地址空间
     // futex管理
     robust_list_head: AtomicUsize, // struct robust_list_head* head
 
@@ -123,7 +125,7 @@ impl Task {
             children: Arc::new(SpinNoIrqLock::new(BTreeMap::new())),
             thread_group: Arc::new(SpinNoIrqLock::new(ThreadGroup::new())),
             exit_code: AtomicI32::new(0),
-            memory_set: Arc::new(SpinNoIrqLock::new(MemorySet::new_bare())),
+            memory_set: Arc::new(RwLock::new(MemorySet::new_bare())),
             robust_list_head: AtomicUsize::new(0),
             fd_table: FdTable::new(),
             root: Arc::new(SpinNoIrqLock::new(Path::zero_init())),
@@ -136,7 +138,7 @@ impl Task {
 
     /// 初始化地址空间, 将 `TrapContext` 与 `TaskContext` 压入内核栈中
     pub fn initproc(elf_data: &[u8], root_path: Arc<Path>) -> Arc<Self> {
-        let (memory_set, pgdl_ppn, user_sp, entry_point, _aux_vec) =
+        let (memory_set, pgdl_ppn, user_sp, entry_point, _aux_vec, _tls_ptr) =
             MemorySet::from_elf(elf_data.to_vec(), &mut Vec::<String>::new());
         let tid = tid_alloc();
         let tgid = AtomicUsize::new(tid.0);
@@ -161,7 +163,7 @@ impl Task {
             children: Arc::new(SpinNoIrqLock::new(BTreeMap::new())),
             thread_group: Arc::new(SpinNoIrqLock::new(ThreadGroup::new())),
             exit_code: AtomicI32::new(0),
-            memory_set: Arc::new(SpinNoIrqLock::new(memory_set)),
+            memory_set: Arc::new(RwLock::new(memory_set)),
             robust_list_head: AtomicUsize::new(0),
             fd_table: FdTable::new(),
             root: Arc::new(SpinNoIrqLock::new(root_path.clone())),
@@ -254,8 +256,8 @@ impl Task {
             log::warn!("[kernel_clone] handle CLONE_VM");
             memory_set = self.memory_set.clone()
         } else {
-            memory_set = Arc::new(SpinNoIrqLock::new(MemorySet::from_existed_user_lazily(
-                &self.memory_set.lock(),
+            memory_set = Arc::new(RwLock::new(MemorySet::from_existed_user_lazily(
+                &self.memory_set.read(),
             )));
         }
 
@@ -367,7 +369,7 @@ impl Task {
     ) {
         log::info!("[kernel_execve] task{} do execve ...", self.tid());
         // 创建地址空间
-        let (mut memory_set, _satp, ustack_top, entry_point, aux_vec) =
+        let (mut memory_set, _satp, ustack_top, entry_point, aux_vec, tls_ptr) =
             MemorySet::from_elf(elf_data.to_vec(), &mut args_vec);
         // 更新页表
         memory_set.activate();
@@ -418,7 +420,11 @@ impl Task {
             envp_base,
             auxv_base,
         );
-        trap_cx.set_tp(Arc::as_ptr(&self) as usize);
+        // 设置tls
+        // if let Some(tls_ptr) = tls_ptr {
+        // log::error!("[kernel_execve] task{} tls_ptr: {:x}", self.tid(), tls_ptr);
+        // trap_cx.set_tp(tls_ptr);
+        // }
         save_trap_context(&self, trap_cx);
         log::trace!("[kernel_execve] task{} trap_cx updated", self.tid());
         // 重建线程组
@@ -568,6 +574,10 @@ impl Task {
                 self.fd_table().set_rlimit(&rlim);
                 Ok(())
             }
+            Resource::STACK => {
+                log::error!("[set_rlimit] Fake stack");
+                Ok(())
+            }
             _ => Err("not supported"),
         }
     }
@@ -599,7 +609,7 @@ impl Task {
     pub fn exit_code(&self) -> i32 {
         self.exit_code.load(core::sync::atomic::Ordering::SeqCst)
     }
-    pub fn memory_set(&self) -> Arc<SpinNoIrqLock<MemorySet>> {
+    pub fn memory_set(&self) -> Arc<RwLock<MemorySet>> {
         self.memory_set.clone()
     }
     pub fn fd_table(&self) -> Arc<FdTable> {
@@ -658,10 +668,10 @@ impl Task {
         f(&mut self.children.lock())
     }
     pub fn op_memory_set<T>(&self, f: impl FnOnce(&MemorySet) -> T) -> T {
-        f(&self.memory_set.lock())
+        f(&self.memory_set.read())
     }
     pub fn op_memory_set_mut<T>(&self, f: impl FnOnce(&mut MemorySet) -> T) -> T {
-        f(&mut self.memory_set.lock())
+        f(&mut self.memory_set.write())
     }
     pub fn op_thread_group<T>(&self, f: impl FnOnce(&ThreadGroup) -> T) -> T {
         f(&self.thread_group.lock())
@@ -736,7 +746,12 @@ pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
             if let Err(_) = copy_to_user(tidptr as *mut u8, &content as *const u8, 8) {
                 panic!();
             }
-            // Todo: futex 相关
+            // 当 clear_child_tid 不为 NULL 的线程终止时，如果该线程与其他线程共享内存，
+            // 则将 0 写入 clear_child_tid 指定的地址，并且内核将执行以下操作：
+            //      futex(clear_child_tid, FUTEX_WAKE, 1, NULL, NULL, 0);
+            if let Err(_) = do_futex(tidptr, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1, 0, 0, 0) {
+                panic!();
+            }
         }
     }
 
@@ -810,7 +825,7 @@ pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
                     SigInfo {
                         signo: Sig::SIGCHLD.raw(),
                         code: SigInfo::CLD_EXITED,
-                        fields: SiField::kill { tid: task.tid() },
+                        fields: SiField::None,
                     },
                     false,
                 );

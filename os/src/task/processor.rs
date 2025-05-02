@@ -1,7 +1,7 @@
 use alloc::sync::Arc;
 use core::arch::asm;
 use lazy_static::lazy_static;
-use spin::Mutex;
+use spin::RwLock;
 
 use super::Task;
 use crate::arch::switch;
@@ -41,7 +41,7 @@ lazy_static! {
 // 创建任务管理器
 lazy_static! {
     ///Processor management structure
-    pub static ref PROCESSOR: Mutex<Processor> = Mutex::new(Processor::new());
+    pub static ref PROCESSOR: RwLock<Processor> = RwLock::new(Processor::new());
 }
 
 /// 运行初始任务
@@ -53,7 +53,7 @@ pub fn run_tasks() {
             let next_task_kstack = next_task.kstack();
             idle_task.set_ready();
             next_task.set_running();
-            let mut processor = PROCESSOR.lock();
+            let mut processor = PROCESSOR.write();
             processor.current = next_task.clone();
             drop(processor);
             drop(next_task);
@@ -67,7 +67,7 @@ pub fn run_tasks() {
 
 /// 获取当前任务
 pub fn current_task() -> Arc<Task> {
-    PROCESSOR.lock().current_task()
+    PROCESSOR.read().current_task()
 }
 
 #[cfg(target_arch = "riscv64")]
@@ -101,6 +101,8 @@ impl Processor {
         }
     }
     pub fn current_task(&self) -> Arc<Task> {
+        // 神奇小咒语
+        log::trace!("[current_task]");
         self.current.clone()
     }
     pub fn switch_to(&mut self, task: Arc<Task>) {

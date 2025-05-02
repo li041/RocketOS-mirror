@@ -342,7 +342,8 @@ impl PageTable {
             "vpn {:?} is not mapped before remapping",
             vpn
         );
-        *pte = PageTableEntry::new(pte.ppn(), flags | PTEFlags::V | PTEFlags::D);
+        *pte = PageTableEntry::new(pte.ppn(), flags | PTEFlags::V);
+        // *pte = PageTableEntry::new(pte.ppn(), flags | PTEFlags::V | PTEFlags::D);
         unsafe {
             sfence_vma_vaddr(vpn.0 << PAGE_SIZE_BITS);
         }

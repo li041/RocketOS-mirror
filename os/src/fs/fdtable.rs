@@ -192,6 +192,7 @@ impl FdTable {
     }
 
     pub fn get_file(&self, fd: usize) -> Option<Arc<dyn FileOp>> {
+        log::trace!("[FdTable::get_file]");
         self.table
             .read()
             .get(fd)?

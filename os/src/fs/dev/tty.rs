@@ -305,10 +305,6 @@ impl FileOp for TtyFile {
         print!("{}", core::str::from_utf8(buf).unwrap());
         buf.len()
     }
-    // #[cfg(target_arch = "loongarch64")]
-    // fn write<'a>(&'a self, buf: &'a [u8]) -> usize {
-
-    // }
     fn seek(&self, _offset: isize, _whence: crate::fs::uapi::Whence) -> SyscallRet {
         Err(Errno::ESPIPE)
     }
@@ -326,9 +322,10 @@ impl FileOp for TtyFile {
                 }
             }
             TtyIoctlCmd::TCSETS | TtyIoctlCmd::TCSETSW | TtyIoctlCmd::TCSETSF => {
-                match copy_from_user(arg_ptr as *const Termios, 1) {
-                    Ok(termios) => {
-                        self.inner.write().termios = termios[0];
+                let mut termios = Termios::new();
+                match copy_from_user(arg_ptr as *const Termios, &mut termios as *mut Termios, 1) {
+                    Ok(_) => {
+                        self.inner.write().termios = termios;
                         Ok(0)
                     }
                     Err(_) => {
@@ -347,36 +344,23 @@ impl FileOp for TtyFile {
                     }
                 }
             }
-            TtyIoctlCmd::TIOCSPGRP => match copy_from_user(arg_ptr as *const Tid, 1) {
-                Ok(pgid) => {
-                    self.inner.write().fg_pgid = pgid[0];
-                    Ok(0)
-                }
-                Err(e) => {
-                    log::error!("[TtyFile::ioctl] copy_from_user failed");
-                    return Err(Errno::EINVAL);
-                }
-            },
+            TtyIoctlCmd::TIOCSPGRP => {
+                let mut pgid: Tid = 0;
+                copy_from_user(arg_ptr as *const Tid, &mut pgid as *mut Tid, 1)?;
+                self.inner.write().fg_pgid = pgid;
+                Ok(0)
+            }
             TtyIoctlCmd::TIOCGWINSZ => {
                 let win_size = self.inner.read().win_size;
-                match copy_to_user(arg_ptr as *mut WinSize, &win_size, 1) {
-                    Ok(_) => Ok(0),
-                    Err(e) => {
-                        log::error!("[TtyFile::ioctl] copy_to_user failed");
-                        return Err(e);
-                    }
-                }
+                copy_to_user(arg_ptr as *mut WinSize, &win_size, 1)?;
+                Ok(0)
             }
-            TtyIoctlCmd::TIOCSWINSZ => match copy_from_user(arg_ptr as *const WinSize, 1) {
-                Ok(win_size) => {
-                    self.inner.write().win_size = win_size[0];
-                    Ok(0)
-                }
-                Err(_) => {
-                    log::error!("[TtyFile::ioctl] copy_from_user failed");
-                    return Err(Errno::EFAULT);
-                }
-            },
+            TtyIoctlCmd::TIOCSWINSZ => {
+                let mut win_size = WinSize::new();
+                copy_from_user(arg_ptr as *const WinSize, &mut win_size as *mut WinSize, 1)?;
+                self.inner.write().win_size = win_size;
+                Ok(0)
+            }
             TtyIoctlCmd::TCSBRK => Ok(0),
             _ => {
                 panic!("[TtyFile::ioctl] Unsupported ioctl cmd: {:?}", op);

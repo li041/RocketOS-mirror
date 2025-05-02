@@ -63,7 +63,7 @@ impl InodeOp for Ext4Inode {
     // name在parent_entry下的命名空间下, 不是绝对路径, 例如`/a/b/c`中的`c`, parent_entry是`/a/b`
     // 对于之前未加载的inode: 1. 加载inode 2. 关联到Dentry 3. 建立dentry的父子关系
     fn lookup<'a>(&'a self, name: &str, parent_entry: Arc<Dentry>) -> Arc<Dentry> {
-        log::info!("lookup: {}", name);
+        // log::info!("lookup: {}", name);
         // 注意: 这里应该使用绝对路径
         // let mut dentry = Dentry::negative(absolute_path, Some(parent_entry.clone()));
         let mut dentry: Arc<Dentry> = Dentry::negative(

@@ -112,10 +112,9 @@ pub fn trap_handler(cx: &mut TrapContext) {
             log::error!("{:?} at {:#x}", cause, badv);
             let va = VirtAddr::from(badv);
             let cause = PageFaultCause::from(cause);
-            current_task().memory_set().try_lock().expect("try to lock memory_set failed");
             current_task().op_memory_set_mut(|memory_set| {
                 if let Err(e) = memory_set.handle_recoverable_page_fault(va, cause) {
-                        memory_set.page_table.dump_all_user_mapping();
+                        // memory_set.page_table.dump_all_user_mapping();
                         panic!(
                             "Unrecoverble page fault in application, bad addr = {:#x}, scause = {:?}, era = {:#x}",
                             badv,

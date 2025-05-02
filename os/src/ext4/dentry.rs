@@ -73,8 +73,20 @@ impl TryFrom<&[u8]> for Ext4DirEntry {
     fn try_from(buf: &[u8]) -> Result<Self, Self::Error> {
         let inode_num = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
         let rec_len = u16::from_le_bytes([buf[4], buf[5]]);
+        assert!(
+            buf.len() >= rec_len as usize,
+            "buf.len(): {}, rec_len: {}",
+            buf.len(),
+            rec_len
+        );
         let name_len = buf[6];
         let file_type = buf[7];
+        assert!(
+            rec_len >= 8 + name_len as u16,
+            "rec_len: {}, name_len: {}",
+            rec_len,
+            name_len
+        );
         let name = buf[8..(8 + name_len as usize)].to_vec();
         Ok(Self {
             inode_num,

@@ -448,11 +448,11 @@ pub fn lookup_dentry(nd: &mut Nameidata) -> Arc<Dentry> {
     }
     let dentry = dentry.unwrap();
     insert_dentry(dentry.clone());
-    log::info!(
-        "[lookup_dentry] dentry: {:?}, is_negative: {}",
-        dentry.absolute_path,
-        dentry.is_negative()
-    );
+    // log::info!(
+    //     "[lookup_dentry] dentry: {:?}, is_negative: {}",
+    //     dentry.absolute_path,
+    //     dentry.is_negative()
+    // );
     dentry
 }
 
@@ -528,7 +528,7 @@ const ENOENT: isize = 2;
 /// 如果是符号链接, 则返回解析后的链接目标
 pub fn link_path_walk(nd: &mut Nameidata) -> Result<String, Errno> {
     assert!(!nd.dentry.is_negative());
-    log::info!("[link_path_walk] path: {:?}", nd.path_segments);
+    // log::info!("[link_path_walk] path: {:?}", nd.path_segments);
     // 解析路径的目录部分，遇到最后一个组件时停止检查最后一个路径分量
     // 注意对于根目录, nd.path_segments是空的
     let mut len = nd.path_segments.len() - 1;

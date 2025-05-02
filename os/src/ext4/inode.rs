@@ -241,6 +241,12 @@ impl Ext4InodeDisk {
             self.flags & EXT4_INLINE_DATA_FL == EXT4_INLINE_DATA_FL
         );
     }
+    pub fn get_blocks(&self) -> u64 {
+        self.blocks_lo as u64
+    }
+    pub fn set_blocks(&mut self, blocks: u64) {
+        self.blocks_lo = blocks as u32;
+    }
     pub fn get_size(&self) -> u64 {
         (self.size_hi as u64) << 32 | self.size_lo as u64
     }
@@ -1114,7 +1120,7 @@ impl Ext4Inode {
     /// 只读取磁盘上的目录项, 不会加载Inode进入内存
     /// 上层调用者应优先使用DentryCache, 只有未命中时才调用
     pub fn lookup(&self, name: &str) -> Option<Ext4DirEntry> {
-        log::info!("[Ext4Inode::lookup] name: {}", name);
+        // log::info!("[Ext4Inode::lookup] name: {}", name);
         debug_assert!(self.inner.read().inode_on_disk.is_dir(), "not a directory");
         let dir_size = self.inner.read().inode_on_disk.get_size();
         assert!(
@@ -1154,6 +1160,7 @@ impl Ext4Inode {
         kstat.gid = inode_on_disk.gid as u32;
         kstat.nlink = inode_on_disk.links_count as u32;
         kstat.size = inode_on_disk.get_size();
+        kstat.blocks = inode_on_disk.get_blocks() as u64;
 
         // Todo: 目前没有更新时间戳
         kstat.atime = self.get_atime();
@@ -1415,11 +1422,23 @@ impl Ext4Inode {
     pub fn sub_nlinks(&self) {
         self.inner.write().inode_on_disk.sub_nlinks();
     }
+    pub fn get_blocks(&self) -> u64 {
+        self.inner.read().inode_on_disk.get_blocks()
+    }
+    pub fn set_blocks(&self, blocks: u64) {
+        self.inner.write().inode_on_disk.set_blocks(blocks);
+    }
     pub fn get_size(&self) -> u64 {
         self.inner.read().inode_on_disk.get_size()
     }
+    // 更新大小, 和blocks_count
     pub fn set_size(&self, size: u64) {
-        self.inner.write().inode_on_disk.set_size(size);
+        const BLOCK_SIZE: u64 = 512;
+        let mut inner_guard = self.inner.write();
+        // 根据新的size更新blocks
+        let new_blocks_count = (size + BLOCK_SIZE - 1) / BLOCK_SIZE as u64;
+        inner_guard.inode_on_disk.set_size(size);
+        inner_guard.inode_on_disk.set_blocks(new_blocks_count);
     }
     pub fn set_mode(&self, mode: u16) {
         self.inner.write().inode_on_disk.mode = mode;
@@ -1466,12 +1485,12 @@ pub fn load_inode(
     )
     .lock()
     .read(inner_offset, |inode: &Ext4InodeDisk| inode.clone());
-    log::warn!(
-        "[load_inode] inode_num: {}, size: {}, mode: {}",
-        inode_num,
-        inode_on_disk.get_size(),
-        inode_on_disk.mode
-    );
+    // log::warn!(
+    //     "[load_inode] inode_num: {}, size: {}, mode: {}",
+    //     inode_num,
+    //     inode_on_disk.get_size(),
+    //     inode_on_disk.mode
+    // );
     Arc::new_cyclic(|weak| Ext4Inode {
         ext4_fs: Arc::downgrade(&ext4_fs),
         block_device,

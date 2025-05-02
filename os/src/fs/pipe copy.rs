@@ -1,13 +1,10 @@
 use alloc::boxed::Box;
 use alloc::sync::{Arc, Weak};
-use alloc::vec;
-use alloc::vec::Vec;
 use core::ptr::copy_nonoverlapping;
-use core::sync::atomic::AtomicUsize;
 use spin::Mutex;
 
 use crate::syscall::errno::{Errno, SyscallRet};
-use crate::task::{current_task, wait, wakeup, yield_current_task, Tid};
+use crate::task::yield_current_task;
 
 use super::file::FileOp;
 
@@ -44,14 +41,12 @@ enum RingBufferStatus {
 }
 
 pub struct PipeRingBuffer {
-    // arr: Box<[u8; RING_DEFAULT_BUFFER_SIZE]>,
-    arr: Vec<u8>,
+    arr: Box<[u8; RING_DEFAULT_BUFFER_SIZE]>,
     head: usize,
     tail: usize,
     status: RingBufferStatus,
     write_end: Option<Weak<Pipe>>,
     read_end: Option<Weak<Pipe>>,
-    waiter: Tid,
 }
 
 impl PipeRingBuffer {
@@ -61,13 +56,12 @@ impl PipeRingBuffer {
         //     vec.set_len(RING_DEFAULT_BUFFER_SIZE);
         // }
         Self {
-            arr: vec![0u8; RING_DEFAULT_BUFFER_SIZE],
+            arr: Box::new([0u8; RING_DEFAULT_BUFFER_SIZE]),
             head: 0,
             tail: 0,
             status: RingBufferStatus::EMPTY,
             write_end: None,
             read_end: None,
-            waiter: 0,
         }
     }
     #[allow(unused)]
@@ -143,12 +137,6 @@ impl PipeRingBuffer {
         log::trace!("[all_read_ends_closed]");
         self.read_end.as_ref().unwrap().upgrade().is_none()
     }
-    fn get_waiter(&self) -> Tid {
-        self.waiter
-    }
-    fn set_waiter(&mut self, waiter: Tid) {
-        self.waiter = waiter;
-    }
 }
 
 /// Return (read_end, write_end)
@@ -170,34 +158,21 @@ impl FileOp for Pipe {
     fn read<'a>(&'a self, buf: &'a mut [u8]) -> usize {
         debug_assert!(self.readable);
         let mut read_size = 0usize;
-        let mut buffer;
         loop {
-            log::info!("[Pipe::read] enter");
-            buffer = self.buffer.lock();
-            core::hint::black_box(&buffer);
+            log::trace!("[Pipe::read]");
+            let mut buffer = self.buffer.lock();
             if buffer.status == RingBufferStatus::EMPTY {
                 if buffer.all_write_ends_closed() {
                     log::error!("all write ends closed");
                     return read_size;
                 }
                 // wait for data, 注意释放锁
-                buffer.set_waiter(current_task().tid());
                 drop(buffer);
-                log::error!("[Pipe::read] set waiter: {}", current_task().tid());
-                // yield_current_task();
-                wait();
+                yield_current_task();
                 continue;
             }
             while read_size < buf.len() {
                 let read_bytes = buffer.buffer_read(&mut buf[read_size..]);
-                if buffer.get_waiter() != 0 {
-                    log::info!("[Pipe::read] wake up waiter");
-                    // wake up writer
-                    let waiter = buffer.get_waiter();
-                    buffer.set_waiter(0);
-                    wakeup(waiter);
-                }
-                log::error!("[Pipe::read] read_bytes: {}", read_bytes);
                 read_size += read_bytes;
                 if buffer.head == buffer.tail {
                     buffer.status = RingBufferStatus::EMPTY;
@@ -211,32 +186,21 @@ impl FileOp for Pipe {
     fn write<'a>(&'a self, buf: &'a [u8]) -> usize {
         assert!(self.writable);
         let mut write_size = 0;
-        let mut buffer;
         loop {
-            log::info!("[Pipe::write]");
-            buffer = self.buffer.lock();
-            core::hint::black_box(&buffer);
+            log::trace!("[Pipe::write]");
+            let mut buffer = self.buffer.lock();
             if buffer.status == RingBufferStatus::FULL {
                 if buffer.all_read_ends_closed() {
                     return write_size;
                 }
                 // wait for space, 注意释放锁
-                buffer.set_waiter(current_task().tid());
                 drop(buffer);
-                // yield_current_task();
-                wait();
+                yield_current_task();
                 continue;
             }
             while write_size < buf.len() {
                 let write_bytes = buffer.buffer_write(&buf[write_size..]);
-                if buffer.get_waiter() != 0 {
-                    log::info!("[Pipe::write] wake up waiter");
-                    // wake up reader
-                    let waiter = buffer.get_waiter();
-                    buffer.set_waiter(0);
-                    wakeup(waiter);
-                }
-                log::error!("[Pipe::write] write_bytes: {}", write_bytes);
+                log::error!("write_bytes: {}", write_bytes);
                 write_size += write_bytes;
                 if buffer.head == buffer.tail {
                     buffer.status = RingBufferStatus::FULL;

@@ -30,12 +30,22 @@ pub struct RobustList {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Copy, Clone)]
 /// Todo: 在退出时需要遍历这个链表
 pub struct RobustListHead {
     list: *mut RobustList,
     futex_offset: u64,
     list_op_pending: *mut RobustList,
+}
+
+impl Default for RobustListHead {
+    fn default() -> Self {
+        Self {
+            list: core::ptr::null_mut(),
+            futex_offset: 0,
+            list_op_pending: core::ptr::null_mut(),
+        }
+    }
 }
 
 pub fn sys_set_robust_list(head: usize, len: usize) -> SyscallRet {
@@ -73,7 +83,12 @@ pub fn exit_robust_list() -> Result<(), Errno> {
     let head_addr = task.get_robust_list_head();
     if head_addr != 0 {
         // 释放robust_list
-        let head = copy_from_user(head_addr as *const RobustListHead, 1)?[0];
+        let mut head: RobustListHead = RobustListHead::default();
+        copy_from_user(
+            head_addr as *const RobustListHead,
+            &mut head as *mut RobustListHead,
+            1,
+        )?;
         let mut count = 0;
         let mut entry = head.list;
         while !entry.is_null() && (entry as usize != head_addr) && count < ROBUST_LIST_LIMIT {
@@ -88,7 +103,8 @@ pub fn exit_robust_list() -> Result<(), Errno> {
 fn handle_futex_death(node: *mut RobustList, offset: u64, tid: u32) {
     let futex_addr = (node as usize).wrapping_add(offset as usize) as *mut u32;
 
-    let futex_word = copy_from_user(futex_addr, 1).unwrap()[0];
+    let mut futex_word: u32 = 0;
+    copy_from_user(futex_addr, &mut futex_word as *mut u32, 1);
 
     // 判断futex是否真被当前进程持有
     if (futex_word & FUTEX_TID_MASK) == tid {

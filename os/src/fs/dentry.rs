@@ -334,6 +334,7 @@ impl LinuxDirent64 {
         buf[18] = self.d_type;
         let name_len = self.d_name.len();
         buf[NAME_OFFSET..NAME_OFFSET + name_len].copy_from_slice(&self.d_name[..]);
-        buf[NAME_OFFSET + name_len] = b'\0'; // 添加结尾的'\0'
+        // 填充剩余部分为0
+        buf[NAME_OFFSET + name_len..].fill(0);
     }
 }

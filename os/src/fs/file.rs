@@ -6,18 +6,13 @@ use log::info;
 use virtio_drivers::PAGE_SIZE;
 
 use crate::{
-    arch::{config::PAGE_SIZE_BITS, mm::copy_from_user_mut},
+    arch::{config::PAGE_SIZE_BITS, mm::copy_to_user},
     mm::Page,
     mutex::SpinNoIrqLock,
     syscall::errno::{Errno, SyscallRet},
 };
 
-use super::{
-    dentry::{Dentry, LinuxDirent64},
-    inode::InodeOp,
-    path::Path,
-    uapi::Whence,
-};
+use super::{inode::InodeOp, path::Path, uapi::Whence};
 
 // 普通文件
 pub struct File {
@@ -156,11 +151,18 @@ impl File {
     pub fn readdir(&self, dirp: usize, count: usize) -> SyscallRet {
         if self.is_dir() {
             // let mut buf = vec![0u8; count];
-            let buf = copy_from_user_mut(dirp as *mut u8, count)?;
+            // let buf = copy_from_user_mut(dirp as *mut u8, count)?;
+            let mut ker_buf = vec![0u8; count];
             let (file_offset, buf_offset) =
-                self.inner_handler(|inner| inner.inode.getdents(buf, inner.offset));
+                self.inner_handler(|inner| inner.inode.getdents(&mut ker_buf, inner.offset));
             self.add_offset(file_offset);
-            return Ok(buf_offset);
+            log::error!(
+                "readdir: file_offset: {}, buf_offset: {}",
+                file_offset,
+                buf_offset
+            );
+            let n = copy_to_user(dirp as *mut u8, ker_buf[..buf_offset].as_ptr(), buf_offset)?;
+            return Ok(n);
         }
         return Err(Errno::ENOTDIR);
     }

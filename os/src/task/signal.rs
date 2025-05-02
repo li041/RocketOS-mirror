@@ -1,4 +1,4 @@
-use crate::signal::SigInfo;
+use crate::signal::{ActionType, Sig, SigAction, SigInfo, SigSet};
 
 use super::task::Task;
 
@@ -30,7 +30,30 @@ impl Task {
             }
         }
     }
+    
     pub fn have_signals(&self) -> bool {
-        self.op_sig_pending_mut(|sig_pending| sig_pending.pending.is_empty())
+        !self.op_sig_pending_mut(|sig_pending| sig_pending.pending.is_empty())
+    }
+
+    pub fn check_interrupt(&self) -> bool {
+        let mut searched_sig = SigSet::all();
+        while let Some(sig) = self.op_sig_pending_mut(|pending| pending.find_signal(searched_sig)) {
+            let action = self.op_sig_handler(|handler| handler.get(sig));
+            if action.is_user() {
+                return true;
+            } else {
+                match sig.get_default_type(){
+                    ActionType::Ignore => {
+                        searched_sig.remove_signal(sig);
+                        continue;
+                    }
+                    _ => {
+                        return true;
+                    }
+                    
+                }
+            }
+        }
+        false    
     }
 }

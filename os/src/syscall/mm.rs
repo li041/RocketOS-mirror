@@ -34,7 +34,7 @@ pub fn sys_brk(brk: usize) -> SyscallRet {
         let current_brk = memory_set.brk;
         let heap_bottom = memory_set.heap_bottom;
         // (start_vpn, end_vpn)是需要增/删的区间
-        let start_vpn = VirtPageNum::from(ceil_to_page_size(current_brk) >> PAGE_SIZE_BITS);
+        let start_vpn = VirtPageNum::from(floor_to_page_size(heap_bottom) >> PAGE_SIZE_BITS);
         let new_end_vpn = VirtPageNum::from(ceil_to_page_size(brk) >> PAGE_SIZE_BITS);
         if brk < heap_bottom {
             // brk小于堆底, 不合法
@@ -115,9 +115,9 @@ bitflags! {
         const MAP_FIXED = 0x10;
         /// MAP_ANONYMOUS, 需要fd为-1, offset为0
         const MAP_ANONYMOUS = 0x20;
-        /// 拒绝对映射区的写入操作
         /// Todo: 未实现
         const MAP_DENYWRITE = 0x800;
+        const MAP_NORESERVE = 0x4000;
         const MAP_POPULATE = 0x8000;
     }
 }
@@ -221,7 +221,8 @@ pub fn sys_mmap(
             } else {
                 memory_set.get_unmapped_area(len)
             };
-            memory_set.insert_framed_area(vpn_range, map_perm);
+            let mmap_area = MapArea::new(vpn_range, MapType::Framed, map_perm, None, 0);
+            memory_set.insert_map_area_lazily(mmap_area);
             return Ok(vpn_range.get_start().0 << PAGE_SIZE_BITS);
         })
     } else {
@@ -243,7 +244,8 @@ pub fn sys_mmap(
                 map_perm.insert(MapPermission::COW);
             }
             let mmap_area = MapArea::new(vpn_range, MapType::Filebe, map_perm, Some(file), offset);
-            memory_set.insert_filebe_area_lazily(mmap_area);
+            memory_set.insert_map_area_lazily(mmap_area);
+            // memory_set.insert_framed_area(vpn_range, map_perm);
             log::error!(
                 "[sys_mmap] file return {:#x}",
                 vpn_range.get_start().0 << PAGE_SIZE_BITS
@@ -253,7 +255,6 @@ pub fn sys_mmap(
     }
 }
 
-// Todo: 目前只支持取消文件映射, 需要支持匿名映射
 pub fn sys_munmap(start: usize, len: usize) -> SyscallRet {
     // start必须页对齐, 且要大于等于MMAP_MIN_ADDR
     if start % PAGE_SIZE != 0 || len == 0 || start < MMAP_MIN_ADDR {
@@ -281,103 +282,6 @@ pub fn sys_munmap(start: usize, len: usize) -> SyscallRet {
     Ok(0)
 }
 
-///
-// pub fn sys_mprotect(addr: usize, size: usize, prot: i32) -> SyscallRet {
-//     log::info!(
-//         "sys_mprotect: addr: {:#x}, size: {:#x}, prot: {:#x}",
-//         addr,
-//         size,
-//         prot
-//     );
-//     // addr必须页对齐
-//     if addr % PAGE_SIZE != 0 {
-//         return Err(Errno::EINVAL);
-//     }
-//     let prot = MmapProt::from_bits(prot as u32).unwrap();
-//     let map_perm_from_prot: MapPermission = prot.into();
-//     let remap_start_vpn = VirtPageNum::from(addr >> PAGE_SIZE_BITS);
-//     let remap_end_vpn = VirtPageNum::from(ceil_to_page_size(addr + size) >> PAGE_SIZE_BITS);
-//     let remap_range = VPNRange::new(remap_start_vpn, remap_end_vpn);
-//     let found = current_task().op_memory_set_mut(|memory_set| {
-//         // 分裂可能产生新的映射区, 需要先保存, 然后再加入memory_set.areas
-//         let mut split_areas = Vec::new();
-//         // 先查找指定地址范是否有映射, 如果没有则返回-1, 设置ENOMEM
-//         if let Some((_, area)) = memory_set
-//             .areas
-//             .range_mut(..=remap_range.get_start())
-//             .next_back()
-//         {
-//             if area.vpn_range.contains_vpn(remap_start_vpn) {
-//                 if area.vpn_range == remap_range {
-//                     log::error!(
-//                     "[sys_mprotect] map_perm from {:?} to {:?}, vpn_range: {:?}, remap_range: {:?}",
-//                     area.map_perm,
-//                     map_perm_from_prot,
-//                     area.vpn_range,
-//                     remap_range
-//                 );
-//                     // 对于已经映射的区域, 需要将其权限修改为新的权限(remap)
-//                     area.map_perm.update_rwx(map_perm_from_prot);
-//                     area.remap(&mut memory_set.page_table);
-//                 } else {
-//                     // 需要分割
-//                     log::error!(
-//                     "[sys_mprotect] map_perm from {:?} to {:?}, vpn_range: {:?}, remap_range: {:?}",
-//                     area.map_perm,
-//                     map_perm_from_prot,
-//                     area.vpn_range,
-//                     remap_range
-//                     );
-//                     // remap_map_perm根据area.map_perm和map_perm_from_prot计算出新的权限, 只修改R, W, X
-//                     let new_area = area.split_in(remap_range.get_start(), remap_range.get_end());
-//                     split_areas.push(new_area);
-//                     let offset = if area.backend_file.is_some() {
-//                         area.offset
-//                             + (remap_range.get_start().0 - area.vpn_range.get_start().0) * PAGE_SIZE
-//                     } else {
-//                         area.offset
-//                     };
-//                     let mut remap_map_perm = area.map_perm;
-//                     remap_map_perm.update_rwx(map_perm_from_prot);
-//                     let mut remap_area = MapArea::new(
-//                         remap_range,
-//                         area.map_type,
-//                         remap_map_perm,
-//                         area.backend_file.clone(),
-//                         offset,
-//                     );
-//                     // 划分页
-//                     area.pages.retain(|vpn, page| {
-//                         if *vpn >= remap_start_vpn && *vpn < remap_end_vpn {
-//                             remap_area.pages.insert(*vpn, page.clone());
-//                             false
-//                         } else {
-//                             true
-//                         }
-//                     });
-//                     // 重新映射
-//                     remap_area.remap(&mut memory_set.page_table);
-//                     // 加入新的映射区
-//                     split_areas.push(remap_area);
-//                 }
-
-//                 // 把split_areas加入到memory_set.areas中
-//                 memory_set.areas.extend(
-//                     split_areas
-//                         .into_iter()
-//                         .map(|area| (area.vpn_range.get_start(), area)),
-//                 );
-//                 return Ok(0);
-//             }
-//             // 没有找到指定地址范围的映射
-//             return Err(Errno::ENOMEM);
-//         }
-//         // 没有找到指定地址范围的映射
-//         return Err(Errno::ENOMEM);
-//     });
-//     found
-// }
-
 pub fn sys_mprotect(addr: usize, size: usize, prot: i32) -> SyscallRet {
     log::info!(
         "sys_mprotect: addr: {:#x}, size: {:#x}, prot: {:#x}",
@@ -386,89 +290,121 @@ pub fn sys_mprotect(addr: usize, size: usize, prot: i32) -> SyscallRet {
         prot
     );
 
-    if addr % PAGE_SIZE != 0 {
+    if addr % PAGE_SIZE != 0 || size == 0 {
         return Err(Errno::EINVAL);
     }
 
     let prot = MmapProt::from_bits(prot as u32).ok_or(Errno::EINVAL)?;
-    let map_perm_from_prot: MapPermission = prot.into();
-    let remap_start_vpn = VirtPageNum::from(addr >> PAGE_SIZE_BITS);
-    let remap_end_vpn = VirtPageNum::from(ceil_to_page_size(addr + size) >> PAGE_SIZE_BITS);
-    let remap_range = VPNRange::new(remap_start_vpn, remap_end_vpn);
+    let new_perm: MapPermission = prot.into();
+
+    let start_vpn = VirtPageNum::from(addr >> PAGE_SIZE_BITS);
+    let end_vpn = VirtPageNum::from(ceil_to_page_size(addr + size) >> PAGE_SIZE_BITS);
+    let remap_range = VPNRange::new(start_vpn, end_vpn);
 
     current_task().op_memory_set_mut(|memory_set| {
-        let mut remap_vpn = remap_range.get_start();
-        let mut new_areas = Vec::new();
-
-        while remap_vpn < remap_range.get_end() {
-            let Some((_, area)) = memory_set.areas.range_mut(..=remap_vpn).next_back() else {
-                return Err(Errno::ENOMEM);
-            };
-
-            if !area.vpn_range.contains_vpn(remap_vpn) {
-                return Err(Errno::ENOMEM);
-            }
-
-            let sub_start = remap_vpn;
-            let sub_end = remap_range.get_end().min(area.vpn_range.get_end());
-            let sub_range = VPNRange::new(sub_start, sub_end);
-
-            if sub_range == area.vpn_range {
-                // 全部匹配，直接修改权限
-                area.map_perm.update_rwx(map_perm_from_prot);
-                area.remap(&mut memory_set.page_table);
-                log::info!(
-                    "[sys_mprotect] map_perm from {:?} to {:?}, vpn_range: {:?}, remap_range: {:?}",
-                    area.map_perm,
-                    map_perm_from_prot,
-                    area.vpn_range,
-                    remap_range
-                );
-            } else {
-                log::info!(
-                    "[sys_mprotect] map_perm from {:?} to {:?}, vpn_range: {:?}, remap_range: {:?}",
-                    area.map_perm,
-                    map_perm_from_prot,
-                    area.vpn_range,
-                    remap_range
-                );
-                // 需要分割原区域
-                let new_area = area.split_in(sub_range.get_start(), sub_range.get_end());
-                let offset = if area.backend_file.is_some() {
-                    area.offset
-                        + (sub_range.get_start().0 - area.vpn_range.get_start().0) * PAGE_SIZE
-                } else {
-                    area.offset
-                };
-                let mut new_perm = area.map_perm;
-                new_perm.update_rwx(map_perm_from_prot);
-                let mut remap_area = MapArea::new(
-                    sub_range.clone(),
-                    area.map_type,
-                    new_perm,
-                    area.backend_file.clone(),
-                    offset,
-                );
-                area.pages.retain(|vpn, page| {
-                    if *vpn >= sub_range.get_start() && *vpn < sub_range.get_end() {
-                        remap_area.pages.insert(*vpn, page.clone());
-                        false
-                    } else {
-                        true
-                    }
-                });
-                remap_area.remap(&mut memory_set.page_table);
-                new_areas.push((remap_area.vpn_range.get_start(), remap_area));
-                new_areas.push((new_area.vpn_range.get_start(), new_area));
-            }
-
-            remap_vpn = sub_end;
+        if !memory_set.remap_area_with_overlap(remap_range, new_perm) {
+            log::warn!(
+                "[sys_mprotect] no mapped area found for {:#x}-{:#x}",
+                addr,
+                addr + size
+            );
+            return Err(Errno::ENOMEM);
         }
-
-        memory_set.areas.extend(new_areas.into_iter());
         Ok(0)
     })
 }
+
+// pub fn sys_mprotect(addr: usize, size: usize, prot: i32) -> SyscallRet {
+//     log::info!(
+//         "sys_mprotect: addr: {:#x}, size: {:#x}, prot: {:#x}",
+//         addr,
+//         size,
+//         prot
+//     );
+
+//     if addr % PAGE_SIZE != 0 {
+//         return Err(Errno::EINVAL);
+//     }
+
+//     let prot = MmapProt::from_bits(prot as u32).ok_or(Errno::EINVAL)?;
+//     let map_perm_from_prot: MapPermission = prot.into();
+//     let remap_start_vpn = VirtPageNum::from(addr >> PAGE_SIZE_BITS);
+//     let remap_end_vpn = VirtPageNum::from(ceil_to_page_size(addr + size) >> PAGE_SIZE_BITS);
+//     let remap_range = VPNRange::new(remap_start_vpn, remap_end_vpn);
+
+//     current_task().op_memory_set_mut(|memory_set| {
+//         let mut remap_vpn = remap_range.get_start();
+//         let mut new_areas = Vec::new();
+
+//         while remap_vpn < remap_range.get_end() {
+//             let Some((_, area)) = memory_set.areas.range_mut(..=remap_vpn).next_back() else {
+//                 return Err(Errno::ENOMEM);
+//             };
+
+//             if !area.vpn_range.contains_vpn(remap_vpn) {
+//                 return Err(Errno::ENOMEM);
+//             }
+
+//             let sub_start = remap_vpn;
+//             let sub_end = remap_range.get_end().min(area.vpn_range.get_end());
+//             let sub_range = VPNRange::new(sub_start, sub_end);
+
+//             if sub_range == area.vpn_range {
+//                 // 全部匹配，直接修改权限
+//                 area.map_perm.update_rwx(map_perm_from_prot);
+//                 area.remap(&mut memory_set.page_table);
+//                 log::info!(
+//                     "[sys_mprotect] map_perm from {:?} to {:?}, vpn_range: {:?}, remap_range: {:?}",
+//                     area.map_perm,
+//                     map_perm_from_prot,
+//                     area.vpn_range,
+//                     remap_range
+//                 );
+//             } else {
+//                 log::info!(
+//                     "[sys_mprotect] map_perm from {:?} to {:?}, vpn_range: {:?}, remap_range: {:?}",
+//                     area.map_perm,
+//                     map_perm_from_prot,
+//                     area.vpn_range,
+//                     remap_range
+//                 );
+//                 // 需要分割原区域
+//                 let new_area = area.split_in3(sub_range.get_start(), sub_range.get_end());
+//                 let offset = if area.backend_file.is_some() {
+//                     area.offset
+//                         + (sub_range.get_start().0 - area.vpn_range.get_start().0) * PAGE_SIZE
+//                 } else {
+//                     area.offset
+//                 };
+//                 let mut new_perm = area.map_perm;
+//                 new_perm.update_rwx(map_perm_from_prot);
+//                 let mut remap_area = MapArea::new(
+//                     sub_range.clone(),
+//                     area.map_type,
+//                     new_perm,
+//                     area.backend_file.clone(),
+//                     offset,
+//                 );
+//                 area.pages.retain(|vpn, page| {
+//                     if *vpn >= sub_range.get_start() && *vpn < sub_range.get_end() {
+//                         remap_area.pages.insert(*vpn, page.clone());
+//                         false
+//                     } else {
+//                         true
+//                     }
+//                 });
+//                 remap_area.remap(&mut memory_set.page_table);
+//                 new_areas.push((remap_area.vpn_range.get_start(), remap_area));
+//                 new_areas.push((new_area.vpn_range.get_start(), new_area));
+//             }
+
+//             remap_vpn = sub_end;
+//         }
+
+//         memory_set.areas.extend(new_areas.into_iter());
+//         Ok(0)
+//     })
+// }
 
 pub fn sys_mremap(
     old_address: usize,

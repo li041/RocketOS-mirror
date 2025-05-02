@@ -120,4 +120,7 @@ impl FileOp for NullFile {
     fn readable(&self) -> bool {
         true
     }
+    fn writable(&self) -> bool {
+        true
+    }
 }

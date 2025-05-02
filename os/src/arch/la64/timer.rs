@@ -75,6 +75,7 @@ impl Sub for TimeSpec {
 
 impl TimeSpec {
     pub fn new_machine_time() -> Self {
+        log::trace!("new machine time");
         // new a time spec with machine time
         let current_time = get_time_ms();
         Self {
