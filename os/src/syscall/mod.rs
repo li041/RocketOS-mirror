@@ -15,9 +15,8 @@ use fs::{
     sys_chdir, sys_close, sys_dup, sys_dup3, sys_faccessat, sys_fchmodat, sys_fchownat, sys_fcntl,
     sys_fstat, sys_fstatat, sys_fsync, sys_ftruncate, sys_getcwd, sys_getdents64, sys_ioctl,
     sys_linkat, sys_lseek, sys_mkdirat, sys_mknodat, sys_mount, sys_openat, sys_pipe2, sys_ppoll,
-    sys_pread, sys_pselect6, sys_pwrite, sys_read, sys_readv, sys_renameat2, sys_sendfile,
-    sys_statfs, sys_statx, sys_sync, sys_umount2, sys_unlinkat, sys_utimensat, sys_write,
-    sys_writev,
+    sys_pread, sys_pwrite, sys_read, sys_readv, sys_renameat2, sys_sendfile, sys_statfs, sys_statx,
+    sys_sync, sys_umount2, sys_unlinkat, sys_utimensat, sys_write, sys_writev,
 };
 use mm::{
     sys_brk, sys_madvise, sys_mmap, sys_mprotect, sys_munmap, sys_shmat, sys_shmctl, sys_shmdt,
@@ -216,7 +215,7 @@ pub fn syscall(
         SYSCALL_PREAD => sys_pread(a0, a1 as *mut u8, a2, a3),
         SYSCALL_PWRITE => sys_pwrite(a0, a1 as *const u8, a2, a3),
         SYSCALL_SENDFILE => sys_sendfile(a0, a1, a2 as *mut usize, a3),
-        SYSCALL_PSELECT6 => sys_pselect6(a0, a1, a2, a3, a4 as *const TimeSpec, a5),
+        // SYSCALL_PSELECT6 => sys_pselect6(a0, a1, a2, a3, a4 as *const TimeSpec, a5),
         SYSCALL_PPOLL => sys_ppoll(a0 as *mut PollFd, a1, a2 as *const TimeSpec, a3),
         SYSCALL_FSTATAT => sys_fstatat(a0 as i32, a1 as *const u8, a2 as *mut Stat, a3 as i32),
         SYSCALL_FSTAT => sys_fstat(a0 as i32, a1 as *mut Stat),

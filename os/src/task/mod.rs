@@ -32,7 +32,8 @@ pub use kstack::get_stack_top_by_sp;
 pub use manager::{for_each_task, get_task, wait, wait_timeout, wakeup, wakeup_timeout};
 pub use processor::{current_task, run_tasks};
 pub use scheduler::{
-    add_task, get_scheduler_len, remove_task, schedule, yield_current_task, WaitOption,
+    add_task, dump_scheduler, get_scheduler_len, remove_task, schedule, yield_current_task,
+    WaitOption,
 };
 pub use task::kernel_exit;
 pub use task::CloneFlags;

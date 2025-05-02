@@ -1,5 +1,5 @@
 /// writev
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 #[repr(C)]
 pub struct IoVec {
     pub base: usize,
@@ -8,7 +8,7 @@ pub struct IoVec {
 
 bitflags::bitflags! {
     // 定义于 <bits/poll.h>。
-    #[derive(Debug, Clone, Copy)]
+    #[derive(Debug, Clone, Copy, Default)]
     pub struct PollEvents: i16 {
         // 可以被监听的事件类型。这些位可以在 `events` 中设置，表示感兴趣的事件类型；
         // 它们会出现在 `revents` 中，表示文件描述符的实际状态。
@@ -31,7 +31,7 @@ bitflags::bitflags! {
 }
 
 /// sys_ppoll
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Default)]
 #[repr(C)]
 pub struct PollFd {
     pub fd: i32,
@@ -160,6 +160,14 @@ impl RLimit {
     pub fn new(rlim_cur: usize) -> Self {
         Self {
             rlim_cur,
+            rlim_max: RLIM_INFINITY,
+        }
+    }
+}
+impl Default for RLimit {
+    fn default() -> Self {
+        Self {
+            rlim_cur: RLIM_INFINITY,
             rlim_max: RLIM_INFINITY,
         }
     }

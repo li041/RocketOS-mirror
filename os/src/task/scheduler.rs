@@ -80,7 +80,7 @@ pub fn schedule() {
             // check_task_context_in_kernel_stack(next_task_kernel_stack);
             // 切换Processor的current
             crate::task::processor::PROCESSOR
-                .lock()
+                .write()
                 .switch_to(next_task);
         }
         unsafe {
@@ -116,7 +116,7 @@ pub fn yield_current_task() {
         // check_task_context_in_kernel_stack(next_task_kernel_stack);
         // 切换Processor的current
         crate::task::processor::PROCESSOR
-            .lock()
+            .write()
             .switch_to(next_task);
         unsafe {
             switch::__switch(next_task_kernel_stack);

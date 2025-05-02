@@ -37,7 +37,7 @@ pub mod proc;
 mod stdio;
 pub mod tmp;
 // pub mod tty;
-pub mod fd_set;
+// pub mod fd_set;
 pub mod uapi;
 
 // 文件系统的锁先使用SpinNoIrqLock, Todo: 改成RwLock

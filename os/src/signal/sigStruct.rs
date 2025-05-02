@@ -1,3 +1,5 @@
+use core::fmt::Debug;
+
 use alloc::collections::btree_map::BTreeMap;
 use bitflags::bitflags;
 
@@ -41,12 +43,8 @@ impl SigPending {
     }
 
     // 从当前待处理集合中选出在wanted_set中且最小的一个信号，但并不修改
-    pub fn find_signal(&self, wanted_sigset: Option<SigSet>) -> Option<Sig> {
-        let mut temp_pending = if let Some(wanted_set) = wanted_sigset {
-            (self.pending & wanted_set).bits()
-        } else {
-            self.pending.bits()
-        };
+    pub fn find_signal(&self, wanted_sigset: SigSet) -> Option<Sig> {
+        let mut temp_pending = (self.pending & wanted_sigset).bits();
         loop {
             let pos: u32 = temp_pending.trailing_zeros();
             let sig = Sig::from((pos + 1) as i32);
@@ -56,7 +54,7 @@ impl SigPending {
             } else {
                 temp_pending &= !(1 << pos);
                 // 没有被屏蔽且无法屏蔽
-                if !self.mask.contain_signal(sig)
+                if (!self.mask.contain_signal(sig))
                     || pos == Sig::SIGKILL.index() as u32
                     || pos == Sig::SIGSTOP.index() as u32
                 {
@@ -67,10 +65,9 @@ impl SigPending {
     }
 
     /// 取出未处理集合中, 在wanted_sigset中最小的一个信号，修改内容
-    /// 如果wanted_sigset为None，则表示都可以, 取出pending中最小的一个信号
-    pub fn fetch_signal(&mut self, wanted_sigset: Option<SigSet>) -> Option<(Sig, SigInfo)> {
+    /// 如果wanted_sigset为满，则表示都可以, 取出pending中最小的一个信号
+    pub fn fetch_signal(&mut self, wanted_sigset: SigSet) -> Option<(Sig, SigInfo)> {
         if let Some(sig) = self.find_signal(wanted_sigset) {
-            log::debug!("[fetch_signal] fetch signal {}", sig.raw());
             self.pending.remove_signal(sig);
             Some((sig, self.info.remove(&sig.raw()).unwrap()))
         } else {
@@ -98,7 +95,7 @@ impl SigPending {
 
 /// 信号实体
 /// Sig为0时表示空信号，从1开始才是有含义的信号
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Sig(i32);
 
 impl Sig {
@@ -160,6 +157,51 @@ impl Sig {
     pub fn get_default_type(&self) -> ActionType {
         ActionType::default(*self)
     }
+
+    // 显示信号名称
+    pub fn name(&self) -> &'static str {
+        match self.0 {
+            1 => "SIGHUP",
+            2 => "SIGINT",
+            3 => "SIGQUIT",
+            4 => "SIGILL",
+            5 => "SIGTRAP",
+            6 => "SIGABRT",
+            7 => "SIGBUS",
+            8 => "SIGFPE",
+            9 => "SIGKILL",
+            10 => "SIGUSR1",
+            11 => "SIGSEGV",
+            12 => "SIGUSR2",
+            13 => "SIGPIPE",
+            14 => "SIGALRM",
+            15 => "SIGTERM",
+            16 => "SIGSTKFLT",
+            17 => "SIGCHLD",
+            18 => "SIGCONT",
+            19 => "SIGSTOP",
+            20 => "SIGTSTP",
+            21 => "SIGTTIN",
+            22 => "SIGTTOU",
+            23 => "SIGURG",
+            24 => "SIGXCPU",
+            25 => "SIGXFSZ",
+            26 => "SIGVTALRM",
+            27 => "SIGPROF",
+            28 => "SIGWINCH",
+            29 => "SIGIO",
+            30 => "SIGPWR",
+            31 => "SIGSYS",
+            32 => "SIGLEGACYMAX",
+            _ => "UNKNOWN",
+        }
+    }
+}
+
+impl Debug for Sig {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}({})", self.name(), self.raw()) // 显示信号名称和信号值
+    } 
 }
 
 // 这里假设usize到i32的转换是安全的，但要注意溢出的风险

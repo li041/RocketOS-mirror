@@ -41,10 +41,6 @@ pub fn init() {
     }
 }
 
-#[cfg(target_arch = "loongarch64")]
-pub fn init() {
-    unimplemented!();
-}
 
 /// timer interrupt enabled
 #[cfg(target_arch = "riscv64")]
@@ -52,10 +48,6 @@ pub fn enable_timer_interrupt() {
     unsafe {
         sie::set_stimer();
     }
-}
-#[cfg(target_arch = "loongarch64")]
-pub fn enable_timer_interrupt() {
-    unimplemented!();
 }
 
 #[derive(PartialEq)]
@@ -132,10 +124,12 @@ pub fn trap_handler(cx: &mut TrapContext) {
             // 2. lazy allocation
             let va = VirtAddr::from(stval);
             let casue = PageFaultCause::from(scause.cause());
+            log::error!("page fault cause {:?}", scause.cause());
             current_task().op_memory_set_mut(|memory_set| 
                 {
                     if let Err(e) = memory_set.handle_recoverable_page_fault(va, casue) {
                         memory_set.page_table.dump_all_user_mapping();
+                        dump_trap_context(&current_task());
                         panic!(
                             "Unrecoverble page fault in application, bad addr = {:#x}, scause = {:?}, sepc = {:#x}",
                             stval,
@@ -155,6 +149,10 @@ pub fn trap_handler(cx: &mut TrapContext) {
                     scause.cause(),
                     sepc::read()
                 );
+        }
+        Trap::Exception(Exception::Breakpoint) => {
+            panic!("Breakpoint at 0x{:x}", cx.sepc);
+            // cx.sepc += 4; // 跳过断点
         }
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
             set_next_trigger();

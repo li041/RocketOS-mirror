@@ -2,7 +2,7 @@ use bitflags::bitflags;
 
 use super::{Sig, SigSet, MAX_SIGNUM};
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone)]
 // 信号处理器
 pub struct SigHandler {
     actions: [SigAction; MAX_SIGNUM],
@@ -11,7 +11,7 @@ pub struct SigHandler {
 impl SigHandler {
     pub fn new() -> Self {
         Self {
-            actions: core::array::from_fn(|signo| { SigAction::new((signo + 1).into())})
+            actions: core::array::from_fn(|signo| SigAction::new((signo + 1).into())),
         }
     }
 
@@ -27,7 +27,7 @@ impl SigHandler {
 
     pub fn reset(&mut self) {
         for (i, action) in self.actions.iter_mut().enumerate() {
-            *action = SigAction::new(Sig::from((i+1) as i32));
+            *action = SigAction::new(Sig::from((i + 1) as i32));
         }
     }
 }
@@ -41,13 +41,13 @@ pub const SIG_DFL: usize = 0;
 pub const SIG_IGN: usize = 1;
 
 // 处理操作
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 #[repr(C)]
 pub struct SigAction {
-    pub sa_handler: usize,      // 信号处理函数指针
-    pub flags: SigActionFlag,   // 额外信息
-    pub restorer: usize,        // 废物
-    pub mask: SigSet,           // 位掩码，临时阻塞信号
+    pub sa_handler: usize,    // 信号处理函数指针
+    pub flags: SigActionFlag, // 额外信息
+    pub restorer: usize,      // 废物
+    pub mask: SigSet,         // 位掩码，临时阻塞信号
 }
 
 impl SigAction {
@@ -65,14 +65,14 @@ impl SigAction {
         }
     }
 
-    pub fn is_user(&self) -> bool{
+    pub fn is_user(&self) -> bool {
         let handler = self.sa_handler;
-        (handler != 0) && (handler != 1)
+        (handler != SIG_IGN) && (handler != SIG_DFL)
     }
 }
 
 // 信号处理类型
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ActionType {
     Ignore,
     Term,
@@ -85,13 +85,19 @@ impl ActionType {
     // 信号默认处理方式
     pub fn default(sig: Sig) -> Self {
         match sig {
-            Sig::SIGABRT | Sig::SIGBUS | Sig::SIGFPE | Sig::SIGILL| 
-            Sig::SIGQUIT | Sig::SIGSEGV | Sig::SIGXCPU | Sig::SIGXFSZ
-            | Sig::SIGSYS                                               => ActionType::Core,
-            Sig::SIGSTOP | Sig::SIGTSTP | Sig::SIGTTIN | Sig::SIGTTOU   => ActionType::Stop,
-            Sig::SIGCHLD | Sig::SIGURG | Sig::SIGWINCH                  => ActionType::Ignore,
-            Sig::SIGCONT                                                => ActionType::Cont,
-            _                                                           => ActionType::Term,
+            Sig::SIGABRT
+            | Sig::SIGBUS
+            | Sig::SIGFPE
+            | Sig::SIGILL
+            | Sig::SIGQUIT
+            | Sig::SIGSEGV
+            | Sig::SIGXCPU
+            | Sig::SIGXFSZ
+            | Sig::SIGSYS => ActionType::Core,
+            Sig::SIGSTOP | Sig::SIGTSTP | Sig::SIGTTIN | Sig::SIGTTOU => ActionType::Stop,
+            Sig::SIGCHLD | Sig::SIGURG | Sig::SIGWINCH => ActionType::Ignore,
+            Sig::SIGCONT => ActionType::Cont,
+            _ => ActionType::Term,
         }
     }
 }

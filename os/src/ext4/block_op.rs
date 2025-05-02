@@ -48,7 +48,7 @@ impl<'a> Ext4DirContentRO<'a> {
             // rec_len是u16, 2字节
             let rec_len =
                 u16::from_le_bytes([self.content[file_offset + 4], self.content[file_offset + 5]]);
-            if rec_len == 0 || file_offset + rec_len as usize > buf_len {
+            if rec_len == 0 || file_offset + rec_len as usize > content_len {
                 break;
             }
             let dentry =
@@ -180,6 +180,11 @@ impl<'a> Ext4DirContentWE<'a> {
                     file_type,
                     name: name.as_bytes().to_vec(),
                 };
+                log::info!(
+                    "Writing new dir entry at offset {}, dentry: {:?}",
+                    rec_len_total + current_dentry_len as usize,
+                    new_dentry
+                );
                 new_dentry
                     .write_to_mem(&mut self.content[rec_len_total + current_dentry_len as usize..]);
                 return Ok(());
@@ -226,6 +231,11 @@ impl<'a> Ext4DirContentWE<'a> {
                 &self.content[rec_len_total..rec_len_total + rec_len as usize],
             )
             .expect("DirEntry::try_from failed");
+            log::error!(
+                "[Ext4DirContentWE::delete_entry] check dentry at offset {}: {:?}",
+                rec_len_total,
+                dentry
+            );
             let dentry_name = String::from_utf8(dentry.name[..].to_vec()).unwrap();
             if dentry_name == name {
                 // 删除目录项
@@ -239,13 +249,12 @@ impl<'a> Ext4DirContentWE<'a> {
                 } else {
                     // 合并到前一个目录项的rec_len
                     let mut prev_dentry = Ext4DirEntry::try_from(
-                        &self.content[prev_len_total..prev_len_total + rec_len as usize],
+                        &self.content[prev_len_total..rec_len_total as usize],
                     )
-                    .expect("DirEntry::try_from failed");
+                    .expect("[Ext4DirContentWE::delete_entry] merge into previous dentry failed");
                     prev_dentry.rec_len += rec_len;
-                    prev_dentry.write_to_mem(
-                        &mut self.content[prev_len_total..prev_len_total + rec_len as usize],
-                    );
+                    prev_dentry
+                        .write_to_mem(&mut self.content[prev_len_total..rec_len_total as usize]);
                 }
 
                 return Ok(());

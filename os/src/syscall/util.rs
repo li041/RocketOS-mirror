@@ -185,8 +185,10 @@ pub fn sys_prlimit64(
     }
     // 如果new_limit不为NULL, 则将new_limit写入当前的rlimit
     if !new_limit.is_null() {
-        let new_limit = copy_from_user(new_limit, 1).unwrap()[0];
-        task.set_rlimit(resource, &new_limit)
+        let mut limit_buf = RLimit::default();
+        copy_from_user(new_limit, &mut limit_buf as *mut RLimit, 1)
+            .expect("[sys_prlimit64]: copy_from_user failed");
+        task.set_rlimit(resource, &limit_buf)
             .expect("[sys_prlimit64]: set rlimit failed");
     }
     Ok(0)

@@ -16,7 +16,7 @@ use crate::{
     arch::{config::PAGE_SIZE_BITS, mm::copy_from_user, timer::TimeSpec},
     futex::queue::futex_hash,
     syscall::errno::{Errno, SyscallRet},
-    task::{current_task, yield_current_task, Task},
+    task::{current_task, dump_scheduler, yield_current_task, Task},
 };
 use alloc::{sync::Arc, sync::Weak};
 
@@ -111,8 +111,9 @@ impl FutexRobustList {
 // }
 
 pub fn futex_get_value_locked(uaddr: *const Futex) -> Result<Futex, Errno> {
-    match copy_from_user(uaddr, 1) {
-        Ok(val) => Ok(val[0]),
+    let mut val: Futex = 0;
+    match copy_from_user(uaddr, &mut val as *mut Futex, 1) {
+        Ok(_) => Ok(val),
         Err(_) => Err(Errno::EFAULT),
     }
 }
@@ -181,9 +182,10 @@ pub fn futex_wait(
 
         // If we were woken (and unqueued), we succeeded, whatever.
         // We doesn't care about the reason of wakeup if we were unqueued.
-        let hash_bucket = FUTEXQUEUES.buckets[futex_hash(&key)].lock();
+        let mut hash_bucket = FUTEXQUEUES.buckets[futex_hash(&key)].lock();
         let cur_id = current_task().tid();
         // 查看自己是否在队列中
+        hash_bucket.retain(|futex_q| futex_q.task.upgrade().is_some());
         if let Some(_idx) = hash_bucket
             .iter()
             .position(|futex_q| futex_q.task.upgrade().unwrap().tid() == cur_id)

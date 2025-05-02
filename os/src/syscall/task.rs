@@ -1,4 +1,5 @@
 use core::sync::atomic::{compiler_fence, Ordering};
+use core::time;
 
 use crate::arch::mm::copy_from_user;
 use crate::arch::timer::TimeSpec;
@@ -208,7 +209,6 @@ pub fn sys_yield() -> SyscallRet {
 
 pub fn sys_exit(exit_code: i32) -> ! {
     kernel_exit(current_task(), exit_code);
-    remove_task(current_task().tid());
     log::warn!(
         "[sys_exit] task {} exit with code {}",
         current_task().tid(),
@@ -349,6 +349,14 @@ pub fn sys_futex(
     }
 }
 
+pub fn sys_set_robust_list(_robust_list: usize, _len: usize) -> SyscallRet {
+    Ok(0)
+}
+
+pub fn sys_get_robust_list(_pid: i32, _robust_list: usize, _len: usize) -> SyscallRet {
+    Ok(0)
+}
+
 /// sys_gettimeofday, current time = sec + usec
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -396,9 +404,15 @@ pub fn sys_get_time(time_val_ptr: usize) -> SyscallRet {
 
 pub fn sys_nanosleep(time_val_ptr: usize) -> SyscallRet {
     let time_val_ptr = time_val_ptr as *const TimeSpec;
-    let time_val = copy_from_user(time_val_ptr, 1).unwrap()[0];
+    let mut time_val: TimeSpec = TimeSpec::default();
+    copy_from_user(time_val_ptr, &mut time_val as *mut TimeSpec, 1)?;
     let start_time = TimeSpec::new_machine_time();
+    log::error!("[sys_nanosleep] task{} sleep {:?}", current_task().tid(), time_val);
     loop {
+        if current_task().check_interrupt() {
+            log::error!("[sys_nanosleep] task{} wakeup by signal", current_task().tid());
+            return Err(Errno::EINTR);
+        }
         let current_time = TimeSpec::new_machine_time();
         if current_time >= time_val + start_time {
             break;
@@ -417,7 +431,9 @@ pub fn sys_clock_nansleep(clock_id: usize, flags: i32, t: usize, remain: usize) 
         t,
         remain
     );
-    let t = copy_from_user(t as *const TimeSpec, 1)?[0];
+    // let t = copy_from_user(t as *const TimeSpec, 1)?[0];
+    let mut t_buf: TimeSpec = TimeSpec::default();
+    copy_from_user(t as *const TimeSpec, &mut t_buf as *mut TimeSpec, 1)?;
     match clock_id {
         CLOCK_REALTIME => {
             if flags == TIMER_ABSTIME {
@@ -425,7 +441,7 @@ pub fn sys_clock_nansleep(clock_id: usize, flags: i32, t: usize, remain: usize) 
                 // Todo: 阻塞
                 loop {
                     let current_time = TimeSpec::new_wall_time();
-                    if current_time >= t {
+                    if current_time >= t_buf {
                         return Ok(0);
                     }
                     yield_current_task();
@@ -435,7 +451,7 @@ pub fn sys_clock_nansleep(clock_id: usize, flags: i32, t: usize, remain: usize) 
                 let start_time = TimeSpec::new_wall_time();
                 loop {
                     let current_time = TimeSpec::new_wall_time();
-                    if current_time >= t + start_time {
+                    if current_time >= t_buf + start_time {
                         return Ok(0);
                     }
                     yield_current_task();
@@ -448,7 +464,7 @@ pub fn sys_clock_nansleep(clock_id: usize, flags: i32, t: usize, remain: usize) 
                 // Todo: 阻塞 + 信号中断
                 loop {
                     let current_time = TimeSpec::new_machine_time();
-                    if current_time >= t {
+                    if current_time >= t_buf {
                         return Ok(0);
                     }
                     yield_current_task();
@@ -458,7 +474,7 @@ pub fn sys_clock_nansleep(clock_id: usize, flags: i32, t: usize, remain: usize) 
                 let start_time = TimeSpec::new_machine_time();
                 loop {
                     let current_time = TimeSpec::new_machine_time();
-                    if current_time >= t + start_time {
+                    if current_time >= t_buf + start_time {
                         return Ok(0);
                     }
                     yield_current_task();

@@ -46,9 +46,15 @@ pub fn do_futex(
     match cmd {
         FUTEX_WAIT => {
             let val3 = FUTEX_BITSET_MATCH_ANY;
+            let mut timeout_buf = TimeSpec::default();
             // convert relative timeout to absolute timeout
             let timeout: Option<TimeSpec> = if val2 != 0 {
-                Some(copy_from_user(val2 as *const TimeSpec, 1).unwrap()[0])
+                copy_from_user(
+                    val2 as *const TimeSpec,
+                    &mut timeout_buf as *mut TimeSpec,
+                    1,
+                )?;
+                Some(timeout_buf)
             } else {
                 None
             };
@@ -60,8 +66,14 @@ pub fn do_futex(
             futex_wait(uaddr.into(), flags, val, deadline, val3)
         }
         FUTEX_WAIT_BITSET => {
+            let mut timeout_buf = TimeSpec::default();
             let timeout: Option<TimeSpec> = if val2 != 0 {
-                Some(copy_from_user(val2 as *const TimeSpec, 1).unwrap()[0])
+                copy_from_user(
+                    val2 as *const TimeSpec,
+                    &mut timeout_buf as *mut TimeSpec,
+                    1,
+                )?;
+                Some(timeout_buf)
             } else {
                 None
             };

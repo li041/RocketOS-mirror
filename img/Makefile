@@ -69,7 +69,7 @@ init_img_2025:
 	sudo umount mnt_temp
 	sudo rm -rf mnt_temp
 
-custom: compile_custom
+custom:
 	rm $(EXT4_OUT)
 	dd if=/dev/zero of=$(EXT4_OUT) count=4096 bs=1M
 	mkfs.ext4 $(EXT4_OUT)

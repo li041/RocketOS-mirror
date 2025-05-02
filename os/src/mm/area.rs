@@ -56,8 +56,13 @@ pub enum MapType {
 impl MapPermission {
     pub fn update_rwx(&mut self, map_perm_from_prot: MapPermission) {
         // 只更新R, W, X
-        self.remove(MapPermission::R | MapPermission::W | MapPermission::X);
-        self.insert(map_perm_from_prot & (MapPermission::R | MapPermission::W | MapPermission::X));
+        self.remove(MapPermission::R | MapPermission::W | MapPermission::X | MapPermission::COW);
+        self.insert(map_perm_from_prot & (MapPermission::R | MapPermission::X));
+        if self.contains(MapPermission::S) && map_perm_from_prot.contains(MapPermission::W) {
+            self.insert(MapPermission::W);
+        } else {
+            self.insert(MapPermission::COW);
+        }
     }
 }
 
@@ -225,23 +230,73 @@ impl MapArea {
             current_vpn.step();
         }
     }
+    /// 由调用者保证split_vpn在原有区域范围内
+    /// 将区域分为2个区域, 原有区域[start, split_vpn), 新区域[split_vpn, end)
+    /// 划分pages, 如果是文件映射, 需要重新计算偏移量
+    pub fn split2(&mut self, split_vpn: VirtPageNum) -> Self {
+        debug_assert!(
+            self.vpn_range.get_start().0 <= split_vpn.0
+                && split_vpn.0 <= self.vpn_range.get_end().0
+        );
+        let old_vpn_end = self.vpn_range.get_end();
+        // 设置原有区域的结束地址: [start, split_vpn)
+        self.vpn_range.set_end(split_vpn);
+        // 设置新区域的开始地址: [split_vpn, end)
+        let new_vpn_range = VPNRange::new(split_vpn, old_vpn_end);
+        let new_area_offset = if self.backend_file.is_some() {
+            self.offset + (split_vpn.0 - self.vpn_range.get_start().0) * PAGE_SIZE
+        } else {
+            self.offset
+        };
+        let mut new_area = Self {
+            vpn_range: new_vpn_range,
+            pages: BTreeMap::new(),
+            map_type: self.map_type,
+            map_perm: self.map_perm,
+            backend_file: self.backend_file.clone(),
+            offset: new_area_offset,
+        };
+        // 将原有的frames划分到新区域
+        self.pages.retain(|vpn, page| {
+            if *vpn >= split_vpn {
+                new_area.pages.insert(*vpn, page.clone());
+                false
+            } else {
+                true
+            }
+        });
+        new_area
+    }
     /// 由调用者保证`[xmap_start, xmap_end)`在`[start, end)`范围内
     /// 最后self.end被设置为`xmap_start`, 返回一个新的区域: `[xmap_end, end)`
-    /// 如果是unmap, 需要调用者手动释放unmap area中的页, **在调用前**
-    /// 如果是remap, 需要调用者手动remap remap area中的页, **在调用后**
     /// 最后分为3个区域:
     ///     1. [start, xmap_start) : 原有区域
     ///     2. [xmap_start, xmap_end) : remap/unmap区域
     ///     3. [xmap_end, end) : 原有区域
-    pub fn split_in(&mut self, unmap_start: VirtPageNum, unmap_end: VirtPageNum) -> Self {
+    pub fn split_in3(&mut self, unmap_start: VirtPageNum, unmap_end: VirtPageNum) -> (Self, Self) {
         debug_assert!(
             self.vpn_range.get_start().0 <= unmap_start.0
                 && unmap_end.0 <= self.vpn_range.get_end().0
         );
         let old_vpn_end = self.vpn_range.get_end();
-        // 设置原有区域的结束地址: [start, xmap_start)
+        // 1. 设置原有区域的结束地址: [start, xmap_start)
         self.vpn_range.set_end(unmap_start);
-        // 设置新区域的开始地址: [xmap_end, end)
+        // 2. 设置xmap区域
+        let xmap_vpn_range = VPNRange::new(unmap_start, unmap_end);
+        let xmap_area_offset = if self.backend_file.is_some() {
+            self.offset + (unmap_start.0 - self.vpn_range.get_start().0) * PAGE_SIZE
+        } else {
+            self.offset
+        };
+        let mut xmap_area = Self {
+            vpn_range: xmap_vpn_range,
+            pages: BTreeMap::new(),
+            map_type: self.map_type,
+            map_perm: self.map_perm,
+            backend_file: self.backend_file.clone(),
+            offset: xmap_area_offset,
+        };
+        // 3. 设置新区域的开始地址: [xmap_end, end)
         let new_vpn_range = VPNRange::new(unmap_end, old_vpn_end);
         // 如果是文件映射, 偏移量需要重新计算
         let new_area_offset = if self.backend_file.is_some() {
@@ -262,11 +317,14 @@ impl MapArea {
             if *vpn >= unmap_end && *vpn < old_vpn_end {
                 new_area.pages.insert(*vpn, page.clone());
                 false
+            } else if *vpn >= unmap_start {
+                xmap_area.pages.insert(*vpn, page.clone());
+                false
             } else {
                 true
             }
         });
-        new_area
+        (xmap_area, new_area)
     }
     /// used by `sys_mprotect`
     pub fn remap(&mut self, page_table: &mut PageTable) {
@@ -274,6 +332,11 @@ impl MapArea {
         // 对于已经映射的页, 需要重新设置权限
         for &vpn in self.pages.keys() {
             page_table.remap(vpn, PTEFlags::from(self.map_perm));
+        }
+    }
+    pub fn unmap(&mut self, page_table: &mut PageTable) {
+        for &vpn in self.pages.keys() {
+            page_table.unmap(vpn);
         }
     }
 }

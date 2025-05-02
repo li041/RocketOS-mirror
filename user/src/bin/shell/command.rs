@@ -183,7 +183,6 @@ impl Command {
 
         // 输出重定向
         if let Some(file) = &self.stdout_redirect {
-            println!("file: {:?}", file);
             let flags = if self.append {
                 OpenFlags::WRONLY | OpenFlags::CREATE | OpenFlags::APPEND
             } else {

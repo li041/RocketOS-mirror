@@ -16,12 +16,16 @@ pub struct TrapContext {
 }
 
 impl TrapContext {
+
+    /* getter */
     pub fn get_sp(&self) -> usize {
         self.r[3]
     }
     pub fn get_a0(&self) -> usize {
         self.r[4]
     }
+
+    /* setter */
     pub fn set_ra(&mut self, ra: usize) {
         self.r[1] = ra;
     }
@@ -33,6 +37,12 @@ impl TrapContext {
     }
     pub fn set_a0(&mut self, a0: usize) {
         self.r[4] = a0;
+    }
+    pub fn set_a1(&mut self, a1: usize) {
+        self.r[5] = a1;
+    }
+    pub fn set_a2(&mut self, a2: usize) {
+        self.r[6] = a2;
     }
     pub fn set_pc(&mut self, pc: usize) {
         self.era = pc;
