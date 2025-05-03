@@ -9,7 +9,6 @@ use crate::{
     arch::{
         mm::{copy_from_user, copy_to_user},
         sbi::console_getchar,
-        timer::TimeSpec,
     },
     drivers::block::block_dev::BlockDevice,
     ext4::{
@@ -27,6 +26,7 @@ use crate::{
     },
     syscall::errno::{Errno, SyscallRet},
     task::{yield_current_task, Tid},
+    timer::TimeSpec,
 };
 
 pub static TTY: Once<Arc<dyn FileOp>> = Once::new();

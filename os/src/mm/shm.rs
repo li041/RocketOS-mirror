@@ -10,9 +10,10 @@ use spin::{Mutex, RwLock};
 use virtio_drivers::PAGE_SIZE;
 
 use crate::{
-    arch::{mm::copy_to_user, timer::TimeSpec},
+    arch::mm::copy_to_user,
     syscall::errno::{Errno, SyscallRet},
     task::{current_task, IdAllocator},
+    timer::TimeSpec,
 };
 
 use super::{MapPermission, Page};

@@ -4,7 +4,6 @@ use lazy_static::lazy_static;
 use spin::{lazy, mutex, Once, RwLock};
 
 use crate::{
-    arch::timer::TimeSpec,
     ext4::inode::Ext4InodeDisk,
     fs::{
         file::{FileOp, OpenFlags},
@@ -15,6 +14,7 @@ use crate::{
         FileOld,
     },
     syscall::errno::SyscallRet,
+    timer::TimeSpec,
 };
 
 use alloc::{

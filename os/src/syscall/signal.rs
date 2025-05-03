@@ -3,7 +3,6 @@ use core::panic;
 use crate::{
     arch::{
         mm::{copy_from_user, copy_to_user},
-        timer::TimeSpec,
         trap::{
             context::{dump_trap_context, get_trap_context, save_trap_context},
             TrapContext,
@@ -18,6 +17,7 @@ use crate::{
         current_task, for_each_task, get_stack_top_by_sp, get_task, yield_current_task, INITPROC,
         INIT_PROC_PID,
     },
+    timer::TimeSpec,
 };
 
 use super::errno::SyscallRet;

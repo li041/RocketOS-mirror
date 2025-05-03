@@ -28,13 +28,12 @@ use signal::{
 };
 use task::{
     sys_clock_nansleep, sys_clone, sys_execve, sys_exit_group, sys_futex, sys_get_time,
-    sys_getegid, sys_geteuid, sys_getpid, sys_getppid, sys_gettid, sys_getuid, sys_nanosleep,
-    sys_set_tid_address, sys_setpgid, sys_waitpid, sys_yield,
+    sys_getegid, sys_geteuid, sys_getgid, sys_getpid, sys_getppid, sys_gettid, sys_getuid,
+    sys_nanosleep, sys_set_tid_address, sys_setpgid, sys_waitpid, sys_yield,
 };
-use util::{sys_clock_gettime, sys_prlimit64, sys_syslog, sys_times, sys_uname};
+use util::{sys_clock_gettime, sys_prlimit64, sys_setitimer, sys_syslog, sys_times, sys_uname};
 
 use crate::{
-    arch::timer::TimeSpec,
     fs::{
         kstat::{Stat, Statx},
         uapi::{IoVec, PollFd, RLimit, StatFs},
@@ -42,6 +41,7 @@ use crate::{
     futex::robust_list::{sys_get_robust_list, sys_set_robust_list},
     mm::shm::ShmId,
     signal::{SigInfo, SigSet},
+    timer::{ITimerVal, TimeSpec},
 };
 pub use fs::FcntlOp;
 pub use task::sys_exit;
@@ -95,6 +95,7 @@ const SYSCALL_FUTEX: usize = 98;
 const SYSCALL_SET_ROBUST_LIST: usize = 99;
 const SYSCALL_GET_ROBUST_LIST: usize = 100;
 const SYSCALL_NANOSLEEP: usize = 101;
+const SYSCALL_SETITIMER: usize = 103;
 const SYSCALL_CLOCK_GETTIME: usize = 113;
 const SYSCALL_CLOCK_NANOSLEEP: usize = 115;
 const SYSCALL_SYSLOG: usize = 116;
@@ -138,14 +139,14 @@ const SYSCALL_WAIT4: usize = 260;
 const SYSCALL_PRLIMIT: usize = 261;
 const SYSCALL_RENAMEAT2: usize = 276;
 const SYSCALL_GETRANDOM: usize = 278;
+const SYSCALL_MEMBARRIER: usize = 283;
 const SYSCALL_STATX: usize = 291;
 
 const CARELESS_SYSCALLS: [usize; 5] = [62, 63, 64, 124, 260];
 // const SYSCALL_NUM_2_NAME: [(&str, usize); 4] = [
-const SYSCALL_NUM_2_NAME: [(usize, &str); 7] = [
+const SYSCALL_NUM_2_NAME: [(usize, &str); 6] = [
     (SYSCALL_SETGID, "SYS_SETGID"),
     (SYSCALL_SETUID, "SYS_SETUID"),
-    (SYSCALL_GETGID, "SYS_GETGID"),
     (SYSCALL_GETTID, "SYS_GETTID"),
     (SYSCALL_EXIT_GROUP, "SYS_EXIT_GROUP"),
     (SYSCALL_SIGALTSTACK, "SYS_SIGALTSTACK"),
@@ -231,6 +232,7 @@ pub fn syscall(
         SYSCALL_SET_ROBUST_LIST => sys_set_robust_list(a0, a1),
         SYSCALL_GET_ROBUST_LIST => sys_get_robust_list(a0, a1, a2),
         SYSCALL_NANOSLEEP => sys_nanosleep(a0),
+        SYSCALL_SETITIMER => sys_setitimer(a0 as i32, a1 as *const ITimerVal, a2 as *mut ITimerVal),
         SYSCALL_CLOCK_GETTIME => sys_clock_gettime(a0, a1 as *mut TimeSpec),
         SYSCALL_CLOCK_NANOSLEEP => sys_clock_nansleep(a0, a1 as i32, a2, a3),
         SYSCALL_SYSLOG => sys_syslog(a0, a1 as *mut u8, a3),
@@ -239,7 +241,7 @@ pub fn syscall(
         SYSCALL_TKILL => sys_tkill(a0 as isize, a1 as i32),
         SYSCALL_TGKILL => sys_tgkill(a0 as isize, a1 as isize, a2 as i32),
         // SYSCALL_SIGALTSTACK => sys_sigaltstack()
-        // SYSCALL_RT_SIGSUSPEND => sys_rt_sigsuspend(a0),
+        SYSCALL_RT_SIGSUSPEND => sys_rt_sigsuspend(a0),
         SYSCALL_RT_SIGACTION => sys_rt_sigaction(a0 as i32, a1, a2),
         SYSCALL_RT_SIGPROCMASK => sys_rt_sigprocmask(a0, a1, a2),
         SYSCALL_RT_SIGPENDING => sys_rt_sigpending(a0),
@@ -258,6 +260,7 @@ pub fn syscall(
         SYSCALL_GETPPID => sys_getppid(),
         SYSCALL_GETUID => sys_getuid(),
         SYSCALL_GETEUID => sys_geteuid(),
+        SYSCALL_GETGID => sys_getgid(),
         SYSCALL_GETEGID => sys_getegid(),
         SYSCALL_GETTID => sys_gettid(),
         SYCALL_SHMGET => sys_shmget(a0, a1, a2 as i32),
@@ -280,6 +283,7 @@ pub fn syscall(
             a3 as *const u8,
             a4 as i32,
         ),
+        SYSCALL_MEMBARRIER => Ok(0),
         SYSCALL_STATX => sys_statx(
             a0 as i32,
             a1 as *const u8,

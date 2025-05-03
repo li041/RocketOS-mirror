@@ -1,13 +1,11 @@
 use core::time;
 
 use crate::{
-    arch::{
-        mm::{copy_from_user, copy_to_user},
-        timer::TimeSpec,
-    },
+    arch::mm::{copy_from_user, copy_to_user},
     fs::uapi::{RLimit, Resource},
     syscall::errno::Errno,
-    task::{current_task, get_task},
+    task::{add_real_timer, current_task, get_task, remove_timer, update_real_timer},
+    timer::{ITimerVal, TimeSpec},
 };
 
 use super::errno::SyscallRet;
@@ -216,10 +214,12 @@ pub fn sys_clock_gettime(clock_id: usize, timespec: *mut TimeSpec) -> SyscallRet
     match clock_id {
         CLOCK_REALTIME | CLOCK_REALTIME_COARSE => {
             let time = TimeSpec::new_wall_time();
+            log::info!("[sys_clock_gettime] CLOCK_REALTIME: {:?}", time);
             copy_to_user(timespec, &time as *const TimeSpec, 1)?;
         }
         CLOCK_MONOTONIC => {
             let time = TimeSpec::new_machine_time();
+            log::info!("[sys_clock_gettime] CLOCK_MONOTONIC: {:?}", time);
             copy_to_user(timespec, &time as *const TimeSpec, 1)?;
         }
         _ => {
@@ -228,4 +228,80 @@ pub fn sys_clock_gettime(clock_id: usize, timespec: *mut TimeSpec) -> SyscallRet
         }
     }
     Ok(0)
+}
+
+pub fn sys_setitimer(
+    which: i32,
+    value_ptr: *const ITimerVal,
+    ovalue_ptr: *mut ITimerVal,
+) -> SyscallRet {
+    if which > 2 {
+        return Err(Errno::EINVAL);
+    }
+    let mut new = ITimerVal::default();
+    copy_from_user(value_ptr, &mut new as *mut ITimerVal, 1)
+        .expect("[sys_setitimer] copy_from_user failed");
+    if !new.is_valid() {
+        return Err(Errno::EINVAL);
+    }
+    log::info!(
+        "[sys_setitimer] which: {}, it_value: {:?}, it_interval: {:?}",
+        which,
+        new.it_value,
+        new.it_interval
+    );
+    match which {
+        ITIMER_REAL => {
+            let task = current_task();
+            if new.it_value.is_zero() {
+                // 禁用定时器
+                log::info!("[sys_setitimer] disable timer");
+                remove_timer(task.tid(), ITIMER_REAL);
+                return Ok(0);
+            }
+            // 启用定时器
+            let (should_update, old) = task.op_itimerval_mut(|itimerval| {
+                let real_itimeval = &mut itimerval[which as usize];
+                let should_update =
+                    !real_itimeval.it_value.is_zero() || !real_itimeval.it_interval.is_zero();
+                // 计算旧的定时器值(it_value)剩余时间
+                let current_time = TimeSpec::new_wall_time();
+                let old_it_value = if real_itimeval.it_value < current_time {
+                    TimeSpec { sec: 0, nsec: 0 }
+                } else {
+                    new.it_value - current_time
+                };
+                let old = ITimerVal {
+                    it_value: old_it_value,
+                    it_interval: real_itimeval.it_interval,
+                };
+                // 设定新的定时器值
+                real_itimeval.it_value = new.it_value;
+                real_itimeval.it_interval = new.it_interval;
+                (should_update, old)
+            });
+            // 设置或更新已有定时器
+            if should_update {
+                update_real_timer(task.tid(), new.it_value);
+            } else {
+                add_real_timer(task.tid(), new.it_value);
+            }
+            // 将旧的定时器值写入ovalue_ptr
+            if !ovalue_ptr.is_null() {
+                copy_to_user(ovalue_ptr, &old as *const ITimerVal, 1)
+                    .expect("[sys_setitimer] copy_to_user failed");
+            }
+            return Ok(0);
+        }
+        ITIMER_VIRTUAL => {
+            unimplemented!();
+        }
+        ITIMER_PROF => {
+            unimplemented!();
+        }
+        _ => {
+            // 已进行参数检查, 不会进入这里
+            panic!("[sys_setitimer] invalid which: {}", which);
+        }
+    };
 }

@@ -4,13 +4,91 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::ptr::copy_nonoverlapping;
 use core::sync::atomic::AtomicUsize;
-use spin::Mutex;
+use spin::{Mutex, RwLock};
 
+use crate::ext4::inode::{Ext4InodeDisk, S_IFIFO};
 use crate::syscall::errno::{Errno, SyscallRet};
 use crate::task::{current_task, wait, wakeup, yield_current_task, Tid};
+use crate::timer::TimeSpec;
 
 use super::file::FileOp;
+use super::inode::InodeOp;
+use super::kstat::Kstat;
 
+lazy_static::lazy_static! {
+    static ref PIPEINODE: Arc<dyn InodeOp> =
+     {
+        let mut inode_on_disk = Ext4InodeDisk::default();
+        inode_on_disk.set_mode(S_IFIFO);
+        inode_on_disk.set_size(RING_DEFAULT_BUFFER_SIZE as u64);
+        Arc::new(PipeInode {
+            inode_num: 0,
+            inner: RwLock::new(PipeInodeInner {
+                inode_on_disk
+            }),
+        })
+    };
+}
+
+struct PipeInode {
+    inode_num: usize,
+    inner: RwLock<PipeInodeInner>,
+}
+
+struct PipeInodeInner {
+    pub inode_on_disk: Ext4InodeDisk,
+}
+
+impl InodeOp for PipeInode {
+    fn can_lookup(&self) -> bool {
+        false
+    }
+    fn getattr(&self) -> Kstat {
+        let mut kstat = Kstat::new();
+        let inner_guard = self.inner.read();
+        let inode_on_disk = &inner_guard.inode_on_disk;
+        kstat.ino = self.inode_num as u64;
+        kstat.dev = 0;
+
+        kstat.mode = inode_on_disk.get_mode();
+        kstat.uid = inode_on_disk.get_uid() as u32;
+        kstat.gid = inode_on_disk.get_gid() as u32;
+        kstat.size = 0;
+        kstat.atime = inode_on_disk.get_atime();
+        kstat.mtime = inode_on_disk.get_mtime();
+        kstat.ctime = inode_on_disk.get_ctime();
+        kstat.nlink = 1;
+        kstat.blocks = 0;
+        kstat
+    }
+    fn get_inode_num(&self) -> usize {
+        self.inode_num
+    }
+    fn get_mode(&self) -> u16 {
+        self.inner.read().inode_on_disk.get_mode()
+    }
+    /* 时间戳 */
+    fn get_atime(&self) -> TimeSpec {
+        self.inner.read().inode_on_disk.get_atime()
+    }
+    fn set_atime(&self, atime: TimeSpec) {
+        self.inner.write().inode_on_disk.set_atime(atime);
+    }
+    fn get_mtime(&self) -> TimeSpec {
+        self.inner.read().inode_on_disk.get_mtime()
+    }
+    fn set_mtime(&self, mtime: TimeSpec) {
+        self.inner.write().inode_on_disk.set_mtime(mtime);
+    }
+    fn get_ctime(&self) -> TimeSpec {
+        self.inner.read().inode_on_disk.get_ctime()
+    }
+    fn set_ctime(&self, ctime: TimeSpec) {
+        self.inner.write().inode_on_disk.set_ctime(ctime);
+    }
+}
+
+/// 匿名管道不占用磁盘inode, 其元数据仅存在于内核内存中
 pub struct Pipe {
     readable: bool,
     writable: bool,
@@ -34,7 +112,7 @@ impl Pipe {
     }
 }
 
-const RING_DEFAULT_BUFFER_SIZE: usize = 4096;
+pub const RING_DEFAULT_BUFFER_SIZE: usize = 4096;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 enum RingBufferStatus {
@@ -172,7 +250,6 @@ impl FileOp for Pipe {
         let mut read_size = 0usize;
         let mut buffer;
         loop {
-            log::info!("[Pipe::read] enter");
             buffer = self.buffer.lock();
             core::hint::black_box(&buffer);
             if buffer.status == RingBufferStatus::EMPTY {
@@ -183,21 +260,20 @@ impl FileOp for Pipe {
                 // wait for data, 注意释放锁
                 buffer.set_waiter(current_task().tid());
                 drop(buffer);
-                log::error!("[Pipe::read] set waiter: {}", current_task().tid());
-                // yield_current_task();
+                // log::error!("[Pipe::read] set waiter: {}", current_task().tid());
                 wait();
                 continue;
             }
             while read_size < buf.len() {
                 let read_bytes = buffer.buffer_read(&mut buf[read_size..]);
                 if buffer.get_waiter() != 0 {
-                    log::info!("[Pipe::read] wake up waiter");
+                    // log::info!("[Pipe::read] wake up waiter");
                     // wake up writer
                     let waiter = buffer.get_waiter();
                     buffer.set_waiter(0);
                     wakeup(waiter);
                 }
-                log::error!("[Pipe::read] read_bytes: {}", read_bytes);
+                // log::error!("[Pipe::read] read_bytes: {}", read_bytes);
                 read_size += read_bytes;
                 if buffer.head == buffer.tail {
                     buffer.status = RingBufferStatus::EMPTY;
@@ -213,7 +289,6 @@ impl FileOp for Pipe {
         let mut write_size = 0;
         let mut buffer;
         loop {
-            log::info!("[Pipe::write]");
             buffer = self.buffer.lock();
             core::hint::black_box(&buffer);
             if buffer.status == RingBufferStatus::FULL {
@@ -230,13 +305,13 @@ impl FileOp for Pipe {
             while write_size < buf.len() {
                 let write_bytes = buffer.buffer_write(&buf[write_size..]);
                 if buffer.get_waiter() != 0 {
-                    log::info!("[Pipe::write] wake up waiter");
+                    // log::info!("[Pipe::write] wake up waiter");
                     // wake up reader
                     let waiter = buffer.get_waiter();
                     buffer.set_waiter(0);
                     wakeup(waiter);
                 }
-                log::error!("[Pipe::write] write_bytes: {}", write_bytes);
+                // log::error!("[Pipe::write] write_bytes: {}", write_bytes);
                 write_size += write_bytes;
                 if buffer.head == buffer.tail {
                     buffer.status = RingBufferStatus::FULL;
@@ -278,6 +353,21 @@ impl FileOp for Pipe {
             self.buffer.lock().all_write_ends_closed()
         } else {
             self.buffer.lock().all_read_ends_closed()
+        }
+    }
+    fn get_inode(&self) -> Arc<dyn InodeOp> {
+        PIPEINODE.clone()
+    }
+}
+
+impl Drop for Pipe {
+    fn drop(&mut self) {
+        log::trace!("[Pipe::drop]");
+        let buffer = self.buffer.lock();
+        let waiter = buffer.get_waiter();
+        if waiter != 0 {
+            // wake up reader or writer
+            wakeup(waiter);
         }
     }
 }

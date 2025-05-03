@@ -7,7 +7,7 @@ use alloc::{string::String, vec};
 use alloc::string::ToString;
 use xmas_elf::header::parse_header;
 
-use crate::arch::timer::{get_time_ms, TimeSpec};
+use crate::arch::timer::get_time_ms;
 use crate::fs::fdtable::FdFlags;
 use crate::fs::file::OpenFlags;
 use crate::fs::kstat::Statx;
@@ -18,6 +18,7 @@ use crate::fs::uapi::{DevT, PollEvents, PollFd, RenameFlags, StatFs, UtimenatFla
 use crate::signal::{Sig, SigSet};
 use crate::syscall::errno::Errno;
 use crate::task::yield_current_task;
+use crate::timer::TimeSpec;
 use crate::{
     ext4::{self, inode::S_IFDIR},
     fs::{
@@ -176,9 +177,14 @@ pub fn sys_readv(fd: usize, iov_ptr: *const IoVec, iovcnt: usize) -> SyscallRet 
 pub fn sys_writev(fd: usize, iov_ptr: *const IoVec, iovcnt: usize) -> SyscallRet {
     // log::trace!("[sys_writev]");
     // if fd >= 3 {
-    log::info!("sys_writev: fd: {}, iovcnt: {}", fd, iovcnt);
     // }
     let task = current_task();
+    log::info!(
+        "sys_writev: tid: {}, fd: {}, iovcnt: {}",
+        task.tid(),
+        fd,
+        iovcnt
+    );
     let file = task.fd_table().get_file(fd);
     if file.is_none() {
         return Err(Errno::EBADF);
@@ -470,6 +476,7 @@ pub fn sys_getcwd(buf: *mut u8, buf_size: usize) -> SyscallRet {
 
 // 仅仅是根据初赛的文档要求, 后续需要根据man7修改
 pub fn sys_fstat(dirfd: i32, statbuf: *mut Stat) -> SyscallRet {
+    log::info!("[sys_fstat] dirfd: {}, statbuf: {:?}", dirfd, statbuf);
     if let Some(file) = current_task().fd_table().get_file(dirfd as usize) {
         let inode = file.get_inode();
         let stat = Stat::from(inode.getattr());

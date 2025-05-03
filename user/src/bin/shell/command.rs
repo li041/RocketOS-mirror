@@ -28,8 +28,32 @@ pub struct Command {
     append: bool,
 }
 
+// pub fn parse_pipeline(line: &str) -> Vec<Command> {
+//     line.split('|').map(str::trim).map(Command::from).collect()
+// }
+/// 忽略引号中的|
 pub fn parse_pipeline(line: &str) -> Vec<Command> {
-    line.split('|').map(str::trim).map(Command::from).collect()
+    let mut commands = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+
+    for c in line.chars() {
+        match c {
+            '|' if !in_quotes => {
+                commands.push(Command::from(current.trim()));
+                current.clear();
+            }
+            '"' => {
+                in_quotes = !in_quotes;
+                current.push(c);
+            }
+            _ => current.push(c),
+        }
+    }
+    if !current.is_empty() {
+        commands.push(Command::from(current.trim()));
+    }
+    commands
 }
 
 /// 辅助函数：从字符迭代器中读取下一个 token（跳过空格）

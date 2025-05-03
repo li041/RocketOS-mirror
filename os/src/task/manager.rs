@@ -1,12 +1,17 @@
+use core::clone;
+
 use crate::{
-    arch::timer::{self, TimeSpec},
+    signal::{SiField, Sig, SigInfo},
     task::{add_task, current_task, schedule, scheduler::dump_scheduler},
+    timer::{self, ITimerVal, TimeSpec},
 };
+use alloc::vec;
 use alloc::{
+    boxed::Box,
     collections::btree_map::BTreeMap,
     string::{String, ToString},
     sync::{Arc, Weak},
-    vec,
+    vec::Vec,
 };
 use hashbrown::HashMap;
 use lazy_static::lazy_static;
@@ -89,9 +94,9 @@ pub fn wait() {
     let task = current_task();
     task.set_uninterruptable();
     WAIT_MANAGER.add(task);
-    log::warn!("[wait] task{} block", current_task().tid());
+    // log::warn!("[wait] task{} block", current_task().tid());
     schedule(); // 调度其他任务
-    log::warn!("[wait] task{} unblock", current_task().tid());
+                // log::warn!("[wait] task{} unblock", current_task().tid());
 }
 
 // 条件阻塞，只有当满足条件时才会被唤醒
@@ -117,22 +122,23 @@ where
 // 时间阻塞，当达到指定时间后自动唤醒
 // 返回值：如果为true代表任务超时唤醒，为false代表任务被其他事务唤醒
 pub fn wait_timeout(dur: timer::TimeSpec) -> bool {
-    let deadline = TimeSpec::new_machine_time() + dur;
     let task = current_task();
+    let tid = task.tid();
     task.set_uninterruptable();
-    set_alarm(dur, task.tid());
+    // 超时后唤醒任务
+    let deadline = set_wait_alarm(dur, tid);
     WAIT_MANAGER.add(task);
-    log::warn!("[wait] task{} block(time)", current_task().tid());
+    log::warn!("[wait] task{} block(time)", tid);
     schedule();
     log::warn!("[wait] task{} unblock(time)", current_task().tid());
     let timeout = TimeSpec::new_machine_time() >= deadline;
     timeout
 }
 
-// 唤醒某一特定任务
+/// 唤醒某一特定任务
+/// wait_timeout的回调函数
 pub fn wakeup(tid: Tid) {
     if let Ok(task) = WAIT_MANAGER.remove(tid) {
-        log::warn!("[wakeup] task{} unblock", task.tid());
         task.set_ready();
         add_task(task);
     }
@@ -272,71 +278,183 @@ impl WaitManager {
 }
 
 /************************************** 时间管理器 **************************************/
+pub type Callback = Box<dyn Fn() + Send>;
+/// -1是内核自用定时器
+pub type ClockId = i32;
+pub const ITIMER_REAL: ClockId = 0;
+pub const ITIMER_VIRTUAL: ClockId = 1;
+pub const ITIMER_PROF: ClockId = 2;
 
-// 为任务设置超时阻塞时限
-pub fn set_alarm(dur: timer::TimeSpec, tid: Tid) {
-    TIME_MANAGER.set_alarm(dur, tid);
+pub type AlarmEntry = (Tid, ClockId, Callback);
+
+/// 为任务设置超时阻塞时限
+pub fn set_wait_alarm(dur: timer::TimeSpec, tid: Tid) -> TimeSpec {
+    TIME_MANAGER.add_timer(dur, tid, -1, move || wakeup(tid))
 }
 
-// 取消任务的阻塞时限
-pub fn cancel_alarm(tid: Tid) {
-    TIME_MANAGER.cancel_alarm(tid);
-}
-
-// Todo: 也许后面可以改成时间轮算法
-// 唤醒所有超时的任务
-pub fn wakeup_timeout() {
-    // 没有时间等待需求
-    if TIME_MANAGER.len() == 0 {
-        return;
-    }
-    for task in TIME_MANAGER.split_off() {
-        wakeup(task);
-    }
+/// 取消任务的阻塞时限
+pub fn cancel_wait_alarm(tid: Tid) {
+    TIME_MANAGER.remove_timer(tid, -1);
 }
 
 pub struct TimeManager {
-    alarm: Mutex<BTreeMap<TimeSpec, Tid>>,
+    alarms: Mutex<BTreeMap<TimeSpec, Vec<AlarmEntry>>>,
 }
 
 impl TimeManager {
     fn new() -> Self {
         Self {
-            alarm: Mutex::new(BTreeMap::new()),
+            alarms: Mutex::new(BTreeMap::new()),
         }
     }
 
     // 获取当前闹钟数量
     fn len(&self) -> usize {
-        self.alarm.lock().len()
+        // self.alarms.lock().len()
+        self.alarms.lock().values().map(|v| v.len()).sum()
     }
+    /// 更新某个任务指定 clock_id 的定时器为新的时间
+    pub fn update_timer<F>(
+        &self,
+        tid: Tid,
+        clock_id: ClockId,
+        dur: TimeSpec,
+        callback: F,
+    ) -> Option<TimeSpec>
+    where
+        F: Fn() + Send + 'static,
+    {
+        let mut alarms = self.alarms.lock();
 
+        // 查找旧的 timer 项
+        let mut old_key: Option<TimeSpec> = None;
+
+        for (time, entries) in alarms.iter_mut() {
+            if let Some(pos) = entries
+                .iter()
+                .position(|(t, c, _)| *t == tid && *c == clock_id)
+            {
+                entries.remove(pos);
+                old_key = Some(*time);
+                break;
+            }
+        }
+
+        // 清理空 vec（如果有）
+        if let Some(old_time) = old_key {
+            if let Some(vec) = alarms.get(&old_time) {
+                if vec.is_empty() {
+                    alarms.remove(&old_time);
+                }
+            }
+        }
+
+        // 插入新的 timer
+        let new_deadline = TimeSpec::new_machine_time() + dur;
+        alarms
+            .entry(new_deadline)
+            .or_insert(vec![])
+            .push((tid, clock_id, Box::new(callback)));
+
+        Some(new_deadline)
+    }
     // 设置闹钟
-    fn set_alarm(&self, dur: timer::TimeSpec, tid: Tid) {
-        let mut alarm = self.alarm.lock();
+    // dur是相对时间
+    fn add_timer<F>(
+        &self,
+        dur: timer::TimeSpec,
+        tid: Tid,
+        clock_id: ClockId,
+        callback: F,
+    ) -> TimeSpec
+    where
+        F: Fn() + Send + 'static,
+    {
+        let mut alarm = self.alarms.lock();
         let deadline = TimeSpec::new_machine_time() + dur;
-        alarm.insert(deadline, tid);
+        alarm
+            .entry(deadline)
+            .or_insert(vec![])
+            .push((tid, clock_id, Box::new(callback)));
+        deadline
     }
 
-    // 取消闹钟
-    fn cancel_alarm(&self, tid: Tid) {
-        let mut alarm = self.alarm.lock();
-        alarm.retain(|_, &mut v| v != tid);
+    // 取消指定tid的所有闹钟
+    fn remove_timer(&self, tid: Tid, clock_id: ClockId) {
+        let mut alarm = self.alarms.lock();
+        alarm.retain(|_, vec| {
+            vec.retain(|(t, c, _)| *t != tid || *c != clock_id);
+            !vec.is_empty()
+        });
     }
 
-    // 取出超时的任务
+    // 执行超时回调 返回触发的tid列表
     fn split_off(&self) -> vec::Vec<Tid> {
         let now = TimeSpec::new_machine_time();
-        let mut ret = vec![];
+        let mut tids = vec![];
         // 第一步：先锁一次并记录所有要移除的键
-        let mut guard = self.alarm.lock();
+        let mut guard = self.alarms.lock();
         let keys_to_remove: vec::Vec<_> = guard.range(..&now).map(|(k, _)| k.clone()).collect();
         // 第二步：再移除这些键，收集对应的值
         for key in keys_to_remove {
-            if let Some(v) = guard.remove(&key) {
-                ret.push(v);
+            if let Some(entry) = guard.remove(&key) {
+                for (tid, _clock_id, callback) in entry {
+                    tids.push(tid);
+                    // 执行回调
+                    callback();
+                }
             }
         }
-        ret
+        if tids.len() > 0 {
+            log::warn!("[wakeup_timeout] task {:?} timeout", tids);
+        }
+        tids
+    }
+}
+
+pub fn handle_timeout() -> Vec<Tid> {
+    TIME_MANAGER.split_off()
+}
+
+pub fn remove_timer(tid: Tid, clock_id: ClockId) {
+    TIME_MANAGER.remove_timer(tid, clock_id);
+}
+
+pub fn add_real_timer(tid: Tid, dur: TimeSpec) {
+    TIME_MANAGER.add_timer(dur, tid, ITIMER_REAL, move || {
+        // 触发定时器
+        real_timer_callback(tid);
+    });
+}
+
+pub fn update_real_timer(tid: Tid, dur: TimeSpec) {
+    TIME_MANAGER.update_timer(tid, ITIMER_REAL, dur, move || {
+        // 触发定时器
+        real_timer_callback(tid);
+    });
+}
+
+/// setitimer的回调函数
+pub fn real_timer_callback(tid: Tid) {
+    if let Some(task) = get_task(tid) {
+        task.receive_siginfo(
+            SigInfo {
+                signo: Sig::SIGALRM.raw(),
+                code: SigInfo::TIMER,
+                fields: SiField::None,
+            },
+            true,
+        );
+        task.op_itimerval(|itimerval| {
+            let itimerval = &itimerval[0];
+            if itimerval.it_interval.is_zero() {
+                // 不再设置定时器
+                return;
+            } else {
+                // 重新设置定时器
+                let dur = itimerval.it_interval;
+                add_real_timer(tid, dur);
+            }
+        })
     }
 }

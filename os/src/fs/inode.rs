@@ -1,5 +1,5 @@
 //! new
-use crate::arch::timer::TimeSpec;
+use crate::timer::TimeSpec;
 use crate::ext4::inode::Ext4Inode;
 use crate::mm::Page;
 use crate::mutex::SpinNoIrqLock;
