@@ -13,10 +13,11 @@ use core::time::Duration;
 
 use super::{flags::*, queue::FUTEXQUEUES};
 use crate::{
-    arch::{config::PAGE_SIZE_BITS, mm::copy_from_user, timer::TimeSpec},
+    arch::{config::PAGE_SIZE_BITS, mm::copy_from_user},
     futex::queue::futex_hash,
     syscall::errno::{Errno, SyscallRet},
-    task::{current_task, dump_scheduler, yield_current_task, Task},
+    task::{current_task, dump_scheduler, wait, wakeup, yield_current_task, Task},
+    timer::TimeSpec,
 };
 use alloc::{sync::Arc, sync::Weak};
 
@@ -170,14 +171,12 @@ pub fn futex_wait(
         drop(hash_bucket);
     }
     loop {
-        log::trace!("futex_wait loop");
         if let Some(deadline) = deadline {
             let now = TimeSpec::new_machine_time();
             is_timeout = deadline < now;
         }
         if deadline.is_none() || !is_timeout {
-            // Todo: 阻塞
-            yield_current_task();
+            wait();
         }
 
         // If we were woken (and unqueued), we succeeded, whatever.
@@ -225,7 +224,7 @@ pub fn futex_wake(uaddr: usize, flags: i32, nr_waken: u32) -> SyscallRet {
         } else {
             hash_bucket.retain(|futex_q| {
                 if ret < nr_waken && futex_q.key == key {
-                    //let wake_up = WAIT_FOR_FUTEX.notify_task(&futex_q.task);
+                    wakeup(futex_q.task.upgrade().unwrap().tid());
                     log::info!("wake up task {:?}", futex_q.task.upgrade().unwrap().tid());
                     ret += 1;
                     return false;

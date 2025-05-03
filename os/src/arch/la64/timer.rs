@@ -2,76 +2,15 @@ use core::{
     arch::asm,
     cmp::Ordering,
     ops::{Add, Sub},
-    ptr::read_volatile,
+    ptr::{read_volatile, write_volatile},
 };
 
-use crate::utils::{seconds_to_beijing_datetime, DateTime};
+use crate::{
+    timer::{StatxTimeStamp, TimeSpec, MSEC_PER_SEC},
+    utils::{seconds_to_beijing_datetime, DateTime},
+};
 
 use super::config::{self, CLOCK_FREQ};
-
-pub const TICKS_PER_SEC: usize = 100;
-const MSEC_PER_SEC: usize = 1000;
-
-#[derive(Clone, Copy, Debug, Default)]
-#[repr(C)]
-pub struct TimeSpec {
-    // 秒数
-    pub sec: usize,
-    // 毫秒数中剩余的部分, 使用纳秒表示
-    pub nsec: usize,
-}
-
-impl PartialEq for TimeSpec {
-    fn eq(&self, other: &Self) -> bool {
-        self.sec == other.sec && self.nsec == other.nsec
-    }
-}
-impl Eq for TimeSpec {}
-
-impl PartialOrd for TimeSpec {
-    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-        if self.sec == other.sec {
-            Some(self.nsec.cmp(&other.nsec))
-        } else {
-            Some(self.sec.cmp(&other.sec))
-        }
-    }
-}
-
-impl Ord for TimeSpec {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match self.sec.cmp(&other.sec) {
-            Ordering::Equal => self.nsec.cmp(&other.nsec),
-            other_order => other_order,
-        }
-    }
-}
-
-impl Add for TimeSpec {
-    type Output = Self;
-    fn add(self, rhs: Self) -> Self::Output {
-        let mut sec = self.sec + rhs.sec;
-        let mut nsec = self.nsec + rhs.nsec;
-        if nsec >= 1_000_000_000 {
-            sec += 1;
-            nsec -= 1_000_000_000;
-        }
-        Self { sec, nsec }
-    }
-}
-
-impl Sub for TimeSpec {
-    type Output = Self;
-    fn sub(self, rhs: Self) -> Self::Output {
-        let mut sec = self.sec - rhs.sec;
-        let mut nsec = self.nsec - rhs.nsec;
-        if nsec < 0 {
-            sec -= 1;
-            nsec += 1_000_000_000;
-        }
-        Self { sec, nsec }
-    }
-}
 
 impl TimeSpec {
     pub fn new_machine_time() -> Self {
@@ -84,29 +23,22 @@ impl TimeSpec {
         }
     }
     pub fn new_wall_time() -> Self {
-        let base = LS7A_RTC_BASE as *mut u32;
-        let rtc_ticks = unsafe { read_volatile(base.byte_add(SYS_RTCREAD0) as *const u32) as u64 };
-        let sec = rtc_ticks / LS7A_RTC_FREQ; // 转换为秒
-        let nsec = (rtc_ticks % LS7A_RTC_FREQ) * 1000000000 / LS7A_RTC_FREQ; // 转换为纳秒
-        TimeSpec {
-            sec: sec as usize,
-            nsec: nsec as usize,
-        }
+        // let base = LS7A_RTC_BASE as *mut u32;
+        // let rtc_ticks = unsafe { read_volatile(base.byte_add(SYS_RTCREAD0) as *const u32) as u64 };
+        // let sec = rtc_ticks / LS7A_RTC_FREQ; // 转换为秒
+        // let nsec = (rtc_ticks % LS7A_RTC_FREQ) * 1000000000 / LS7A_RTC_FREQ; // 转换为纳秒
+        // let date_time = unsafe { read_rtc() };
+        let mut time_spec = TimeSpec::default();
+        let current_time = get_time_ms();
+        time_spec.sec = current_time / 1000;
+        time_spec.nsec = (current_time % 1000) * 1000000;
+        time_spec
     }
     pub fn from_nanos(nanos: usize) -> Self {
         let sec = nanos / 1_000_000_000;
         let nsec = nanos % 1_000_000_000;
         TimeSpec { sec, nsec }
     }
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-#[repr(C)]
-pub struct StatxTimeStamp {
-    /// 自UNIX time以来的秒数
-    pub sec: i64,
-    /// 纳秒数, 表示秒数后剩余的部分
-    pub nsec: u32,
 }
 
 impl StatxTimeStamp {
@@ -116,15 +48,6 @@ impl StatxTimeStamp {
         Self {
             sec: (current_time / 1000) as i64,
             nsec: ((current_time % 1000) * 1000000) as u32,
-        }
-    }
-}
-
-impl From<TimeSpec> for StatxTimeStamp {
-    fn from(ts: TimeSpec) -> Self {
-        Self {
-            sec: ts.sec as i64,
-            nsec: ts.nsec as u32,
         }
     }
 }
@@ -178,9 +101,18 @@ pub fn get_timer_freq_first_time() {
 pub const LS7A_RTC_BASE: usize = 0x100d0100; // RTC基地址
 
 // LS7A RTC 寄存器偏移量
+const SYS_RTCSEC: usize = 0x04; // 秒寄存器
+const SYS_RTCMIN: usize = 0x08; // 分钟寄存器
+const SYS_RTCHOUR: usize = 0x0C; // 小时寄存器
+const SYS_RTCDAY: usize = 0x10; // 日寄存器
+const SYS_RTCMON: usize = 0x14; // 月寄存器
+const SYS_RTCYEAR: usize = 0x18; // 年寄存器
+const SYS_TOYWRITE0: usize = 0x20; // TOY 写寄存器 0
+const SYS_TOYWRITE1: usize = 0x24; // TOY 写寄存器 1
 const SYS_TOYREAD0: usize = 0x2C;
 const SYS_TOYREAD1: usize = 0x30;
 const SYS_RTCCTRL: usize = 0x40;
+const SYS_RTCWRITE0: usize = 0x60;
 const SYS_RTCREAD0: usize = 0x68;
 
 // TOY 时间字段掩码和移位
@@ -271,30 +203,88 @@ pub unsafe fn read_rtc() -> DateTime {
 /// # Returns
 /// * `Ok(())` - 成功启用 TOY 和/或 RTC
 /// * `Err(&'static str)` - 启用失败及原因
-pub unsafe fn ls7a_rtc_enable(base: *mut u32) -> Result<(), &'static str> {
-    // 读取当前控制寄存器值
+// pub unsafe fn ls7a_rtc_enable(base: *mut u32) -> Result<(), &'static str> {
+//     // 读取当前控制寄存器值
+//     let mut ctrl = read_volatile(base.byte_add(SYS_RTCCTRL) as *const u32);
+
+//     // 设置 TOYEN=1, RTCEN=1, EO=1
+//     // ctrl |= RTC_CTRL_TOYEN_MASK | RTC_CTRL_RTCEN_MASK | RTC_CTRL_EO_MASK;
+//     ctrl |= RTC_CTRL_RTCEN_MASK | RTC_CTRL_EO_MASK;
+//     core::ptr::write_volatile(base.byte_add(SYS_RTCCTRL) as *mut u32, ctrl);
+
+//     // 再次读取验证是否启用成功
+//     ctrl = read_volatile(base.byte_add(SYS_RTCCTRL) as *const u32);
+//     let toyen = (ctrl & RTC_CTRL_TOYEN_MASK) >> RTC_CTRL_TOYEN_SHIFT;
+//     let rtcen = (ctrl & RTC_CTRL_RTCEN_MASK) >> RTC_CTRL_RTCEN_SHIFT;
+//     let eo = (ctrl & RTC_CTRL_EO_MASK) >> RTC_CTRL_EO_SHIFT;
+
+//     // 检查是否至少有一个时间源可用
+//     if eo == 0 {
+//         return Err("Failed to enable external oscillator (EO)");
+//     }
+//     if toyen == 0 && rtcen == 0 {
+//         return Err("Failed to enable both TOY and RTC");
+//     }
+
+//     // 成功启用
+//     Ok(())
+// }
+
+// LS7A RTC 寄存器偏移量 (需要根据实际硬件手册调整)
+
+// 控制寄存器位定义
+pub const RTC_CTRL_WREN_MASK: u32 = 1 << 3; // 写使能位
+pub const RTC_CTRL_32K_SEL_MASK: u32 = 1 << 4; // 32K 时钟选择位
+
+// 位偏移量 (用于移位操作)
+pub const RTC_CTRL_WREN_SHIFT: u32 = 3;
+
+/// 初始化 LS7A RTC 和 TOY 时间
+///
+/// # Arguments
+/// * `base` - RTC MMIO 基地址
+/// * `datetime` - 时间结构体，包含年月日时分秒
+pub unsafe fn ls7a_rtc_init(base: *mut u32, datetime: DateTime) -> Result<(), &'static str> {
+    // 打开写使能（清除 WREN）
     let mut ctrl = read_volatile(base.byte_add(SYS_RTCCTRL) as *const u32);
+    ctrl |= RTC_CTRL_WREN_MASK;
+    write_volatile(base.byte_add(SYS_RTCCTRL) as *mut u32, ctrl);
 
-    // 设置 TOYEN=1, RTCEN=1, EO=1
-    // ctrl |= RTC_CTRL_TOYEN_MASK | RTC_CTRL_RTCEN_MASK | RTC_CTRL_EO_MASK;
-    ctrl |= RTC_CTRL_RTCEN_MASK | RTC_CTRL_EO_MASK;
-    core::ptr::write_volatile(base.byte_add(SYS_RTCCTRL) as *mut u32, ctrl);
+    // 设置 RTC 时间（写寄存器）
+    write_volatile(
+        base.byte_add(SYS_RTCSEC) as *mut u32,
+        datetime.second as u32,
+    );
+    write_volatile(
+        base.byte_add(SYS_RTCMIN) as *mut u32,
+        datetime.minute as u32,
+    );
+    write_volatile(base.byte_add(SYS_RTCHOUR) as *mut u32, datetime.hour as u32);
+    write_volatile(base.byte_add(SYS_RTCDAY) as *mut u32, datetime.day as u32);
+    write_volatile(base.byte_add(SYS_RTCMON) as *mut u32, datetime.month as u32);
+    write_volatile(base.byte_add(SYS_RTCYEAR) as *mut u32, datetime.year);
 
-    // 再次读取验证是否启用成功
-    ctrl = read_volatile(base.byte_add(SYS_RTCCTRL) as *const u32);
-    let toyen = (ctrl & RTC_CTRL_TOYEN_MASK) >> RTC_CTRL_TOYEN_SHIFT;
-    let rtcen = (ctrl & RTC_CTRL_RTCEN_MASK) >> RTC_CTRL_RTCEN_SHIFT;
-    let eo = (ctrl & RTC_CTRL_EO_MASK) >> RTC_CTRL_EO_SHIFT;
+    // 构造 TOYREAD0 和 TOYREAD1 的值
+    let toy0 = ((datetime.month as u32) << TOY_MON_SHIFT)
+        | ((datetime.day as u32) << TOY_DAY_SHIFT)
+        | ((datetime.hour as u32) << TOY_HOUR_SHIFT)
+        | ((datetime.minute as u32) << TOY_MIN_SHIFT)
+        | ((datetime.second as u32) << TOY_SEC_SHIFT);
 
-    // 检查是否至少有一个时间源可用
-    if eo == 0 {
-        return Err("Failed to enable external oscillator (EO)");
-    }
-    if toyen == 0 && rtcen == 0 {
-        return Err("Failed to enable both TOY and RTC");
-    }
+    let toy1 = datetime.year;
 
-    // 成功启用
+    // 写入 TOY 寄存器
+    write_volatile(base.byte_add(SYS_TOYWRITE0) as *mut u32, toy0);
+    write_volatile(base.byte_add(SYS_TOYWRITE1) as *mut u32, toy1);
+
+    // 启用 RTCEN 和 TOYEN 和 EO
+    ctrl |= RTC_CTRL_EO_MASK | RTC_CTRL_RTCEN_MASK | RTC_CTRL_TOYEN_MASK;
+    write_volatile(base.byte_add(SYS_RTCCTRL) as *mut u32, ctrl);
+
+    // 清除写使能，锁定设置
+    ctrl &= !RTC_CTRL_WREN_MASK;
+    write_volatile(base.byte_add(SYS_RTCCTRL) as *mut u32, ctrl);
+
     Ok(())
 }
 
@@ -302,7 +292,15 @@ pub fn time_test() {
     let time_befort = unsafe { read_rtc() };
     println!("time before: {:?}", time_befort);
     unsafe {
-        ls7a_rtc_enable(LS7A_RTC_BASE as *mut u32).expect("Failed to enable LS7A RTC");
+        let datetime = DateTime {
+            year: 25,
+            month: 9,
+            day: 6,
+            hour: 6,
+            minute: 6,
+            second: 6,
+        };
+        // ls7a_rtc_init(LS7A_RTC_BASE as *mut u32, datetime).expect("Failed to set LS7A RTC");
     }
     let time_after = unsafe { read_rtc() };
     println!("time after: {:?}", time_after);

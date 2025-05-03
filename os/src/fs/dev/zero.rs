@@ -2,7 +2,7 @@ use alloc::sync::Arc;
 use spin::{Once, RwLock};
 
 use crate::{
-    arch::{mm::copy_to_user, timer::TimeSpec},
+    arch::mm::copy_to_user,
     ext4::inode::{Ext4InodeDisk, S_IFCHR},
     fs::{
         file::{FileOp, OpenFlags},
@@ -12,6 +12,7 @@ use crate::{
         uapi::DevT,
     },
     syscall::errno::{Errno, SyscallRet},
+    timer::TimeSpec,
     utils::DateTime,
 };
 pub static ZERO: Once<Arc<ZeroFile>> = Once::new();

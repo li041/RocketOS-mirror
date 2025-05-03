@@ -34,9 +34,11 @@ use crate::{
     task::{
         self, add_task,
         context::write_task_cx,
-        manager::{cancel_alarm, delete_wait, register_task},
+        dump_scheduler, dump_task_queue,
+        manager::{cancel_wait_alarm, delete_wait, register_task},
         wakeup, INITPROC,
     },
+    timer::ITimerVal,
 };
 use alloc::{
     collections::btree_map::BTreeMap,
@@ -80,7 +82,7 @@ pub struct Task {
     // 内存管理
     // 包括System V shm管理
     memory_set: Arc<RwLock<MemorySet>>, // 地址空间
-    // futex管理
+    // futex管理, 线程局部
     robust_list_head: AtomicUsize, // struct robust_list_head* head
 
     // 文件系统
@@ -92,6 +94,7 @@ pub struct Task {
     sig_pending: SpinNoIrqLock<SigPending>,      // 待处理信号
     sig_handler: Arc<SpinNoIrqLock<SigHandler>>, // 信号处理函数
     sig_stack: SpinNoIrqLock<Option<SignalStack>>, // 额外信号栈
+    itimerval: Arc<RwLock<[ITimerVal; 3]>>,      // 定时器
                                                  // Todo: 进程组
                                                  // ToDo：运行时间(调度相关)
                                                  // ToDo: 多核启动
@@ -133,6 +136,7 @@ impl Task {
             sig_pending: SpinNoIrqLock::new(SigPending::new()),
             sig_handler: Arc::new(SpinNoIrqLock::new(SigHandler::new())),
             sig_stack: SpinNoIrqLock::new(None),
+            itimerval: Arc::new(RwLock::new([ITimerVal::default(); 3])),
         }
     }
 
@@ -171,6 +175,7 @@ impl Task {
             sig_pending: SpinNoIrqLock::new(SigPending::new()),
             sig_handler: Arc::new(SpinNoIrqLock::new(SigHandler::new())),
             sig_stack: SpinNoIrqLock::new(None),
+            itimerval: Arc::new(RwLock::new([ITimerVal::default(); 3])),
         });
         // 向线程组中添加该进程
         task.thread_group
@@ -205,6 +210,7 @@ impl Task {
         let parent;
         let children;
         let thread_group;
+        let itimerval;
         let memory_set;
         let fd_table;
         let root;
@@ -242,6 +248,7 @@ impl Task {
             parent = self.parent.clone();
             children = self.children.clone();
             thread_group = self.thread_group.clone();
+            itimerval = self.itimerval.clone();
         }
         // 创建进程
         else {
@@ -250,6 +257,7 @@ impl Task {
             parent = Arc::new(SpinNoIrqLock::new(Some(Arc::downgrade(self))));
             children = Arc::new(SpinNoIrqLock::new(BTreeMap::new()));
             thread_group = Arc::new(SpinNoIrqLock::new(ThreadGroup::new()));
+            itimerval = Arc::new(RwLock::new([ITimerVal::default(); 3]));
         }
 
         if flags.contains(CloneFlags::CLONE_VM) {
@@ -288,6 +296,7 @@ impl Task {
         sig_pending = SpinNoIrqLock::new(SigPending::new());
         sig_stack = SpinNoIrqLock::new(None);
         let tid = RwLock::new(tid);
+        let robust_list_head = AtomicUsize::new(0);
         // 创建新任务
         let task = Arc::new(Self {
             kstack,
@@ -300,13 +309,14 @@ impl Task {
             exit_code,
             thread_group,
             memory_set,
-            robust_list_head: AtomicUsize::new(0),
+            robust_list_head,
             fd_table,
             root,
             pwd,
             sig_handler,
             sig_pending,
             sig_stack,
+            itimerval,
         });
         log::trace!("[kernel_clone] child task{} created", task.tid());
 
@@ -421,10 +431,10 @@ impl Task {
             auxv_base,
         );
         // 设置tls
-        // if let Some(tls_ptr) = tls_ptr {
-        // log::error!("[kernel_execve] task{} tls_ptr: {:x}", self.tid(), tls_ptr);
-        // trap_cx.set_tp(tls_ptr);
-        // }
+        if let Some(tls_ptr) = tls_ptr {
+            log::error!("[kernel_execve] task{} tls_ptr: {:x}", self.tid(), tls_ptr);
+            trap_cx.set_tp(tls_ptr);
+        }
         save_trap_context(&self, trap_cx);
         log::trace!("[kernel_execve] task{} trap_cx updated", self.tid());
         // 重建线程组
@@ -688,6 +698,12 @@ impl Task {
     pub fn op_sig_handler_mut<T>(&self, f: impl FnOnce(&mut SigHandler) -> T) -> T {
         f(&mut self.sig_handler.lock())
     }
+    pub fn op_itimerval<T>(&self, f: impl FnOnce(&[ITimerVal; 3]) -> T) -> T {
+        f(&self.itimerval.read())
+    }
+    pub fn op_itimerval_mut<T>(&self, f: impl FnOnce(&mut [ITimerVal; 3]) -> T) -> T {
+        f(&mut self.itimerval.write())
+    }
     /******************************** 任务状态判断 **************************************/
     pub fn is_ready(&self) -> bool {
         self.status() == TaskStatus::Ready
@@ -761,7 +777,7 @@ pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
     // 从调度队列中移除（包括阻塞队列）
     delete_wait(task.tid());
     remove_task(task.tid());
-    cancel_alarm(task.tid());
+    cancel_wait_alarm(task.tid());
 
     // 由于线程不通过waitpid，因此将线程直接从父进程中移除
     if !task.is_process() {

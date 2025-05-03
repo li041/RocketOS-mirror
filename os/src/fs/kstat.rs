@@ -1,4 +1,5 @@
-use crate::arch::timer::{StatxTimeStamp, TimeSpec};
+use crate::timer::StatxTimeStamp;
+use crate::timer::TimeSpec;
 
 use bitflags::bitflags;
 

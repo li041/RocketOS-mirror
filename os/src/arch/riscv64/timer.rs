@@ -7,74 +7,11 @@ use core::{
 use crate::{
     arch::{boards::qemu::CLOCK_FREQ, sbi::set_timer},
     mm::{VirtAddr, KERNEL_SPACE},
+    timer::{StatxTimeStamp, TimeSpec, MSEC_PER_SEC, TICKS_PER_SEC},
 };
 use riscv::register::time;
 
 use super::config::KERNEL_BASE;
-
-const TICKS_PER_SEC: usize = 100;
-const MSEC_PER_SEC: usize = 1000;
-
-#[derive(Clone, Copy, Debug, Default)]
-#[repr(C)]
-pub struct TimeSpec {
-    // 秒数
-    pub sec: usize,
-    // 毫秒数中剩余的部分, 使用纳秒表示
-    pub nsec: usize,
-}
-
-impl PartialEq for TimeSpec {
-    fn eq(&self, other: &Self) -> bool {
-        self.sec == other.sec && self.nsec == other.nsec
-    }
-}
-impl Eq for TimeSpec {}
-
-impl PartialOrd for TimeSpec {
-    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-        if self.sec == other.sec {
-            Some(self.nsec.cmp(&other.nsec))
-        } else {
-            Some(self.sec.cmp(&other.sec))
-        }
-    }
-}
-
-impl Ord for TimeSpec {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match self.sec.cmp(&other.sec) {
-            Ordering::Equal => self.nsec.cmp(&other.nsec),
-            other_order => other_order,
-        }
-    }
-}
-
-impl Add for TimeSpec {
-    type Output = Self;
-    fn add(self, rhs: Self) -> Self::Output {
-        let mut sec = self.sec + rhs.sec;
-        let mut nsec = self.nsec + rhs.nsec;
-        if nsec >= 1_000_000_000 {
-            sec += 1;
-            nsec -= 1_000_000_000;
-        }
-        Self { sec, nsec }
-    }
-}
-
-impl Sub for TimeSpec {
-    type Output = Self;
-    fn sub(self, rhs: Self) -> Self::Output {
-        let mut sec = self.sec - rhs.sec;
-        let mut nsec = self.nsec - rhs.nsec;
-        if nsec < 0 {
-            sec -= 1;
-            nsec += 1_000_000_000;
-        }
-        Self { sec, nsec }
-    }
-}
 
 impl TimeSpec {
     pub fn new_machine_time() -> Self {
@@ -100,15 +37,6 @@ impl TimeSpec {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-#[repr(C)]
-pub struct StatxTimeStamp {
-    /// 自UNIX time以来的秒数
-    pub sec: i64,
-    /// 纳秒数, 表示秒数后剩余的部分
-    pub nsec: u32,
-}
-
 impl StatxTimeStamp {
     pub fn new() -> Self {
         // new a time spec with machine time
@@ -124,15 +52,6 @@ impl StatxTimeStamp {
         Self {
             sec: (current_time / NANOS_PER_SEC) as i64,
             nsec: (current_time % NANOS_PER_SEC) as u32,
-        }
-    }
-}
-
-impl From<TimeSpec> for StatxTimeStamp {
-    fn from(ts: TimeSpec) -> Self {
-        Self {
-            sec: ts.sec as i64,
-            nsec: ts.nsec as u32,
         }
     }
 }

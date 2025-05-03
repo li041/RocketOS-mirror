@@ -2,7 +2,7 @@ use core::fmt::Debug;
 
 use alloc::{string::String, vec::Vec};
 
-use crate::arch::{config::PAGE_SIZE, timer::TimeSpec};
+use crate::{arch::config::PAGE_SIZE, timer::TimeSpec};
 
 #[cfg(target_arch = "riscv64")]
 /// 由caller保证ptr的合法性
@@ -140,11 +140,53 @@ impl From<&TimeSpec> for DateTime {
     }
 }
 
+impl From<&DateTime> for TimeSpec {
+    fn from(dt: &DateTime) -> Self {
+        let mut seconds = 0;
+        let mut year = dt.year as u64;
+        let mut month = dt.month as u64;
+        let mut day = dt.day as u64;
+
+        // Step 1: 计算天数
+        while year > 1970 {
+            year -= 1;
+            seconds += days_in_year(year);
+        }
+        while month > 1 {
+            month -= 1;
+            seconds += days_in_month(year, month as usize) as u64;
+        }
+        seconds += day - 1;
+
+        // Step 2: 时分秒
+        seconds *= 86400;
+        seconds += (dt.hour as u64) * 3600 + (dt.minute as u64) * 60 + dt.second as u64;
+        TimeSpec {
+            sec: seconds as usize,
+            nsec: 0,
+        }
+    }
+}
+
+#[cfg(target_arch = "riscv64")]
 impl Default for DateTime {
     fn default() -> Self {
         DateTime {
             year: 1970,
             month: 1,
+            day: 1,
+            hour: 0,
+            minute: 0,
+            second: 0,
+        }
+    }
+}
+#[cfg(target_arch = "loongarch64")]
+impl Default for DateTime {
+    fn default() -> Self {
+        DateTime {
+            year: 2025,
+            month: 9,
             day: 1,
             hour: 0,
             minute: 0,

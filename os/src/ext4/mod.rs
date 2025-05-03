@@ -1,5 +1,5 @@
 use crate::{
-    arch::timer::TimeSpec,
+    timer::TimeSpec,
     drivers::block::block_cache::get_block_cache,
     ext4,
     fs::{

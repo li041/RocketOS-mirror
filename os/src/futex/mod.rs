@@ -7,8 +7,9 @@ use flags::*;
 use futex::{futex_requeue, futex_wait, futex_wake, futex_wake_bitset};
 
 use crate::{
-    arch::{mm::copy_from_user, timer::TimeSpec},
+    arch::mm::copy_from_user,
     syscall::errno::{Errno, SyscallRet},
+    timer::TimeSpec,
 };
 
 /*

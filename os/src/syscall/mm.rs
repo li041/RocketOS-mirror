@@ -68,7 +68,7 @@ pub fn sys_brk(brk: usize) -> SyscallRet {
             // 页内偏移
         }
         memory_set.brk = brk;
-        Ok(0)
+        Ok(brk)
     })
 }
 

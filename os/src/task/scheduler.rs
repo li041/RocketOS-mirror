@@ -1,7 +1,10 @@
 use super::{current_task, Task, Tid};
 use crate::{
     arch::switch,
-    task::processor::{current_tp, Processor},
+    task::{
+        handle_timeout,
+        processor::{current_tp, Processor},
+    },
 };
 use alloc::{collections::vec_deque::VecDeque, sync::Arc};
 use bitflags::bitflags;
@@ -87,7 +90,54 @@ pub fn schedule() {
             switch::__switch(next_task_kernel_stack);
         }
     } else {
-        panic!("No task in scheduler");
+        // panic!("No task in scheduler");
+        // 如果没有下一个任务, 则busyloop等待计时器超时
+        loop {
+            if let Some(next_task) = fetch_task() {
+                let next_task_kernel_stack = next_task.kstack();
+                {
+                    log::debug!(
+            "**********************************  task {} end **********************************",
+            current_task().tid());
+                    log::debug!(
+            "**********************************  task {} start **********************************",
+            next_task.tid());
+                    // check_task_context_in_kernel_stack(next_task_kernel_stack);
+                    // 切换Processor的current
+                    crate::task::processor::PROCESSOR
+                        .write()
+                        .switch_to(next_task);
+                }
+                unsafe {
+                    switch::__switch(next_task_kernel_stack);
+                }
+                break;
+            }
+            if !handle_timeout().is_empty() {
+                // 超时任务已唤醒
+                let next_task = fetch_task().unwrap();
+                let next_task_kernel_stack = next_task.kstack();
+                {
+                    log::debug!(
+                    "**********************************  task {} end **********************************",
+                    current_task().tid()
+                );
+                    log::debug!(
+                    "**********************************  task {} start **********************************",
+                    next_task.tid()
+                );
+                    // check_task_context_in_kernel_stack(next_task_kernel_stack);
+                    // 切换Processor的current
+                    crate::task::processor::PROCESSOR
+                        .write()
+                        .switch_to(next_task);
+                }
+                unsafe {
+                    switch::__switch(next_task_kernel_stack);
+                }
+                break;
+            }
+        }
     }
 }
 
@@ -120,6 +170,31 @@ pub fn yield_current_task() {
             .switch_to(next_task);
         unsafe {
             switch::__switch(next_task_kernel_stack);
+        }
+    } else {
+        // 5.3 如果没有下一个任务, 先检查计时器超时
+        if !handle_timeout().is_empty() {
+            // 超时任务已唤醒
+            let next_task = fetch_task().unwrap();
+            let next_task_kernel_stack = next_task.kstack();
+            {
+                log::debug!(
+                    "**********************************  task {} end **********************************",
+                    current_task().tid()
+                );
+                log::debug!(
+                    "**********************************  task {} start **********************************",
+                    next_task.tid()
+                );
+                // check_task_context_in_kernel_stack(next_task_kernel_stack);
+                // 切换Processor的current
+                crate::task::processor::PROCESSOR
+                    .write()
+                    .switch_to(next_task);
+            }
+            unsafe {
+                switch::__switch(next_task_kernel_stack);
+            }
         }
     }
     // 如果没有下一个任务, 则继续执行当前任务

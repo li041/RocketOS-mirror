@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 use spin::RwLock;
 
 use crate::arch::config::EXT4_MAX_INLINE_DATA;
-use crate::arch::timer::TimeSpec;
+use crate::timer::TimeSpec;
 use crate::fat32::inode;
 use crate::fs::inode::InodeOp;
 use crate::fs::kstat::Kstat;
@@ -53,6 +53,7 @@ pub const S_ISUID: u16 = 0x800; // Set UID
 
 // 文件类型(高4位)
 pub const S_IFMT: u16 = 0xF000; // File type mask
+pub const S_IFIFO: u16 = 0x1000; // FIFO
 pub const S_IFCHR: u16 = 0x2000; // Character device
 pub const S_IFDIR: u16 = 0x4000; // Directory
 pub const S_IFREG: u16 = 0x8000; // Regular file
