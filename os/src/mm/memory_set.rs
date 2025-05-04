@@ -542,7 +542,7 @@ impl MemorySet {
     /// return (user_memory_set, satp, ustack_top, entry_point, aux_vec, Option<tls>)
     /// Todo: elf_data是完整的, 还要lazy_allocation?
     pub fn from_elf_lazily(
-        elf_file: Arc<dyn FileOp>,
+        mut elf_file: Arc<dyn FileOp>,
         mut elf_data: Vec<u8>,
         argv: &mut Vec<String>,
     ) -> (Self, usize, usize, usize, Vec<AuxHeader>, Option<usize>) {
@@ -560,11 +560,11 @@ impl MemorySet {
                 let prepend_args = vec![String::from("./busybox"), String::from("sh")];
                 argv.splice(0..0, prepend_args);
                 if let Ok(busybox) = path_openat("./busybox", OpenFlags::empty(), AT_FDCWD, 0) {
-                    elf_data = busybox.read_all()
+                    elf_data = busybox.read_all();
+                    elf_file = busybox;
                 }
             }
         }
-
         // 创建`TaskContext`时使用
         let pgtbl_ppn = memory_set.page_table.token();
         // map program segments of elf, with U flag
@@ -610,17 +610,22 @@ impl MemorySet {
 
                 let map_offset = start_va.0 - start_va.floor().0 * PAGE_SIZE;
                 log::info!(
-                    "[from_elf] app map area: [{:#x}, {:#x})",
+                    "[from_elf] app map area: [{:#x}, {:#x}), map_perm: {:?}",
                     start_va.0,
-                    end_va.0
+                    end_va.0,
+                    map_perm,
                 );
                 // 如果只读段, 且file_size与mem_size相等(无需填充), 且直接使用页缓存映射
                 if !map_perm.contains(MapPermission::W) && ph.file_size() == ph.mem_size() {
+                    let mut map_area =
+                        MapArea::new(vpn_range, MapType::FilebeRO, map_perm, None, 0);
                     // 直接使用页缓存映射只读段
                     let vpn_start = vpn_range.get_start().0;
                     for vpn in vpn_range {
                         let offset = ph.offset() as usize + (vpn.0 - vpn_start) * PAGE_SIZE;
                         let page = elf_file.get_page(offset).expect("get page failed");
+                        memory_set.page_table.map(vpn, page.ppn(), map_perm.into());
+                        map_area.pages.insert(vpn, page);
                     }
                 } else {
                     // 采用Framed + 直接拷贝数据到匿名页

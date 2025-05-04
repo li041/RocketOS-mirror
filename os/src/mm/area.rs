@@ -51,6 +51,7 @@ pub enum MapType {
     Linear,
     Framed,
     Filebe,
+    FilebeRO,
 }
 
 impl MapPermission {
@@ -157,22 +158,21 @@ impl MapArea {
                 }
             }
             MapType::Filebe => {
+                let file = self.backend_file.as_ref().unwrap();
                 for vpn in self.vpn_range {
                     // 文件映射, 应该在缺页时处理
                     log::error!("[MapArea::map] unexpected filebe mapping");
                     let offset = self.offset
                         + (self.vpn_range.get_start().0 - self.vpn_range.get_start().0) * PAGE_SIZE;
-                    let page = self
-                        .backend_file
-                        .as_ref()
-                        .unwrap()
-                        .clone()
-                        .get_page(offset)
-                        .unwrap();
+                    let page = file.get_page(offset).unwrap();
                     ppn = page.ppn();
                     self.pages.insert(vpn, page);
                     page_table.map(vpn, ppn, pte_flags.clone());
                 }
+            }
+            MapType::FilebeRO => {
+                // 只读文件映射直接使用页缓存, 在from_elf中已经处理
+                panic!("MapType::RO never use this function");
             }
         }
     }

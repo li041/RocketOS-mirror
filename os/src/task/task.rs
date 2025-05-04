@@ -373,6 +373,110 @@ impl Task {
 
     pub fn kernel_execve(
         self: &Arc<Self>,
+        elf_data: &[u8],
+        mut args_vec: Vec<String>,
+        envs_vec: Vec<String>,
+    ) {
+        log::info!("[kernel_execve] task{} do execve ...", self.tid());
+        // 创建地址空间
+        let (mut memory_set, _satp, ustack_top, entry_point, aux_vec, tls_ptr) =
+            MemorySet::from_elf(elf_data.to_vec(), &mut args_vec);
+        // 更新页表
+        memory_set.activate();
+
+        #[cfg(target_arch = "loongarch64")]
+        memory_set.push_with_offset(
+            MapArea::new(
+                VPNRange::new(
+                    VirtAddr::from(strampoline as usize).floor(),
+                    VirtAddr::from(etrampoline as usize).ceil(),
+                ),
+                MapType::Linear,
+                MapPermission::R | MapPermission::X | MapPermission::U,
+                None,
+                0,
+            ),
+            None,
+            0,
+        );
+
+        // 初始化用户栈, 压入args和envs
+        let argc = args_vec.len();
+        let (argv_base, envp_base, auxv_base, ustack_top) =
+            init_user_stack(&memory_set, &args_vec, &envs_vec, aux_vec, ustack_top);
+        log::info!(
+            "[kernel_execve] entry_point: {:x}, user_sp: {:x}, page_table: {:x}",
+            entry_point,
+            ustack_top,
+            memory_set.token()
+        );
+
+        if !self.is_process() {
+            self.exchange_tid();
+        }
+
+        // 关闭线程组中除当前线程外的所有线程
+        self.close_thread();
+        log::trace!("[kernel_execve] task{} close thread_group", self.tid());
+
+        // 更新地址空间
+        self.op_memory_set_mut(|m| *m = memory_set);
+        // 更新trap_cx
+        let mut trap_cx = TrapContext::app_init_trap_context(
+            entry_point,
+            ustack_top,
+            argc,
+            argv_base,
+            envp_base,
+            auxv_base,
+        );
+        // 设置tls
+        if let Some(tls_ptr) = tls_ptr {
+            log::error!("[kernel_execve] task{} tls_ptr: {:x}", self.tid(), tls_ptr);
+            trap_cx.set_tp(tls_ptr);
+        }
+        save_trap_context(&self, trap_cx);
+        log::trace!("[kernel_execve] task{} trap_cx updated", self.tid());
+        // 重建线程组
+        self.op_thread_group_mut(|tg| {
+            *tg = ThreadGroup::new();
+            tg.add(self.tid(), Arc::downgrade(&self));
+        });
+        log::trace!("[kernel_execve] task{} thread_group rebuild", self.tid());
+        self.fd_table().do_close_on_exec();
+        log::trace!("[kernel_execve] task{} fd_table reset", self.tid());
+        // 重置信号处理器
+        self.op_sig_handler_mut(|handler| handler.reset());
+        log::trace!("[kernel_execve] task{} handler reset", self.tid());
+
+        log::info!(
+            "[kernel_execve] task{}-tgid:\t{:x}",
+            self.tid(),
+            self.tgid()
+        );
+        log::info!(
+            "[kernel_execve] task{}-tp:\t{:x}",
+            self.tid(),
+            Arc::as_ptr(&self) as usize
+        );
+        log::info!(
+            "[kernel_execve] task{}-sp:\t{:x}",
+            self.tid(),
+            self.kstack()
+        );
+
+        let strong_count = Arc::strong_count(&self);
+        if strong_count == 3 {
+            log::info!("[kernel_execve] strong_count:\t{}", strong_count);
+        } else
+        // 理论为3(sys_exec一个，children一个， processor一个)
+        {
+            log::error!("[kernel_execve] strong_count:\t{}", strong_count)
+        }
+    }
+
+    pub fn kernel_execve_lazily(
+        self: &Arc<Self>,
         elf_file: Arc<dyn FileOp>,
         elf_data: &[u8],
         mut args_vec: Vec<String>,

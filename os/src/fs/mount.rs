@@ -203,41 +203,41 @@ pub fn do_ext4_mount(block_device: Arc<dyn BlockDevice>) -> Arc<Path> {
     init_tmpfs(root_path.clone());
 
     // Todo: 为了busybox which ls, 创建一个空的/bin/ls
-    let bin_path = "/bin";
-    let bin_mode = S_IFDIR as u16 | 0o755;
-    let mut nd = Nameidata {
-        path_segments: parse_path(bin_path),
-        dentry: root_path.dentry.clone(),
-        mnt: root_path.mnt.clone(),
-        depth: 0,
-    };
-    match filename_create(&mut nd, 0) {
-        Ok(dentry) => {
-            let parent_inode = nd.dentry.get_inode();
-            parent_inode.mkdir(dentry, bin_mode);
-        }
-        Err(e) => {
-            panic!("create {} failed: {:?}", bin_path, e);
-        }
-    };
-    // 创建一个空的/bin/ls
-    let ls_path = "/bin/ls";
-    let ls_mode = S_IFREG as u16 | 0o755;
-    nd = Nameidata {
-        path_segments: parse_path(ls_path),
-        dentry: root_path.dentry.clone(),
-        mnt: root_path.mnt.clone(),
-        depth: 0,
-    };
-    match filename_create(&mut nd, 0) {
-        Ok(dentry) => {
-            let parent_inode = nd.dentry.get_inode();
-            parent_inode.create(dentry, ls_mode);
-        }
-        Err(e) => {
-            panic!("create {} failed: {:?}", ls_path, e);
-        }
-    };
+    // let bin_path = "/bin";
+    // let bin_mode = S_IFDIR as u16 | 0o755;
+    // let mut nd = Nameidata {
+    //     path_segments: parse_path(bin_path),
+    //     dentry: root_path.dentry.clone(),
+    //     mnt: root_path.mnt.clone(),
+    //     depth: 0,
+    // };
+    // match filename_create(&mut nd, 0) {
+    //     Ok(dentry) => {
+    //         let parent_inode = nd.dentry.get_inode();
+    //         parent_inode.mkdir(dentry, bin_mode);
+    //     }
+    //     Err(e) => {
+    //         panic!("create {} failed: {:?}", bin_path, e);
+    //     }
+    // };
+    // // 创建一个空的/bin/ls
+    // let ls_path = "/bin/ls";
+    // let ls_mode = S_IFREG as u16 | 0o755;
+    // nd = Nameidata {
+    //     path_segments: parse_path(ls_path),
+    //     dentry: root_path.dentry.clone(),
+    //     mnt: root_path.mnt.clone(),
+    //     depth: 0,
+    // };
+    // match filename_create(&mut nd, 0) {
+    //     Ok(dentry) => {
+    //         let parent_inode = nd.dentry.get_inode();
+    //         parent_inode.create(dentry, ls_mode);
+    //     }
+    //     Err(e) => {
+    //         panic!("create {} failed: {:?}", ls_path, e);
+    //     }
+    // };
 
     root_path
 }
@@ -256,4 +256,3 @@ pub fn do_mount(
     // 最后更新全局的Mount Tree
     Ok(0)
 }
-

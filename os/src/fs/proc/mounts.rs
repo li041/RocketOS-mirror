@@ -148,4 +148,7 @@ impl FileOp for MountsFile {
     fn readable(&self) -> bool {
         true
     }
+    fn get_inode(&self) -> Arc<dyn InodeOp> {
+        self.inode.clone()
+    }
 }
