@@ -146,7 +146,7 @@ pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> Sy
     // OpenFlags::empty() = RDONLY = 0, 以只读方式打开文件
     if let Ok(file) = path_openat(&path, OpenFlags::empty(), AT_FDCWD, 0) {
         let all_data = file.read_all();
-        task.kernel_execve(file, all_data.as_slice(), args_vec, envs_vec);
+        task.kernel_execve_lazily(file, all_data.as_slice(), args_vec, envs_vec);
         Ok(0)
     } else if !path.starts_with("/") {
         // 从内核中加载的应用程序
@@ -381,15 +381,42 @@ pub fn sys_get_time(time_val_ptr: usize) -> SyscallRet {
     Ok(0)
 }
 
-// 如果调用被信号处理程序中断，nanosleep()将返回 -1，
-// 将 errno 设置为 EINTR，并将剩余时间写入 rem 指向的结构体中，除非 rem 为 NULL。
-// Todo: 将剩余时间写入 rem 指向的结构体中
+// // 如果调用被信号处理程序中断，nanosleep()将返回 -1，
+// // 将 errno 设置为 EINTR，并将剩余时间写入 rem 指向的结构体中，除非 rem 为 NULL。
+// // Todo: 将剩余时间写入 rem 指向的结构体中
+// pub fn sys_nanosleep(time_val_ptr: usize) -> SyscallRet {
+//     log::info!("[sys_nanosleep] time_val_ptr: {:x}", time_val_ptr);
+//     let time_val_ptr = time_val_ptr as *const TimeSpec;
+//     let mut time_val: TimeSpec = TimeSpec::default();
+//     copy_from_user(time_val_ptr, &mut time_val as *mut TimeSpec, 1)?;
+//     wait_timeout(time_val);
+//     Ok(0)
+// }
+
 pub fn sys_nanosleep(time_val_ptr: usize) -> SyscallRet {
-    log::info!("[sys_nanosleep] time_val_ptr: {:x}", time_val_ptr);
     let time_val_ptr = time_val_ptr as *const TimeSpec;
     let mut time_val: TimeSpec = TimeSpec::default();
     copy_from_user(time_val_ptr, &mut time_val as *mut TimeSpec, 1)?;
-    wait_timeout(time_val);
+    let start_time = TimeSpec::new_machine_time();
+    log::error!(
+        "[sys_nanosleep] task{} sleep {:?}",
+        current_task().tid(),
+        time_val
+    );
+    loop {
+        if current_task().check_interrupt() {
+            log::error!(
+                "[sys_nanosleep] task{} wakeup by signal",
+                current_task().tid()
+            );
+            return Err(Errno::EINTR);
+        }
+        let current_time = TimeSpec::new_machine_time();
+        if current_time >= time_val + start_time {
+            break;
+        }
+        yield_current_task();
+    }
     Ok(0)
 }
 

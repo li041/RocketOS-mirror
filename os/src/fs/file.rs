@@ -52,7 +52,7 @@ pub trait FileOp: Any + Send + Sync {
     fn read_all(&self) -> Vec<u8> {
         unimplemented!();
     }
-    fn get_page(self: Arc<Self>, page_offset: usize) -> Result<Arc<Page>, &'static str> {
+    fn get_page<'a>(&'a self, page_offset: usize) -> Result<Arc<Page>, &'static str> {
         unimplemented!();
     }
     fn get_inode(&self) -> Arc<dyn InodeOp> {
@@ -189,7 +189,7 @@ impl FileOp for File {
         self.read_all()
     }
     /// 共享文件映射和私有文件映射只读时调用
-    fn get_page(self: Arc<Self>, page_aligned_offset: usize) -> Result<Arc<Page>, &'static str> {
+    fn get_page<'a>(&'a self, page_aligned_offset: usize) -> Result<Arc<Page>, &'static str> {
         debug_assert!(page_aligned_offset % PAGE_SIZE == 0);
         let inode = self.inner_handler(|inner| inner.inode.clone());
         inode.get_page(page_aligned_offset >> PAGE_SIZE_BITS)
