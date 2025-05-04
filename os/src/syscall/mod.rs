@@ -116,6 +116,7 @@ const SYSCALL_SETUID: usize = 146;
 const SYSCALL_TIMES: usize = 153;
 const SYSCALL_SETPGID: usize = 154;
 const SYSCALL_UNAME: usize = 160;
+const SYSCALL_GETRUSAGE: usize = 165;
 const SYSCALL_GET_TIME: usize = 169;
 const SYSCALL_GITPID: usize = 172;
 const SYSCALL_GETPPID: usize = 173;

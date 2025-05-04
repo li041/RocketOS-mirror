@@ -538,6 +538,268 @@ impl MemorySet {
             tls_ptr,
         );
     }
+
+    /// return (user_memory_set, satp, ustack_top, entry_point, aux_vec, Option<tls>)
+    /// Todo: elf_data是完整的, 还要lazy_allocation?
+    pub fn from_elf_lazily(
+        elf_file: Arc<dyn FileOp>,
+        mut elf_data: Vec<u8>,
+        argv: &mut Vec<String>,
+    ) -> (Self, usize, usize, usize, Vec<AuxHeader>, Option<usize>) {
+        #[cfg(target_arch = "riscv64")]
+        let mut memory_set = Self::from_global();
+        #[cfg(target_arch = "loongarch64")]
+        let mut memory_set = Self::new_bare();
+
+        let mut tls_ptr = None;
+
+        // 处理 .sh 文件
+        if argv.len() > 0 {
+            let file_name = &argv[0];
+            if file_name.ends_with(".sh") {
+                let prepend_args = vec![String::from("./busybox"), String::from("sh")];
+                argv.splice(0..0, prepend_args);
+                if let Ok(busybox) = path_openat("./busybox", OpenFlags::empty(), AT_FDCWD, 0) {
+                    elf_data = busybox.read_all()
+                }
+            }
+        }
+
+        // 创建`TaskContext`时使用
+        let pgtbl_ppn = memory_set.page_table.token();
+        // map program segments of elf, with U flag
+        let elf = xmas_elf::ElfFile::new(&elf_data).unwrap();
+        let elf_header = elf.header;
+        let magic = elf_header.pt1.magic;
+        assert_eq!(magic, [0x7f, 0x45, 0x4c, 0x46], "invalid elf!");
+        let ph_count = elf_header.pt2.ph_count();
+        let ph_entsize = elf_header.pt2.ph_entry_size() as usize;
+        let mut entry_point = elf_header.pt2.entry_point() as usize;
+        let mut aux_vec: Vec<AuxHeader> = Vec::with_capacity(64);
+        let ph_va = elf.program_header(0).unwrap().virtual_addr() as usize;
+
+        /* 映射程序头 */
+        // 程序头表在内存中的起始虚拟地址
+        // 程序头表一般是从LOAD段(且是代码段)开始
+        let mut max_end_vpn = VirtPageNum(0);
+        let mut need_dl: bool = false;
+
+        for i in 0..ph_count {
+            // 程序头部的类型是Load, 代码段或数据段
+            let ph = elf.program_header(i).unwrap();
+            let ph_type = ph.get_type().unwrap();
+            if ph_type == Type::Load {
+                let start_va: VirtAddr = (ph.virtual_addr() as usize).into();
+                let end_va: VirtAddr = (ph.virtual_addr() as usize + ph.mem_size() as usize).into();
+
+                // 注意用户要带U标志
+                let mut map_perm = MapPermission::U;
+                let ph_flags = ph.flags();
+                if ph_flags.is_read() {
+                    map_perm |= MapPermission::R;
+                }
+                if ph_flags.is_write() {
+                    map_perm |= MapPermission::W;
+                }
+                if ph_flags.is_execute() {
+                    map_perm |= MapPermission::X;
+                }
+                let vpn_range = VPNRange::new(start_va.floor(), end_va.ceil());
+                max_end_vpn = vpn_range.get_end();
+                // 对齐到页
+
+                let map_offset = start_va.0 - start_va.floor().0 * PAGE_SIZE;
+                log::info!(
+                    "[from_elf] app map area: [{:#x}, {:#x})",
+                    start_va.0,
+                    end_va.0
+                );
+                // 如果只读段, 且file_size与mem_size相等(无需填充), 且直接使用页缓存映射
+                if !map_perm.contains(MapPermission::W) && ph.file_size() == ph.mem_size() {
+                    // 直接使用页缓存映射只读段
+                    let vpn_start = vpn_range.get_start().0;
+                    for vpn in vpn_range {
+                        let offset = ph.offset() as usize + (vpn.0 - vpn_start) * PAGE_SIZE;
+                        let page = elf_file.get_page(offset).expect("get page failed");
+                    }
+                } else {
+                    // 采用Framed + 直接拷贝数据到匿名页
+                    let map_area = MapArea::new(vpn_range, MapType::Framed, map_perm, None, 0);
+                    memory_set.push_with_offset(
+                        map_area,
+                        Some(
+                            &elf_data
+                                [ph.offset() as usize..(ph.offset() + ph.file_size()) as usize],
+                        ),
+                        map_offset,
+                    );
+                }
+            }
+            if ph_type == Type::Tls {
+                let start_va: VirtAddr = (ph.virtual_addr() as usize).into();
+                tls_ptr = Some(start_va.0);
+            }
+            // 判断是否需要动态链接
+            if ph_type == Type::Interp {
+                need_dl = true;
+            }
+        }
+
+        // 程序头表的虚拟地址
+        aux_vec.push(AuxHeader {
+            aux_type: AT_PHDR,
+            value: ph_va,
+        });
+
+        // 页大小为4K
+        aux_vec.push(AuxHeader {
+            aux_type: AT_PAGESZ,
+            value: PAGE_SIZE,
+        });
+
+        // 程序头表中元素大小
+        aux_vec.push(AuxHeader {
+            aux_type: AT_PHENT,
+            value: ph_entsize,
+        });
+
+        // 程序头表中元素个数
+        aux_vec.push(AuxHeader {
+            aux_type: AT_PHNUM,
+            value: ph_count as usize,
+        });
+
+        // 应用程序入口
+        aux_vec.push(AuxHeader {
+            aux_type: AT_ENTRY,
+            value: entry_point,
+        });
+
+        log::info!("[from_elf] AT_PHDR:\t{:#x}", ph_va);
+        log::info!("[from_elf] AT_PAGESZ:\t{}", PAGE_SIZE);
+        log::info!("[from_elf] AT_PHENT:\t{}", ph_entsize);
+        log::info!("[from_elf] AT_PHNUM:\t{}", ph_count);
+        log::info!("[from_elf] AT_ENTRY:\t{:#x}", entry_point);
+        log::info!("[from_elf] AT_BASE:\t{:#x}", DL_INTERP_OFFSET);
+
+        // 需要动态链接
+        if need_dl {
+            log::warn!("[from_elf] need dynamic link");
+            // 获取动态链接器的路径
+            let section = elf.find_section_by_name(".interp").unwrap();
+            let mut interpreter = String::from_utf8(section.raw_data(&elf).to_vec()).unwrap();
+            interpreter = interpreter
+                .strip_suffix("\0")
+                .unwrap_or(&interpreter)
+                .to_string();
+            log::info!("[from_elf] interpreter path: {}", interpreter);
+
+            let interps = vec![interpreter.clone()];
+
+            for interp in interps.iter() {
+                // 加载动态链接器
+                if let Ok(interpreter) = path_openat(&interp, OpenFlags::empty(), AT_FDCWD, 0) {
+                    log::info!("[from_elf] interpreter open success");
+                    let interp_data = interpreter.read_all();
+                    let interp_elf = xmas_elf::ElfFile::new(interp_data.as_slice()).unwrap();
+                    let interp_head = interp_elf.header;
+                    let interp_ph_count = interp_head.pt2.ph_count();
+                    entry_point = interp_head.pt2.entry_point() as usize + DL_INTERP_OFFSET;
+                    for i in 0..interp_ph_count {
+                        // 程序头部的类型是Load, 代码段或数据段
+                        let ph = interp_elf.program_header(i).unwrap();
+                        if ph.get_type().unwrap() == Type::Load {
+                            let start_va: VirtAddr =
+                                (ph.virtual_addr() as usize + DL_INTERP_OFFSET).into();
+                            let end_va: VirtAddr = (ph.virtual_addr() as usize
+                                + DL_INTERP_OFFSET
+                                + ph.mem_size() as usize)
+                                .into();
+
+                            // 注意用户要带U标志
+                            let mut map_perm = MapPermission::U;
+                            let ph_flags = ph.flags();
+                            if ph_flags.is_read() {
+                                map_perm |= MapPermission::R;
+                            }
+                            if ph_flags.is_write() {
+                                map_perm |= MapPermission::W;
+                            }
+                            if ph_flags.is_execute() {
+                                map_perm |= MapPermission::X;
+                            }
+                            let vpn_range = VPNRange::new(start_va.floor(), end_va.ceil());
+                            let map_area =
+                                MapArea::new(vpn_range, MapType::Framed, map_perm, None, 0);
+
+                            let map_offset = start_va.0 - start_va.floor().0 * PAGE_SIZE;
+                            log::info!(
+                                "[from_elf] interp map area: [{:#x}, {:#x})",
+                                start_va.0,
+                                end_va.0
+                            );
+                            memory_set.push_with_offset(
+                                map_area,
+                                Some(
+                                    &interp_data[ph.offset() as usize
+                                        ..(ph.offset() + ph.file_size()) as usize],
+                                ),
+                                map_offset,
+                            );
+                        }
+                    }
+                    // 动态链接器的基址
+                    aux_vec.push(AuxHeader {
+                        aux_type: AT_BASE,
+                        value: DL_INTERP_OFFSET,
+                    });
+                } else {
+                    log::error!("[from_elf] interpreter open failed");
+                }
+            }
+        } else {
+            log::warn!("[from_elf] static link");
+        }
+
+        // 映射用户栈
+        let ustack_bottom: usize = (max_end_vpn.0 << PAGE_SIZE_BITS) + PAGE_SIZE; // 一个页用于保护
+        let ustack_top: usize = ustack_bottom + USER_STACK_SIZE;
+        info!(
+            "[MemorySet::from_elf] user stack [{:#x}, {:#x})",
+            ustack_bottom, ustack_top
+        );
+        let vpn_range = VPNRange::new(
+            VirtAddr::from(ustack_bottom).floor(),
+            VirtAddr::from(ustack_top).ceil(),
+        );
+        let ustack_map_area = MapArea::new(
+            vpn_range,
+            MapType::Framed,
+            MapPermission::R | MapPermission::W | MapPermission::U,
+            None,
+            0,
+        );
+        memory_set.push_anoymous_area(ustack_map_area);
+
+        // 分配用户堆底, 初始不分配堆内存?
+        let heap_bottom = ustack_top + PAGE_SIZE;
+        memory_set.heap_bottom = heap_bottom;
+        memory_set.brk = heap_bottom;
+        // 重置mmap_start
+        memory_set.mmap_start = MMAP_MIN_ADDR;
+
+        log::error!("[from_elf] entry_point: {:#x}", entry_point);
+
+        return (
+            memory_set,
+            pgtbl_ppn,
+            ustack_top,
+            entry_point,
+            aux_vec,
+            tls_ptr,
+        );
+    }
+
     #[allow(unused)]
     pub fn from_existed_user(user_memory_set: &MemorySet) -> Self {
         #[cfg(target_arch = "riscv64")]
