@@ -146,7 +146,7 @@ pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> Sy
     // OpenFlags::empty() = RDONLY = 0, 以只读方式打开文件
     if let Ok(file) = path_openat(&path, OpenFlags::empty(), AT_FDCWD, 0) {
         let all_data = file.read_all();
-        task.kernel_execve(all_data.as_slice(), args_vec, envs_vec);
+        task.kernel_execve(file, all_data.as_slice(), args_vec, envs_vec);
         Ok(0)
     } else if !path.starts_with("/") {
         // 从内核中加载的应用程序
