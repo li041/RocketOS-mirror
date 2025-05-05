@@ -5,6 +5,7 @@
 #![feature(negative_impls)]
 #![feature(sync_unsafe_cell)]
 #![feature(trait_upcasting)]
+#![feature(ip_from)]
 
 extern crate alloc;
 
@@ -19,6 +20,7 @@ pub mod mutex;
 pub mod timer;
 // mod sched;
 mod arch;
+mod net;
 mod signal;
 
 mod drivers;
@@ -103,7 +105,7 @@ pub fn rust_main(_hart_id: usize, dtb_address: usize) -> ! {
     let seconds = read_rtc() / NANOS_PER_SEC;
     println!("rtc time: {:?}", seconds);
     println!("data time: {:?}", seconds_to_beijing_datetime(seconds));
-
+    drivers::net::init_net_device(dtb_address);
     // 允许S mode访问U mode的页面
     //  S mode下会访问User的堆
     #[cfg(target_arch = "riscv64")]

@@ -13,6 +13,7 @@ use crate::{
     syscall::errno::{Errno, SyscallRet},
     task::current_task,
 };
+use crate::drivers::get_dev_tree_size;
 
 use crate::{
     arch::{
@@ -278,6 +279,19 @@ impl MemorySet {
             );
         }
         // #[cfg(target_arch = "riscv64")]
+        {
+            let dev_tree_size=get_dev_tree_size(0xbfe00000 as usize);
+            log::error!("[Dev_tree] size is {}",dev_tree_size);
+            memory_set.push_with_offset(
+                MapArea::new(VPNRange::new(VirtAddr::from(KERNEL_BASE+0xbfe00000).floor(),VirtAddr::from(KERNEL_BASE+0xbfe00000+dev_tree_size).ceil()), 
+                    MapType::Linear, 
+                    MapPermission::R|MapPermission::W, 
+                    None, 
+                    0), 
+                None, 
+                0);
+        }
+        #[cfg(target_arch = "riscv64")]
         {
             log::trace!("mapping kernel stack area");
             // 注意这里仅在内核的第一级页表加一个映射, 之后的映射由kstack_alloc通过`find_pte_create`完成

@@ -12,7 +12,9 @@
 ARCH ?= riscv64
 MODE := debug
 FEATURES := default
-
+#ip option not unspecified
+IP ?= 10.0.2.15
+GW ?= 10.0.2.2
 # Target, Binutils(Objcopy), FS
 ifeq ($(ARCH), riscv64)
 	TARGET := riscv64gc-unknown-none-elf
@@ -26,6 +28,8 @@ else
 	$(error "Unsupported architecture: $(ARCH), Use riscv64 or loongarch64")
 endif
 
+export ROCKET_IP=$(IP)
+export ROCKET_GW=$(GW)
 # User
 USER_TARGET_PATH := ../user/target/$(TARGET)/$(MODE)/
 
@@ -43,9 +47,7 @@ endif
 
 # Configs
 MEM_SIZE = 1024M
-LOG := error
-QEMU_NET_PORT ?= 5555
-
+LOG := error 
 ifeq ($(MODE), release)
 	MODE_ARG := --release
 endif
@@ -53,6 +55,7 @@ endif
 # QEMU
 # 添加一块虚拟硬盘, 命名为`x0`, 将`sdcard.img`挂载到这块硬盘上, VirtIO总线通过MMIO进行控制, 且该块设备在总线中的编号为0
 # 查看设备树 -machine virt,dumpdtb=out.dtb 
+# 默认ipv4,ipv6均已经on，需要注意qemu官方的slirp中的hostfwd仍然只适配ipv4映射,将宿主机的5556 映射到5555
 ifeq ($(ARCH), riscv64)
     QEMU_CMD := qemu-system-riscv64
     QEMU_ARGS := 	-machine virt\
@@ -60,13 +63,11 @@ ifeq ($(ARCH), riscv64)
                     -kernel $(KERNEL_BIN) \
                     -nographic \
                     -smp 2\
-                    -bios default \
+                    -bios default\
                     -drive file=$(FS),if=none,format=raw,id=x0 \
                     -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0\
-                    -device virtio-net-device,netdev=net -netdev user,id=net
+                    -device virtio-net-device,netdev=net -netdev user,id=net,hostfwd=tcp::5555-:5555,hostfwd=udp::5555-:5555
 else ifeq ($(ARCH), loongarch64)
-
-                    # -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
     QEMU_CMD := qemu-system-loongarch64
     QEMU_ARGS = 	-kernel $(KERNEL_ELF) -m $(MEM_SIZE) -nographic \
                     -smp 1\
@@ -74,6 +75,7 @@ else ifeq ($(ARCH), loongarch64)
                     -no-reboot \
                     -drive file=$(FS),if=none,format=raw,id=disk0 \
                     -device virtio-blk-pci,drive=disk0 \
+                    -device virtio-net-pci,netdev=net -netdev user,id=net,hostfwd=tcp::5556-:5555,hostfwd=udp::5556-:5555 \
                     -nographic 
 else
 	$(error "Unsupported architecture: $(ARCH), Use riscv64 or loongarch64")

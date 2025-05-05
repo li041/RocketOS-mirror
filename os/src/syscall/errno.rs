@@ -93,10 +93,13 @@ pub enum Errno {
     ENOTSOCK = -88,
     /// 操作不支持（如对普通文件调用套接字操作）
     EOPNOTSUPP = -95,
+    // address family 不支持
+    EAFNOSUPPORT= -97,
     /// 套接字地址已在使用中（如端口被占用）
     EADDRINUSE = -98,
     /// 地址不可用（如绑定到不存在的 IP）
     EADDRNOTAVAIL = -99,
+    ECONNABORTED = -103,
     /// 连接被重置（对端强制关闭）
     ECONNRESET = -104,
     /// 传输端点已连接（如重复调用 connect）

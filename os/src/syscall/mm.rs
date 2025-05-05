@@ -3,7 +3,8 @@ use core::fmt::Debug;
 use crate::{
     arch::{
         config::{MMAP_MIN_ADDR, PAGE_SIZE, PAGE_SIZE_BITS},
-        mm::copy_to_user, trap::context::dump_trap_context,
+        mm::copy_to_user,
+        trap::context::dump_trap_context,
     },
     fs::file::File,
     index_list::{IndexList, ListIndex},
@@ -78,6 +79,7 @@ pub fn sys_brk(brk: usize) -> SyscallRet {
 bitflags! {
     /// MMAP memeory protection
     /// 注意: PROT_WRITE不直接对应MapPermission的W, 因为对于私有文件映射
+    #[derive(Debug)]
     pub struct MmapProt: u32 {
         /// Readable
         const PROT_READ = 0x1;
@@ -149,8 +151,7 @@ impl Debug for MmapFlags {
         write!(f, "{:?}", flags)
     }
 }
-
-// Todo: 别用unwarp
+#[no_mangle]
 pub fn sys_mmap(
     hint: usize,
     len: usize,
@@ -546,10 +547,7 @@ pub fn sys_get_mempolicy(
     Ok(0)
 }
 
-pub fn sys_mlock(
-    _addr: usize,
-    _len: usize,
-) -> SyscallRet {
+pub fn sys_mlock(_addr: usize, _len: usize) -> SyscallRet {
     log::error!("Unimplemented sys_mlock");
     Ok(0)
 }

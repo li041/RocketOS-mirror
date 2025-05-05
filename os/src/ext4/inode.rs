@@ -638,9 +638,7 @@ impl Drop for Ext4Inode {
     // Todo: 可能有资源还没有释放
     fn drop(&mut self) {
         // 释放页缓存
-        // println!("before clear address space");
         self.address_space.clear();
-        // println!("after clear address space");
         // 释放inode bitmap和inode table
         // self.ext4_fs.upgrade().unwrap().dealloc_inode(
         //     self.block_device.clone(),
