@@ -555,8 +555,6 @@ pub fn sys_pipe2(fdset_ptr: *mut i32, flags: i32) -> SyscallRet {
 }
 
 pub fn sys_close(fd: usize) -> SyscallRet {
-    // 4.17
-    log::error!("[sys_close] fd: {}", fd);
     let task = current_task();
     let fd_table = task.fd_table();
     if fd_table.close(fd) {
@@ -789,13 +787,6 @@ pub fn sys_pselect6(
         Ok(exceptiter) => exceptiter,
         Err(e) => return Err(e),
     };
-    //to
-    // if exceptfds != 0 {
-    //     // exceptfds不为0, 需要初始化exceptfds
-    //     init_fdset(exceptfds, nfds);
-
-    // }
-    // let exceptiter=init_fdset(exceptfds, nfds);
     let task = current_task();
     let origin_sigset = task.op_sig_pending_mut(|sig_pending| sig_pending.mask.clone());
     if sigmask != 0 {

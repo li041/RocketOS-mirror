@@ -1,7 +1,7 @@
 use crate::ext4::inode::{S_IFCHR, S_IFDIR};
 
 use super::{
-    dentry::{self, Dentry},
+    dentry::{self, insert_core_dentry, Dentry},
     file::OpenFlags,
     mount::VfsMount,
     namei::{filename_create, parse_path, path_openat, Nameidata},
@@ -13,11 +13,13 @@ use alloc::sync::Arc;
 use null::{NullFile, NULL};
 use rtc::{RtcFile, RTC};
 use tty::{TtyFile, TTY};
+use urandom::{UrandomFile, URANDOM};
 use zero::{ZeroFile, ZERO};
 
 pub mod null;
 pub mod rtc;
 pub mod tty;
+pub mod urandom;
 pub mod zero;
 
 // Todo: /dev/zero, /dev/null
@@ -97,6 +99,7 @@ pub fn init_devfs(root_path: Arc<Path>) {
                 OpenFlags::O_RDWR,
             );
             TTY.call_once(|| tty_file.clone());
+            insert_core_dentry(dentry.clone());
         }
         Err(e) => {
             panic!("create {} failed: {:?}", tty_path, e);
@@ -123,6 +126,7 @@ pub fn init_devfs(root_path: Arc<Path>) {
                 OpenFlags::O_RDWR,
             );
             TTY.call_once(|| tty_file.clone());
+            insert_core_dentry(dentry.clone());
         }
         Err(e) => {
             panic!("create {} failed: {:?}", tty_path, e);
@@ -149,6 +153,7 @@ pub fn init_devfs(root_path: Arc<Path>) {
                 OpenFlags::O_RDWR,
             );
             RTC.call_once(|| rtc_file.clone());
+            insert_core_dentry(dentry.clone());
         }
         Err(e) => {
             panic!("create {} failed: {:?}", rtc_path, e);
@@ -175,6 +180,7 @@ pub fn init_devfs(root_path: Arc<Path>) {
                 OpenFlags::O_RDWR,
             );
             NULL.call_once(|| null_file.clone());
+            insert_core_dentry(dentry.clone());
         }
         Err(e) => {
             panic!("create {} failed: {:?}", null_path, e);
@@ -200,9 +206,37 @@ pub fn init_devfs(root_path: Arc<Path>) {
                 OpenFlags::O_RDWR,
             );
             ZERO.call_once(|| zero_file.clone());
+            insert_core_dentry(dentry.clone());
         }
         Err(e) => {
             panic!("create {} failed: {:?}", zero_path, e);
+        }
+    }
+    //dev/urandom
+    let urandom_path = "/dev/urandom";
+    let urandom_node = S_IFCHR as u16 | 0o666;
+    let urandom_devt = DevT::urandom_devt();
+    nd = Nameidata {
+        path_segments: parse_path(urandom_path),
+        dentry: root_path.dentry.clone(),
+        mnt: root_path.mnt.clone(),
+        depth: 0,
+    };
+    match filename_create(&mut nd, 0) {
+        Ok(dentry) => {
+            let parent_inode = nd.dentry.get_inode();
+            parent_inode.mknod(dentry.clone(), urandom_node, urandom_devt);
+            // 现在dentry的inode指向/dev/urandom
+            let urandom_file = UrandomFile::new(
+                Path::new(root_path.mnt.clone(), dentry.clone()),
+                dentry.get_inode().clone(),
+                OpenFlags::O_RDWR,
+            );
+            URANDOM.call_once(|| urandom_file.clone());
+            insert_core_dentry(dentry.clone());
+        }
+        Err(e) => {
+            panic!("create {} failed: {:?}", urandom_path, e);
         }
     }
 }

@@ -66,6 +66,9 @@ impl DevT {
     pub fn zero_devt() -> Self {
         Self::makedev(1, 5)
     }
+    pub fn urandom_devt()->Self {
+        Self::makedev(1, 9)
+    }
 }
 
 impl DevT {

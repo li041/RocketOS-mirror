@@ -205,6 +205,12 @@ impl Dentry {
 
 lazy_static! {
     pub static ref DENTRY_CACHE: RwLock<DentryCache> = RwLock::new(DentryCache::new(1024));
+    pub static ref CORE_DENTRIES: Mutex<Vec<Arc<Dentry>>> = Mutex::new(Vec::new());
+}
+
+pub fn insert_core_dentry(dentry: Arc<Dentry>) {
+    let mut core_dentries = CORE_DENTRIES.lock();
+    core_dentries.push(dentry);
 }
 
 /// 当frame不够时, 需要清理掉一些不常用的dentry
@@ -225,7 +231,7 @@ pub fn clean_dentry_cache() {
             //     "[DentryCache] Key: {}, Path: {:?}, Strong Count: {}, pages: {}",
             //     name, dentry.absolute_path, strong_count, count
             // );
-            if strong_count == 1 && count > 0 {
+            if strong_count == 1 && count > 100 {
                 // 没有其他强引用，可以安全移除
                 cache_map.remove(name);
                 // println!("[DentryCache] Removed {} due to low strong count", name);

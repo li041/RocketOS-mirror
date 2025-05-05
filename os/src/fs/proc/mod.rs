@@ -1,7 +1,7 @@
 use crate::ext4::inode::{S_IFCHR, S_IFDIR, S_IFREG};
 
 use super::{
-    dentry::{self, Dentry},
+    dentry::{self, insert_core_dentry, Dentry},
     file::OpenFlags,
     mount::VfsMount,
     namei::{filename_create, parse_path, path_openat, Nameidata},
@@ -59,6 +59,7 @@ pub fn init_procfs(root_path: Arc<Path>) {
                 OpenFlags::empty(),
             );
             MOUNTS.call_once(|| mounts_file.clone());
+            insert_core_dentry(dentry.clone());
         }
         Err(e) => {
             panic!("create {} failed: {:?}", mounts_path, e);
@@ -86,6 +87,7 @@ pub fn init_procfs(root_path: Arc<Path>) {
                 OpenFlags::empty(),
             );
             MEMINFO.call_once(|| meminfo_file.clone());
+            insert_core_dentry(dentry.clone());
         }
         Err(e) => {
             panic!("create {} failed: {:?}", mounts_path, e);
@@ -130,6 +132,7 @@ pub fn init_procfs(root_path: Arc<Path>) {
                 OpenFlags::empty(),
             );
             EXE.call_once(|| exe_file.clone());
+            insert_core_dentry(dentry.clone());
         }
         Err(e) => {
             panic!("create {} failed: {:?}", exe_path, e);

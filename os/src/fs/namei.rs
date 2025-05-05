@@ -22,7 +22,7 @@ use crate::{
     },
     fs::{
         dentry::DentryFlags,
-        dev::{null::NULL, rtc::RTC, zero::ZERO},
+        dev::{null::NULL, rtc::RTC, urandom::URANDOM, zero::ZERO},
         fdtable::{FdEntry, FdFlags},
         AT_FDCWD,
     },
@@ -317,6 +317,10 @@ fn create_file_from_dentry(
                     assert!(dentry.absolute_path == "/dev/rtc");
                     RTC.get().unwrap().clone()
                 } // /dev/rtc
+                (1, 9) => {
+                    assert!(dentry.absolute_path == "/dev/urandom");
+                    URANDOM.get().unwrap().clone()
+                } // /dev/urandom
                 _ => panic!(
                     "[create_file_from_dentry]Unsupported device, devt: {:?}",
                     inode.get_devt()
