@@ -41,7 +41,7 @@ pub use scheduler::{
 };
 pub use task::kernel_exit;
 pub use task::CloneFlags;
-pub use task::{Task, INIT_PROC_PID};
+pub use task::{Task, INIT_PROC_PID, CpuMask};
 
 pub type Tid = usize;
 

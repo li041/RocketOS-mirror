@@ -309,7 +309,15 @@ impl FileOp for TtyFile {
     fn write<'a>(&'a self, buf: &'a [u8]) -> SyscallRet {
         let mut _inner = self.inner.write();
         // print!("{}", core::str::from_utf8(buf).unwrap());
-        print!("{}", core::str::from_utf8(buf).unwrap());
+        // 处理非utf-8字符
+        let str = match core::str::from_utf8(buf) {
+            Ok(s) => s,
+            Err(_) => {
+                log::error!("[TtyFile::write] Invalid UTF-8 sequence");
+                return Err(Errno::EINVAL);
+            }
+        };
+        print!("{}", str);
         Ok(buf.len())
     }
     fn seek(&self, _offset: isize, _whence: crate::fs::uapi::Whence) -> SyscallRet {

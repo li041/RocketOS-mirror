@@ -20,8 +20,11 @@ use fs::{
     sys_utimensat, sys_write, sys_writev,
 };
 use mm::{
-    sys_brk, sys_madvise, sys_mmap, sys_mprotect, sys_munmap, sys_shmat, sys_shmctl, sys_shmdt,
-    sys_shmget,
+    sys_brk, sys_get_mempolicy, sys_madvise, sys_membarrier, sys_mlock, sys_mmap, sys_mprotect,
+    sys_munmap, sys_shmat, sys_shmctl, sys_shmdt, sys_shmget,
+};
+use sched::{
+    sys_sched_getaffinity, sys_sched_getparam, sys_sched_getscheduler, sys_sched_setscheduler,
 };
 use signal::{
     sys_kill, sys_rt_sigaction, sys_rt_sigpending, sys_rt_sigprocmask, sys_rt_sigreturn,
@@ -33,8 +36,8 @@ use task::{
     sys_getuid, sys_nanosleep, sys_set_tid_address, sys_setpgid, sys_waitpid, sys_yield,
 };
 use util::{
-    sys_clock_gettime, sys_getrusage, sys_prlimit64, sys_setitimer, sys_syslog, sys_times,
-    sys_uname,
+    sys_clock_getres, sys_clock_gettime, sys_getrusage, sys_prlimit64, sys_setitimer, sys_syslog,
+    sys_times, sys_uname,
 };
 
 use crate::{
@@ -53,6 +56,7 @@ pub use task::sys_exit;
 pub mod errno;
 mod fs;
 mod mm;
+mod sched;
 mod signal;
 mod task;
 mod util;
@@ -103,8 +107,13 @@ const SYSCALL_GET_ROBUST_LIST: usize = 100;
 const SYSCALL_NANOSLEEP: usize = 101;
 const SYSCALL_SETITIMER: usize = 103;
 const SYSCALL_CLOCK_GETTIME: usize = 113;
+const SYSCALL_CLOCK_GETRES: usize = 114;
 const SYSCALL_CLOCK_NANOSLEEP: usize = 115;
 const SYSCALL_SYSLOG: usize = 116;
+const SYSCALL_SCHED_SETSCHEDULER: usize = 119;
+const SYSCALL_SCHED_GETSCHEDULER: usize = 120;
+const SYSCALL_SCHED_GETPARAM: usize = 121;
+const SYSCALL_SCHED_GETAFFINITY: usize = 123;
 const SYSCALL_YIELD: usize = 124;
 const SYSCALL_KILL: usize = 129;
 const SYSCALL_TKILL: usize = 130;
@@ -141,9 +150,11 @@ const SYSCALL_MUNMAP: usize = 215;
 const SYSCALL_FORK: usize = 220;
 const SYSCALL_EXEC: usize = 221;
 const SYSCALL_MMAP: usize = 222;
-const SYSCALL_MADVISE: usize = 233;
 const SYSCALL_MPROTECT: usize = 226;
 const SYSCALL_MSYNC: usize = 227;
+const SYSCALL_MLOCK: usize = 228;
+const SYSCALL_MADVISE: usize = 233;
+const SYSCALL_GET_MEMPOLICY: usize = 236;
 const SYSCALL_WAIT4: usize = 260;
 const SYSCALL_PRLIMIT: usize = 261;
 const SYSCALL_RENAMEAT2: usize = 276;
@@ -242,8 +253,13 @@ pub fn syscall(
         SYSCALL_NANOSLEEP => sys_nanosleep(a0),
         SYSCALL_SETITIMER => sys_setitimer(a0 as i32, a1 as *const ITimerVal, a2 as *mut ITimerVal),
         SYSCALL_CLOCK_GETTIME => sys_clock_gettime(a0, a1 as *mut TimeSpec),
+        SYSCALL_CLOCK_GETRES => sys_clock_getres(a0, a1),
         SYSCALL_CLOCK_NANOSLEEP => sys_clock_nansleep(a0, a1 as i32, a2, a3),
         SYSCALL_SYSLOG => sys_syslog(a0, a1 as *mut u8, a3),
+        SYSCALL_SCHED_SETSCHEDULER => sys_sched_setscheduler(a0 as isize, a1 as i32, a2),
+        SYSCALL_SCHED_GETSCHEDULER => sys_sched_getscheduler(a0 as isize),
+        SYSCALL_SCHED_GETPARAM => sys_sched_getparam(a0 as isize, a1),
+        SYSCALL_SCHED_GETAFFINITY => sys_sched_getaffinity(a0 as isize, a1, a2),
         SYSCALL_YIELD => sys_yield(),
         SYSCALL_KILL => sys_kill(a0 as isize, a1 as i32),
         SYSCALL_TKILL => sys_tkill(a0 as isize, a1 as i32),
@@ -281,6 +297,8 @@ pub fn syscall(
         SYSCALL_MUNMAP => sys_munmap(a0, a1),
         SYSCALL_MADVISE => sys_madvise(a0, a1, a2 as i32),
         SYSCALL_MPROTECT => sys_mprotect(a0, a1, a2 as i32),
+        SYSCALL_MLOCK => sys_mlock(a0, a1),
+        SYSCALL_GET_MEMPOLICY => sys_get_mempolicy(a0, a1, a2, a3, a4),
         SYSCALL_MSYNC => sys_msync(a0, a1, a2 as i32),
         SYSCALL_FORK => sys_clone(a0 as u32, a1, a2, a3, a4),
         SYSCALL_EXEC => sys_execve(a0 as *mut u8, a1 as *const usize, a2 as *const usize),
@@ -295,7 +313,7 @@ pub fn syscall(
             a4 as i32,
         ),
         SYSCALL_GETRANDOM => Ok(0),
-        SYSCALL_MEMBARRIER => Ok(0),
+        SYSCALL_MEMBARRIER => sys_membarrier(a0 as i32, a1 as i32, a2 as u32),
         SYSCALL_STATX => sys_statx(
             a0 as i32,
             a1 as *const u8,

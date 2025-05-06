@@ -92,18 +92,17 @@ pub struct Task {
     memory_set: Arc<RwLock<MemorySet>>, // 地址空间
     // futex管理, 线程局部
     robust_list_head: AtomicUsize, // struct robust_list_head* head
-
     // 文件系统
-    // ToDo: 对接ext4
     fd_table: Arc<FdTable>,
     root: Arc<SpinNoIrqLock<Arc<Path>>>,
     pwd: Arc<SpinNoIrqLock<Arc<Path>>>,
-    // ToDo: 信号处理
+    // 信号处理
     sig_pending: SpinNoIrqLock<SigPending>,      // 待处理信号
     sig_handler: Arc<SpinNoIrqLock<SigHandler>>, // 信号处理函数
     sig_stack: SpinNoIrqLock<Option<SignalStack>>, // 额外信号栈
     itimerval: Arc<RwLock<[ITimerVal; 3]>>,      // 定时器
     rlimit: Arc<RwLock<[RLimit; 16]>>,           // 资源限制
+    cpu_mask: SpinNoIrqLock<CpuMask>,            // CPU掩码
                                                  // Todo: 进程组
                                                  // ToDo：运行时间(调度相关)
                                                  // ToDo: 多核启动
@@ -149,6 +148,7 @@ impl Task {
             sig_stack: SpinNoIrqLock::new(None),
             itimerval: Arc::new(RwLock::new([ITimerVal::default(); 3])),
             rlimit: Arc::new(RwLock::new([RLimit::default(); RLIM_NLIMITS])),
+            cpu_mask: SpinNoIrqLock::new(CpuMask::ALL),
         }
     }
 
@@ -191,6 +191,7 @@ impl Task {
             sig_stack: SpinNoIrqLock::new(None),
             itimerval: Arc::new(RwLock::new([ITimerVal::default(); 3])),
             rlimit: Arc::new(RwLock::new([RLimit::default(); RLIM_NLIMITS])),
+            cpu_mask: SpinNoIrqLock::new(CpuMask::ALL),
         });
         // 向线程组中添加该进程
         task.thread_group
@@ -235,6 +236,7 @@ impl Task {
         let sig_pending;
         let sig_stack;
         let rlimit;
+        let cpu_mask;
         log::info!("[kernel_clone] task{} ready to clone ...", self.tid());
 
         // 是否与父进程共享信号处理器
@@ -319,6 +321,7 @@ impl Task {
         let tid = RwLock::new(tid);
         let robust_list_head = AtomicUsize::new(0);
         let time_stat = SyncUnsafeCell::new(TimeStat::default());
+        cpu_mask = SpinNoIrqLock::new(CpuMask::ALL);
         // 创建新任务
         let task = Arc::new(Self {
             kstack,
@@ -342,6 +345,7 @@ impl Task {
             sig_stack,
             itimerval,
             rlimit,
+            cpu_mask,
         });
         log::trace!("[kernel_clone] child task{} created", task.tid());
 
@@ -791,9 +795,12 @@ impl Task {
     pub fn TAC(&self) -> Option<usize> {
         self.tid_address.lock().clear_child_tid
     }
-    pub fn get_robust_list_head(&self) -> usize {
+    pub fn robust_list_head(&self) -> usize {
         self.robust_list_head
             .load(core::sync::atomic::Ordering::SeqCst)
+    }
+    pub fn cpu_mask(&self) -> CpuMask {
+        *self.cpu_mask.lock()
     }
 
     /*********************************** setter *************************************/
@@ -1278,5 +1285,21 @@ bitflags! {
         const CLONE_NEWPID = 1 << 29;
         const CLONE_NEWNET = 1 << 30;
         const CLONE_IO = 1 << 31;
+    }
+}
+
+bitflags! {
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct CpuMask: usize {
+        const CPU0 = 0b00000001;
+        // const CPU1 = 0b00000010;
+        // const CPU2 = 0b00000100;
+        // const CPU3 = 0b00001000;
+        // const CPU4 = 0b00010000;
+        // const CPU5 = 0b00100000;
+        // const CPU6 = 0b01000000;
+        // const CPU7 = 0b10000000;
+        const ALL = 0b00000001;
     }
 }

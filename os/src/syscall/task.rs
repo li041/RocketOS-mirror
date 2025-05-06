@@ -448,9 +448,9 @@ pub fn sys_nanosleep(time_val_ptr: usize) -> SyscallRet {
         if current_time >= time_val + start_time {
             break;
         }
-        yield_current_task(); // 返回时状态会变成running
-                              // 在yield回来之后设置成interruptable可以有效的避免任务状态被覆盖
-                              // 并且可以有效的保证收到信号的时候不会触发信号中断
+        yield_current_task();   // 返回时状态会变成running
+        // 在yield回来之后设置成interruptable可以有效的避免任务状态被覆盖
+        // 并且可以有效的保证收到信号的时候不会触发信号中断
         current_task().set_interruptable();
     }
     Ok(0)

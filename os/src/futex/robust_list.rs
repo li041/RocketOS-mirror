@@ -67,7 +67,7 @@ pub fn sys_get_robust_list(pid: usize, head_ptr: usize, len_ptr: usize) -> Sysca
             None => return Err(Errno::ESRCH),
         }
     };
-    let robust_list_head = task.get_robust_list_head();
+    let robust_list_head = task.robust_list_head();
     copy_to_user(head_ptr as *mut usize, &robust_list_head as *const usize, 1)?;
     copy_to_user(
         len_ptr as *mut usize,
@@ -80,7 +80,7 @@ pub fn sys_get_robust_list(pid: usize, head_ptr: usize, len_ptr: usize) -> Sysca
 pub fn exit_robust_list() -> Result<(), Errno> {
     let task = current_task();
     let tid = task.tid();
-    let head_addr = task.get_robust_list_head();
+    let head_addr = task.robust_list_head();
     if head_addr != 0 {
         // 释放robust_list
         let mut head: RobustListHead = RobustListHead::default();

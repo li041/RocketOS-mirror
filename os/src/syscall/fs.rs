@@ -119,9 +119,6 @@ pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> SyscallRet {
     if len == 0 {
         return Ok(0);
     }
-    if fd >= 3 {
-        log::info!("sys_write: fd: {}, len: {}", fd, len);
-    }
     let task = current_task();
     let file = task.fd_table().get_file(fd);
     if let Some(file) = file {
