@@ -121,12 +121,15 @@ impl Ext4FileSystem {
     pub fn add_orphan_inode(&self, inode_num: usize) {
         self.super_block.orphan_inodes.write().push(inode_num);
     }
-    pub fn alloc_block(&self, block_device: Arc<dyn BlockDevice>) -> usize {
+    pub fn alloc_block(&self, block_device: Arc<dyn BlockDevice>, block_count: usize) -> usize {
         let block_bitmap_size = self.super_block.blocks_per_group as usize / 8;
         for (i, group) in self.block_groups.iter().enumerate() {
-            if let Some(local_block_num) =
-                group.alloc_block(block_device.clone(), self.block_size(), block_bitmap_size)
-            {
+            if let Some(local_block_num) = group.alloc_block(
+                block_device.clone(),
+                self.block_size(),
+                block_bitmap_size,
+                block_count,
+            ) {
                 // 修改super_block的free_blocks_count
                 self.super_block.inner.write().free_blocks_count -= 1;
                 let global_block_num =

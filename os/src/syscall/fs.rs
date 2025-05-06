@@ -117,9 +117,6 @@ pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> SyscallRet {
     if len == 0 {
         return Ok(0);
     }
-    // if fd >= 3 {
-    //     log::info!("sys_write: fd: {}, len: {}", fd, len);
-    // }
     let task = current_task();
     let file = task.fd_table().get_file(fd);
     if let Some(file) = file {
@@ -129,6 +126,14 @@ pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> SyscallRet {
         let file = file.clone();
         let mut ker_buf = vec![0u8; len];
         copy_from_user(buf, ker_buf.as_mut_ptr(), len).unwrap();
+        if fd >= 3 {
+            log::info!(
+                "sys_write: fd: {}, len: {}, ker_buf: {:?}",
+                fd,
+                len,
+                String::from_utf8_lossy(&ker_buf)
+            );
+        }
         let ret = file.write(&ker_buf);
         Ok(ret)
     } else {
@@ -269,14 +274,7 @@ pub fn sys_pwrite(fd: usize, buf: *const u8, count: usize, offest: usize) -> Sys
 pub fn sys_dup(oldfd: usize) -> SyscallRet {
     log::info!("[sys_dup] oldfd: {}", oldfd);
     let task = current_task();
-    // let file = task.fd_table().get_file(oldfd);
-    let fd_entry = task.fd_table().get_fdentry(oldfd);
-    if let Some(fd_entry) = fd_entry {
-        task.fd_table()
-            .alloc_fd(fd_entry.get_file(), FdFlags::empty())
-    } else {
-        return Err(Errno::EBADF);
-    }
+    task.fd_table().dup(oldfd)
 }
 
 /// 如果`oldfd == newfd`, 则不进行任何操作, 返回`newfd`
@@ -290,25 +288,7 @@ pub fn sys_dup3(oldfd: usize, newfd: usize, flags: i32) -> SyscallRet {
         flags
     );
     let task = current_task();
-    let flags = OpenFlags::from_bits(flags).unwrap();
-    if oldfd == newfd {
-        return Ok(newfd);
-    }
-    let fd_entry = task.fd_table().get_fdentry(oldfd);
-    if let Some(fd_entry) = fd_entry {
-        let fd_table = task.fd_table();
-        fd_table.close(newfd);
-        if fd_table
-            .insert(newfd, fd_entry.get_file(), FdFlags::from(&flags))
-            .is_some()
-        {
-            log::warn!("sys_dup2: newfd {} already opened", newfd);
-        }
-        return Ok(newfd);
-    } else {
-        log::error!("sys_dup2: oldfd {} not opened", oldfd);
-        return Err(Errno::EBADF);
-    }
+    task.fd_table().dup3(oldfd, newfd, flags)
 }
 
 pub fn sys_unlinkat(dirfd: i32, pathname: *const u8, flag: i32) -> SyscallRet {
@@ -563,7 +543,7 @@ pub fn sys_pipe2(fdset_ptr: *mut i32, flags: i32) -> SyscallRet {
     log::trace!("[sys_pipe2]");
     let flags = OpenFlags::from_bits(flags).unwrap();
     let task = current_task();
-    let pipe_pair = make_pipe();
+    let pipe_pair = make_pipe(flags);
     let fd_table = task.fd_table();
     let fd_flags = FdFlags::from(&flags);
     let fd1 = fd_table.alloc_fd(pipe_pair.0.clone(), fd_flags)?;
@@ -748,60 +728,7 @@ impl TryFrom<i32> for FcntlOp {
 pub fn sys_fcntl(fd: i32, op: i32, arg: usize) -> SyscallRet {
     log::info!("[sys_fcntl] fd: {}, op: {}, arg: {}", fd, op, arg);
     let task = current_task();
-    // let file = task.fd_table().get_file(fd as usize);
-    let fd_entry = task.fd_table().get_fdentry(fd as usize);
-    let op = FcntlOp::try_from(op).unwrap_or(FcntlOp::F_UNIMPL);
-    let fd_flags = FdFlags::from(&op);
-    if let Some(entry) = fd_entry {
-        match op {
-            FcntlOp::F_DUPFD => {
-                // let newfd = task.fd_table().alloc_fd(file.clone(), FdFlags::empty());
-                return task.fd_table().alloc_fd_above_lower_bound(
-                    entry.get_file().clone(),
-                    fd_flags,
-                    arg,
-                );
-            }
-            FcntlOp::F_DUPFD_CLOEXEC => {
-                return task.fd_table().alloc_fd_above_lower_bound(
-                    entry.get_file().clone(),
-                    fd_flags,
-                    arg,
-                );
-            }
-            FcntlOp::F_GETFD => {
-                // 获取fd entry的flags
-                // 这里的flags是FdFlags, 不是OpenFlags
-                return Ok(i32::from(entry.get_flags()) as usize);
-            }
-            FcntlOp::F_SETFD => {
-                // 仅仅是设置fd的flags, 不会影响fd_table中的fd
-                let mut fd_entry = entry.clone();
-                fd_entry.set_flags(FdFlags::from_bits(arg).unwrap());
-                return Ok(0);
-            }
-            FcntlOp::F_GETFL => {
-                // 获取文件的状态标志(OpenFlags)
-                let flags = entry.get_file().get_flags();
-                log::error!("[sys_fcntl] get flags: {:?}", flags);
-                return Ok(flags.bits() as usize);
-            }
-            FcntlOp::F_SETFL => {
-                // 设置flags
-                let mut flags = OpenFlags::from_bits_truncate(arg as i32);
-                // 忽略访问模式和文件创建标志
-                flags.remove(OpenFlags::O_ACCMODE);
-                flags.remove(OpenFlags::CREATION_FLAGS);
-                log::error!("[sys_fcntl] set flags: {:?}", flags);
-                entry.get_file().set_flags(flags);
-                return Ok(0);
-            }
-            _ => {
-                panic!("[sys_fcntl] Unimplemented");
-            }
-        }
-    }
-    Err(Errno::EBADF)
+    task.fd_table().fcntl(fd as usize, op, arg)
 }
 
 // pub fn sys_select(
@@ -1070,6 +997,36 @@ pub fn sys_ppoll(
         task.op_sig_pending_mut(|sig_pending| sig_pending.mask = origin_sigset);
     }
     Ok(done)
+}
+
+pub fn sys_readlinkat(dirfd: i32, pathname: *const u8, buf: *mut u8, bufsiz: usize) -> SyscallRet {
+    let path = c_str_to_string(pathname);
+    let mut nd = Nameidata::new(&path, dirfd);
+    let fake_lookup_flags = 0;
+    match filename_lookup(&mut nd, fake_lookup_flags) {
+        Ok(dentry) => {
+            if dentry.is_symlink() {
+                let inode = dentry.get_inode();
+                let link_path = inode.get_link();
+                if link_path.len() > bufsiz {
+                    return Err(Errno::ENAMETOOLONG);
+                }
+                log::info!(
+                    "[sys_readlinkat] readlinkat: {}, link_path: {:?}",
+                    path,
+                    link_path
+                );
+                copy_to_user(buf, link_path.as_ptr(), link_path.len()).unwrap();
+                return Ok(link_path.len());
+            } else {
+                return Err(Errno::EINVAL);
+            }
+        }
+        Err(e) => {
+            log::info!("[sys_readlinkat] fail to readlinkat: {}, {:?}", path, e);
+            return Err(e);
+        }
+    }
 }
 
 /// Todo: 目前只支持了Pipe的hang_up, r_ready, w_ready

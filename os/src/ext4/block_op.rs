@@ -358,6 +358,43 @@ impl<'a> Ext4Bitmap<'a> {
         }
         None
     }
+    pub fn alloc_contiguous(&mut self, bitmap_size: usize, count: usize) -> Option<usize> {
+        let total_bits = bitmap_size * 8;
+        let mut current_run = 0;
+        let mut start_bit = 0;
+
+        for bit in 0..total_bits {
+            let byte_index = bit / 8;
+            let bit_index = bit % 8;
+
+            if byte_index >= self.bitmap.len() {
+                break;
+            }
+
+            if self.bitmap[byte_index] & (1 << bit_index) == 0 {
+                // 空闲位
+                if current_run == 0 {
+                    start_bit = bit;
+                }
+                current_run += 1;
+                if current_run == count {
+                    // 找到足够的连续空闲位，开始标记为已分配
+                    for b in start_bit..(start_bit + count) {
+                        let bi = b / 8;
+                        let bj = b % 8;
+                        self.bitmap[bi] |= 1 << bj;
+                    }
+                    // 如果分配的是 inode bitmap，要从 1 开始编号
+                    return Some(start_bit + 1);
+                }
+            } else {
+                current_run = 0;
+            }
+        }
+
+        None
+    }
+
     // 注意block_offset只是inode_num % (block_size * 8), 需要上层调用者负责转换
     pub fn dealloc(&mut self, block_offset: usize) {
         assert!(block_offset < PAGE_SIZE);

@@ -38,11 +38,6 @@ pub fn do_futex(
     let flags: i32 = futex_op_to_flag(futex_op);
     // cmd determines the operation of futex
     let cmd: i32 = futex_op & FUTEX_CMD_MASK;
-    // TODO: shared futex and real time clock
-    // It's Ok for ananonymous mmap to use private futex
-    if (flags & FLAGS_CLOCKRT) != 0 {
-        panic!("FUTEX_CLOCK_REALTIME is not supported");
-    }
 
     match cmd {
         FUTEX_WAIT => {
@@ -60,7 +55,13 @@ pub fn do_futex(
                 None
             };
             let deadline: Option<TimeSpec> = if timeout.is_some() {
-                Some(timeout.unwrap() + TimeSpec::new_machine_time())
+                if flags & FLAGS_CLOCKRT != 0 {
+                    // convert relative timeout to absolute timeout
+                    Some(timeout.unwrap() + TimeSpec::new_machine_time())
+                } else {
+                    // convert relative timeout to absolute timeout
+                    Some(timeout.unwrap() + TimeSpec::new_machine_time())
+                }
             } else {
                 None
             };

@@ -15,8 +15,9 @@ use fs::{
     sys_chdir, sys_close, sys_dup, sys_dup3, sys_faccessat, sys_fchmodat, sys_fchownat, sys_fcntl,
     sys_fstat, sys_fstatat, sys_fsync, sys_ftruncate, sys_getcwd, sys_getdents64, sys_ioctl,
     sys_linkat, sys_lseek, sys_mkdirat, sys_mknodat, sys_mount, sys_openat, sys_pipe2, sys_ppoll,
-    sys_pread, sys_pwrite, sys_read, sys_readv, sys_renameat2, sys_sendfile, sys_statfs, sys_statx,
-    sys_sync, sys_umount2, sys_unlinkat, sys_utimensat, sys_write, sys_writev,
+    sys_pread, sys_pwrite, sys_read, sys_readlinkat, sys_readv, sys_renameat2, sys_sendfile,
+    sys_statfs, sys_statx, sys_sync, sys_umount2, sys_unlinkat, sys_utimensat, sys_write,
+    sys_writev,
 };
 use mm::{
     sys_brk, sys_madvise, sys_mmap, sys_mprotect, sys_munmap, sys_shmat, sys_shmctl, sys_shmdt,
@@ -83,6 +84,7 @@ const SYSCALL_PWRITE: usize = 68;
 const SYSCALL_SENDFILE: usize = 71;
 const SYSCALL_PSELECT6: usize = 72;
 const SYSCALL_PPOLL: usize = 73;
+const SYSCALL_READLINKAT: usize = 78;
 const SYSCALL_FSTATAT: usize = 79;
 const SYSCALL_FSTAT: usize = 80;
 const SYSCALL_SYNC: usize = 81;
@@ -145,13 +147,12 @@ const SYSCALL_STATX: usize = 291;
 
 const CARELESS_SYSCALLS: [usize; 5] = [62, 63, 64, 124, 260];
 // const SYSCALL_NUM_2_NAME: [(&str, usize); 4] = [
-const SYSCALL_NUM_2_NAME: [(usize, &str); 6] = [
+const SYSCALL_NUM_2_NAME: [(usize, &str); 5] = [
     (SYSCALL_SETGID, "SYS_SETGID"),
     (SYSCALL_SETUID, "SYS_SETUID"),
     (SYSCALL_GETTID, "SYS_GETTID"),
     (SYSCALL_EXIT_GROUP, "SYS_EXIT_GROUP"),
     (SYSCALL_SIGALTSTACK, "SYS_SIGALTSTACK"),
-    (SYSCALL_GETRANDOM, "SYS_GETRANDOM"),
 ];
 
 #[no_mangle]
@@ -219,6 +220,7 @@ pub fn syscall(
         SYSCALL_SENDFILE => sys_sendfile(a0, a1, a2 as *mut usize, a3),
         // SYSCALL_PSELECT6 => sys_pselect6(a0, a1, a2, a3, a4 as *const TimeSpec, a5),
         SYSCALL_PPOLL => sys_ppoll(a0 as *mut PollFd, a1, a2 as *const TimeSpec, a3),
+        SYSCALL_READLINKAT => sys_readlinkat(a0 as i32, a1 as *const u8, a2 as *mut u8, a3),
         SYSCALL_FSTATAT => sys_fstatat(a0 as i32, a1 as *const u8, a2 as *mut Stat, a3 as i32),
         SYSCALL_FSTAT => sys_fstat(a0 as i32, a1 as *mut Stat),
         SYSCALL_SYNC => sys_sync(a0),
@@ -284,6 +286,7 @@ pub fn syscall(
             a3 as *const u8,
             a4 as i32,
         ),
+        SYSCALL_GETRANDOM => Ok(0),
         SYSCALL_MEMBARRIER => Ok(0),
         SYSCALL_STATX => sys_statx(
             a0 as i32,

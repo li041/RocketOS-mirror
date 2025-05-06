@@ -184,13 +184,6 @@ impl FdTable {
         old.map(|entry| entry.file)
     }
 
-    pub fn get_fdentry(&self, fd: usize) -> Option<FdEntry> {
-        self.table
-            .read()
-            .get(fd)
-            .and_then(|entry| entry.as_ref().cloned())
-    }
-
     pub fn get_file(&self, fd: usize) -> Option<Arc<dyn FileOp>> {
         log::trace!("[FdTable::get_file]");
         self.table
@@ -266,6 +259,86 @@ impl FdTable {
                 }
             }
         }
+    }
+}
+
+// 系统调用实现
+impl FdTable {
+    pub fn dup(&self, fd: usize) -> SyscallRet {
+        let file = self
+            .table
+            .read()
+            .get(fd)
+            .and_then(|entry| entry.as_ref())
+            .ok_or(Errno::EBADF)?
+            .get_file();
+        self.alloc_fd(file, FdFlags::empty())
+    }
+    pub fn dup3(&self, fd: usize, new_fd: usize, flags: i32) -> SyscallRet {
+        let file = self
+            .table
+            .read()
+            .get(fd)
+            .and_then(|entry| entry.as_ref())
+            .ok_or(Errno::EBADF)?
+            .get_file();
+        let fd_flags = FdFlags::from_bits(flags as usize).unwrap_or(FdFlags::empty());
+        if self.insert(new_fd, file, fd_flags).is_some() {
+            log::warn!("[dup3] fd {} already exists, replaced", new_fd);
+        }
+        Ok(new_fd)
+    }
+    pub fn fcntl(&self, fd: usize, op: i32, arg: usize) -> SyscallRet {
+        // let table = self.table.read();
+        // let fd_entry = table.get(fd).and_then(|entry| entry.as_ref());
+        let op = FcntlOp::try_from(op).unwrap_or(FcntlOp::F_UNIMPL);
+        let fd_flags = FdFlags::from(&op);
+
+        // if let Some(entry) = fd_entry {
+        match op {
+            FcntlOp::F_DUPFD | FcntlOp::F_DUPFD_CLOEXEC => {
+                let file = self.get_file(fd).ok_or(Errno::EBADF)?;
+                return self.alloc_fd_above_lower_bound(file, fd_flags, arg);
+            }
+            FcntlOp::F_GETFD => {
+                let flags = self
+                    .table
+                    .read()
+                    .get(fd)
+                    .and_then(|entry| entry.as_ref())
+                    .ok_or(Errno::EBADF)?
+                    .get_flags();
+                return Ok(i32::from(flags) as usize);
+            }
+            FcntlOp::F_SETFD => {
+                self.table
+                    .write()
+                    .get_mut(fd)
+                    .and_then(|entry| entry.as_mut())
+                    .ok_or(Errno::EBADF)?
+                    .set_flags(FdFlags::from_bits(arg).unwrap());
+                return Ok(0);
+            }
+            FcntlOp::F_GETFL => {
+                let flags = self.get_file(fd).ok_or(Errno::EBADF)?.get_flags();
+                log::info!("[fcntl] get OpenFlags: {:?}", flags);
+                return Ok(flags.bits() as usize);
+            }
+            FcntlOp::F_SETFL => {
+                let file = self.get_file(fd).ok_or(Errno::EBADF)?;
+                let mut flags = OpenFlags::from_bits_truncate(arg as i32);
+                flags.remove(OpenFlags::O_ACCMODE);
+                flags.remove(OpenFlags::CREATION_FLAGS);
+                log::info!("[fcntl] set OpenFlags: {:?}", flags);
+                file.set_flags(flags);
+                return Ok(0);
+            }
+            _ => {
+                log::warn!("[fcntl] Unsupported op: {:?}", op);
+                return Err(Errno::EINVAL);
+            }
+        }
+        // }
     }
 }
 

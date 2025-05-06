@@ -11,7 +11,7 @@ use crate::syscall::errno::{Errno, SyscallRet};
 use crate::task::{current_task, wait, wakeup, yield_current_task, Tid};
 use crate::timer::TimeSpec;
 
-use super::file::FileOp;
+use super::file::{FileOp, OpenFlags};
 use super::inode::InodeOp;
 use super::kstat::Kstat;
 
@@ -93,21 +93,24 @@ pub struct Pipe {
     readable: bool,
     writable: bool,
     buffer: Arc<Mutex<PipeRingBuffer>>,
+    flags: OpenFlags,
 }
 
 impl Pipe {
-    pub fn read_end_with_buffer(buffer: Arc<Mutex<PipeRingBuffer>>) -> Self {
+    pub fn read_end_with_buffer(buffer: Arc<Mutex<PipeRingBuffer>>, flags: OpenFlags) -> Self {
         Self {
             readable: true,
             writable: false,
             buffer,
+            flags,
         }
     }
-    pub fn write_end_with_buffer(buffer: Arc<Mutex<PipeRingBuffer>>) -> Self {
+    pub fn write_end_with_buffer(buffer: Arc<Mutex<PipeRingBuffer>>, flags: OpenFlags) -> Self {
         Self {
             readable: false,
             writable: true,
             buffer,
+            flags,
         }
     }
 }
@@ -230,12 +233,12 @@ impl PipeRingBuffer {
 }
 
 /// Return (read_end, write_end)
-pub fn make_pipe() -> (Arc<Pipe>, Arc<Pipe>) {
+pub fn make_pipe(flags: OpenFlags) -> (Arc<Pipe>, Arc<Pipe>) {
     log::trace!("[make_pipe]");
     let buffer = Arc::new(Mutex::new(PipeRingBuffer::new()));
     // buffer仅剩两个强引用，这样读写端关闭后就会被释放
-    let read_end = Arc::new(Pipe::read_end_with_buffer(buffer.clone()));
-    let write_end = Arc::new(Pipe::write_end_with_buffer(buffer.clone()));
+    let read_end = Arc::new(Pipe::read_end_with_buffer(buffer.clone(), flags));
+    let write_end = Arc::new(Pipe::write_end_with_buffer(buffer.clone(), flags));
     buffer.lock().set_write_end(&write_end);
     buffer.lock().set_read_end(&read_end);
     (read_end, write_end)
@@ -357,6 +360,9 @@ impl FileOp for Pipe {
     }
     fn get_inode(&self) -> Arc<dyn InodeOp> {
         PIPEINODE.clone()
+    }
+    fn get_flags(&self) -> OpenFlags {
+        self.flags
     }
 }
 
