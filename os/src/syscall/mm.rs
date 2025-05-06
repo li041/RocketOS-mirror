@@ -23,6 +23,7 @@ use bitflags::bitflags;
 
 use super::errno::SyscallRet;
 
+/// 失败返回的是当前brk, 成功返回新的brk
 pub fn sys_brk(brk: usize) -> SyscallRet {
     log::info!("sys_brk: brk: {:#x}", brk);
     let task = current_task();
@@ -39,7 +40,7 @@ pub fn sys_brk(brk: usize) -> SyscallRet {
         if brk < heap_bottom {
             // brk小于堆底, 不合法
             log::error!("[sys_brk] brk {:#x} < heap_bottom {:#x}", brk, heap_bottom);
-            return Err(Errno::EINVAL);
+            return Ok(memory_set.brk);
         } else if brk > ceil_to_page_size(current_brk) {
             // 需要分配页
             if current_brk == heap_bottom {
@@ -119,6 +120,7 @@ bitflags! {
         const MAP_DENYWRITE = 0x800;
         const MAP_NORESERVE = 0x4000;
         const MAP_POPULATE = 0x8000;
+        const MAP_STACK = 0x20000;
     }
 }
 impl Debug for MmapFlags {

@@ -2,7 +2,7 @@ use alloc::sync::Arc;
 use spin::RwLock;
 
 use crate::{
-    drivers::block::{block_cache::get_block_cache, block_dev::BlockDevice},
+    drivers::block::{self, block_cache::get_block_cache, block_dev::BlockDevice},
     mutex::SpinNoIrqLock,
 };
 
@@ -184,22 +184,27 @@ impl GroupDesc {
         block_device: Arc<dyn BlockDevice>,
         ext4_block_size: usize,
         block_bitmap_size: usize,
+        block_count: usize,
     ) -> Option<usize> {
         let mut inner = self.inner.write();
-        if inner.free_blocks_count > 0 {
-            let num_blocks = block_bitmap_size / ext4_block_size;
-            for i in 0..num_blocks {
-                let block_id = self.block_bitmap as usize + i;
-                if let Some(block_num) = Ext4Bitmap::new(
-                    get_block_cache(block_id, block_device.clone(), ext4_block_size)
-                        .lock()
-                        .get_mut(0),
-                )
-                .alloc(block_bitmap_size)
-                {
-                    inner.free_blocks_count -= 1;
-                    return Some(block_num + (i * ext4_block_size * 8));
-                }
+        let num_blocks = block_bitmap_size / ext4_block_size;
+        // 检查是否有足够的空闲块
+        if inner.free_blocks_count < block_count as u32 {
+            return None;
+        }
+        for i in 0..num_blocks {
+            let block_id = self.block_bitmap as usize + i;
+            if let Some(block_num) = Ext4Bitmap::new(
+                get_block_cache(block_id, block_device.clone(), ext4_block_size)
+                    .lock()
+                    .get_mut(0),
+            )
+            // .alloc(block_bitmap_size)
+            .alloc_contiguous(block_bitmap_size, block_count)
+            // 修改bg的free_blocks_count, checksum
+            {
+                inner.free_blocks_count -= block_count as u32;
+                return Some(block_num + (i * ext4_block_size * 8));
             }
         }
         return None;

@@ -78,6 +78,7 @@ pub struct Task {
     children: Arc<SpinNoIrqLock<BTreeMap<Tid, Arc<Task>>>>, // 子任务
     thread_group: Arc<SpinNoIrqLock<ThreadGroup>>,          // 线程组
     exit_code: AtomicI32,                                   // 退出码
+    exe_path: Arc<RwLock<String>>,                          // 执行路径
 
     // 内存管理
     // 包括System V shm管理
@@ -128,6 +129,7 @@ impl Task {
             children: Arc::new(SpinNoIrqLock::new(BTreeMap::new())),
             thread_group: Arc::new(SpinNoIrqLock::new(ThreadGroup::new())),
             exit_code: AtomicI32::new(0),
+            exe_path: Arc::new(RwLock::new(String::new())),
             memory_set: Arc::new(RwLock::new(MemorySet::new_bare())),
             robust_list_head: AtomicUsize::new(0),
             fd_table: FdTable::new(),
@@ -167,6 +169,7 @@ impl Task {
             children: Arc::new(SpinNoIrqLock::new(BTreeMap::new())),
             thread_group: Arc::new(SpinNoIrqLock::new(ThreadGroup::new())),
             exit_code: AtomicI32::new(0),
+            exe_path: Arc::new(RwLock::new(String::from("/initproc"))),
             memory_set: Arc::new(RwLock::new(memory_set)),
             robust_list_head: AtomicUsize::new(0),
             fd_table: FdTable::new(),
@@ -204,6 +207,7 @@ impl Task {
         let tid = tid_alloc();
         let tid_address = SpinNoIrqLock::new(TidAddress::new());
         let exit_code = AtomicI32::new(0);
+        let exe_path;
         let status = SpinNoIrqLock::new(TaskStatus::Ready);
         let tgid;
         let mut kstack;
@@ -249,6 +253,7 @@ impl Task {
             children = self.children.clone();
             thread_group = self.thread_group.clone();
             itimerval = self.itimerval.clone();
+            exe_path = self.exe_path.clone();
         }
         // 创建进程
         else {
@@ -258,6 +263,7 @@ impl Task {
             children = Arc::new(SpinNoIrqLock::new(BTreeMap::new()));
             thread_group = Arc::new(SpinNoIrqLock::new(ThreadGroup::new()));
             itimerval = Arc::new(RwLock::new([ITimerVal::default(); 3]));
+            exe_path = Arc::new(RwLock::new(String::new()));
         }
 
         if flags.contains(CloneFlags::CLONE_VM) {
@@ -307,6 +313,7 @@ impl Task {
             parent,
             children,
             exit_code,
+            exe_path,
             thread_group,
             memory_set,
             robust_list_head,
@@ -477,6 +484,7 @@ impl Task {
 
     pub fn kernel_execve_lazily(
         self: &Arc<Self>,
+        exe_path: String,
         elf_file: Arc<dyn FileOp>,
         elf_data: &[u8],
         mut args_vec: Vec<String>,
@@ -488,6 +496,8 @@ impl Task {
             MemorySet::from_elf_lazily(elf_file, elf_data.to_vec(), &mut args_vec);
         // 更新页表
         memory_set.activate();
+        // 更新exe_path
+        *self.exe_path.write() = exe_path;
 
         #[cfg(target_arch = "loongarch64")]
         memory_set.push_with_offset(
@@ -723,6 +733,9 @@ impl Task {
     }
     pub fn exit_code(&self) -> i32 {
         self.exit_code.load(core::sync::atomic::Ordering::SeqCst)
+    }
+    pub fn exe_path(&self) -> String {
+        self.exe_path.read().clone()
     }
     pub fn memory_set(&self) -> Arc<RwLock<MemorySet>> {
         self.memory_set.clone()

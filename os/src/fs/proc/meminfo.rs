@@ -102,7 +102,7 @@ pub struct MemInfoFile {
 }
 
 #[derive(Default)]
-struct MemInfoFileInner {
+pub struct MemInfoFileInner {
     pub offset: usize,
 }
 

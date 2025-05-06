@@ -8,6 +8,7 @@ use super::{
     mount::VfsMount,
     path::Path,
     proc::{
+        exe::EXE,
         meminfo::MEMINFO,
         mounts::{MountsFile, MOUNTS},
     },
@@ -16,7 +17,7 @@ use super::{
 use crate::{
     ext4::{
         dentry,
-        inode::{S_IFCHR, S_IFDIR, S_IFMT, S_IFREG},
+        inode::{self, S_IFCHR, S_IFDIR, S_IFMT, S_IFREG},
     },
     fs::{
         dentry::DentryFlags,
@@ -184,6 +185,21 @@ pub fn open_last_lookups(
     let absolute_current_dir = nd.dentry.absolute_path.clone();
 
     loop {
+        // 判断是否是 O_TMPFILE
+        if flags.contains(OpenFlags::O_TMPFILE) {
+            // 确保传入的是目录路径
+            let dir_inode = nd.dentry.get_inode();
+            if !dir_inode.get_mode() & S_IFMT == S_IFDIR {
+                return Err(Errno::ENOTDIR);
+            }
+
+            // 创建匿名 inode，不插入 dentry
+            let tmp_inode = dir_inode.tmpfile(mode as u16);
+
+            // 用 inode 创建文件对象（不绑定路径）
+            return Ok(Arc::new(File::new(Path::zero_init(), tmp_inode, flags)));
+        }
+
         if follow_symlink > MAX_SYMLINK_DEPTH {
             return Err(Errno::ELOOP); // 避免符号链接循环
         }
@@ -261,6 +277,9 @@ fn create_file_from_dentry(
         }
         if dentry.absolute_path == "/proc/meminfo" {
             return Ok(MEMINFO.get().unwrap().clone());
+        }
+        if dentry.absolute_path == "/proc/self/exe" {
+            return Ok(EXE.get().unwrap().clone());
         }
     }
 

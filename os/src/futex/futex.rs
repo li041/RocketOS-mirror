@@ -172,11 +172,15 @@ pub fn futex_wait(
     }
     loop {
         if let Some(deadline) = deadline {
-            let now = TimeSpec::new_machine_time();
+            let now = if flags & FLAGS_CLOCKRT != 0 {
+                TimeSpec::new_wall_time()
+            } else {
+                TimeSpec::new_machine_time()
+            };
             is_timeout = deadline < now;
         }
         if deadline.is_none() || !is_timeout {
-            wait();
+            yield_current_task();
         }
 
         // If we were woken (and unqueued), we succeeded, whatever.
@@ -185,7 +189,7 @@ pub fn futex_wait(
         let cur_id = current_task().tid();
         // 查看自己是否在队列中
         hash_bucket.retain(|futex_q| futex_q.task.upgrade().is_some());
-        if let Some(_idx) = hash_bucket
+        if let Some(idx) = hash_bucket
             .iter()
             .position(|futex_q| futex_q.task.upgrade().unwrap().tid() == cur_id)
         {
@@ -224,7 +228,7 @@ pub fn futex_wake(uaddr: usize, flags: i32, nr_waken: u32) -> SyscallRet {
         } else {
             hash_bucket.retain(|futex_q| {
                 if ret < nr_waken && futex_q.key == key {
-                    wakeup(futex_q.task.upgrade().unwrap().tid());
+                    // wakeup(futex_q.task.upgrade().unwrap().tid());
                     log::info!("wake up task {:?}", futex_q.task.upgrade().unwrap().tid());
                     ret += 1;
                     return false;

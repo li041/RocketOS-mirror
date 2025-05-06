@@ -10,9 +10,11 @@ use super::{
     AT_FDCWD,
 };
 use alloc::sync::Arc;
+use exe::{ExeFile, EXE};
 use meminfo::{MemInfoFile, MEMINFO};
 use mounts::{MountsFile, MOUNTS};
 
+pub mod exe;
 pub mod meminfo;
 pub mod mounts;
 
@@ -89,4 +91,48 @@ pub fn init_procfs(root_path: Arc<Path>) {
             panic!("create {} failed: {:?}", mounts_path, e);
         }
     };
+    // /proc/self/exe
+    // /proc/self
+    let self_path = "/proc/self";
+    let mut nd = Nameidata {
+        path_segments: parse_path(self_path),
+        dentry: root_path.dentry.clone(),
+        mnt: root_path.mnt.clone(),
+        depth: 0,
+    };
+    let self_mode = S_IFDIR as u16 | 0o755;
+    match filename_create(&mut nd, 0) {
+        Ok(dentry) => {
+            let parent_inode = nd.dentry.get_inode();
+            parent_inode.mkdir(dentry, self_mode);
+        }
+        Err(e) => {
+            panic!("create {} failed: {:?}", self_path, e);
+        }
+    };
+    // /proc/self/exe
+    let exe_path = "/proc/self/exe";
+    let exe_mode = S_IFREG as u16 | 0o444;
+    nd = Nameidata {
+        path_segments: parse_path(exe_path),
+        dentry: root_path.dentry.clone(),
+        mnt: root_path.mnt.clone(),
+        depth: 0,
+    };
+    match filename_create(&mut nd, 0) {
+        Ok(dentry) => {
+            let parent_inode = nd.dentry.get_inode();
+            parent_inode.create(dentry.clone(), exe_mode);
+            // 现在dentry的inode指向/proc/self/exe
+            let exe_file = ExeFile::new(
+                Path::new(root_path.mnt.clone(), dentry.clone()),
+                dentry.get_inode().clone(),
+                OpenFlags::empty(),
+            );
+            EXE.call_once(|| exe_file.clone());
+        }
+        Err(e) => {
+            panic!("create {} failed: {:?}", exe_path, e);
+        }
+    }
 }

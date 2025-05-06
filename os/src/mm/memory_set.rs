@@ -627,6 +627,7 @@ impl MemorySet {
                         memory_set.page_table.map(vpn, page.ppn(), map_perm.into());
                         map_area.pages.insert(vpn, page);
                     }
+                    memory_set.areas.insert(vpn_range.get_start(), map_area);
                 } else {
                     // 采用Framed + 直接拷贝数据到匿名页
                     let map_area = MapArea::new(vpn_range, MapType::Framed, map_perm, None, 0);
@@ -641,8 +642,10 @@ impl MemorySet {
                 }
             }
             if ph_type == Type::Tls {
-                let start_va: VirtAddr = (ph.virtual_addr() as usize).into();
-                tls_ptr = Some(start_va.0);
+                log::error!(
+                    "[from_elf_lazily] TLS: {:?}",
+                    &elf_data[ph.offset() as usize..ph.offset() as usize + ph.file_size() as usize]
+                );
             }
             // 判断是否需要动态链接
             if ph_type == Type::Interp {
@@ -1340,6 +1343,13 @@ impl MemorySet {
                     current_vpn.0
                 );
                 // self.page_table.dump_all_user_mapping();
+                self.areas.iter().for_each(|(vpn, area)| {
+                    log::error!(
+                        "[check_valid_user_vpn_range] area: {:#x?}, {:?}",
+                        area.vpn_range,
+                        area.map_perm
+                    );
+                });
                 return Err(Errno::EFAULT);
             }
         }

@@ -1,5 +1,4 @@
 use crate::{
-    timer::TimeSpec,
     drivers::block::block_cache::get_block_cache,
     ext4,
     fs::{
@@ -11,6 +10,7 @@ use crate::{
     },
     mm::Page,
     syscall::errno::{Errno, SyscallRet},
+    timer::TimeSpec,
 };
 use alloc::vec;
 use alloc::{
@@ -327,7 +327,7 @@ impl InodeOp for Ext4Inode {
             .ext4_fs
             .upgrade()
             .unwrap()
-            .alloc_block(self.block_device.clone());
+            .alloc_block(self.block_device.clone(), 1);
         // 初始化目录的第一个块, 添加`.`, `..`
         let mut buffer = vec![0u8; ext4_block_size];
         Ext4DirContentWE::new(&mut buffer).init_dot_dotdot(

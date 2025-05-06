@@ -151,8 +151,8 @@ pub fn trap_handler(cx: &mut TrapContext) {
                 );
         }
         Trap::Exception(Exception::Breakpoint) => {
-            panic!("Breakpoint at 0x{:x}", cx.sepc);
-            // cx.sepc += 4; // 跳过断点
+            // panic!("Breakpoint at 0x{:x}", cx.sepc);
+            cx.sepc += 4; // 跳过断点
         }
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
             set_next_trigger();

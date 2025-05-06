@@ -2,6 +2,7 @@ use core::fmt::Debug;
 
 use alloc::collections::btree_map::BTreeMap;
 use bitflags::bitflags;
+use log::error;
 
 use super::{ActionType, SigInfo};
 
@@ -68,6 +69,7 @@ impl SigPending {
     /// 如果wanted_sigset为满，则表示都可以, 取出pending中最小的一个信号
     pub fn fetch_signal(&mut self, wanted_sigset: SigSet) -> Option<(Sig, SigInfo)> {
         if let Some(sig) = self.find_signal(wanted_sigset) {
+            log::info!("[fetch_signal]: {:?}", sig);
             self.pending.remove_signal(sig);
             Some((sig, self.info.remove(&sig.raw()).unwrap()))
         } else {
@@ -201,7 +203,7 @@ impl Sig {
 impl Debug for Sig {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}({})", self.name(), self.raw()) // 显示信号名称和信号值
-    } 
+    }
 }
 
 // 这里假设usize到i32的转换是安全的，但要注意溢出的风险
@@ -302,6 +304,9 @@ impl SigSet {
 
     pub fn remove_signal(&mut self, sig: Sig) {
         self.remove(SigSet::from_bits(1 << sig.index()).unwrap())
+    }
+    pub fn revert(&mut self) -> SigSet {
+        !*self
     }
 }
 
