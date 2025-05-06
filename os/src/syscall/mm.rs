@@ -3,7 +3,7 @@ use core::fmt::Debug;
 use crate::{
     arch::{
         config::{MMAP_MIN_ADDR, PAGE_SIZE, PAGE_SIZE_BITS},
-        mm::copy_to_user,
+        mm::copy_to_user, trap::context::dump_trap_context,
     },
     fs::file::File,
     index_list::{IndexList, ListIndex},
@@ -211,9 +211,9 @@ pub fn sys_mmap(
 
     if flags.contains(MmapFlags::MAP_ANONYMOUS) {
         // 匿名映射
-        // 需要fd为-1, offset为0
+        // 需要offset为0
         // Todo: 支持lazy_allocation
-        if fd != -1 || offset != 0 {
+        if offset != 0 {
             return Err(Errno::EINVAL);
         }
         task.op_memory_set_mut(|memory_set| {
@@ -312,6 +312,7 @@ pub fn sys_mprotect(addr: usize, size: usize, prot: i32) -> SyscallRet {
                 addr,
                 addr + size
             );
+            memory_set.page_table.dump_all_user_mapping();
             return Err(Errno::ENOMEM);
         }
         Ok(0)
@@ -529,3 +530,26 @@ pub fn sys_shmctl(shmid: usize, op: i32, buf: *mut ShmId) -> SyscallRet {
 }
 
 /* shm end */
+pub fn sys_membarrier(_cmd: i32, _flags: i32, _cpu_id: u32) -> SyscallRet {
+    log::error!("Unimplemented sys_membarrier");
+    Ok(0)
+}
+
+pub fn sys_get_mempolicy(
+    _policy: usize,
+    _nodemask: usize,
+    _maxnode: usize,
+    _addr: usize,
+    _flags: usize,
+) -> SyscallRet {
+    log::error!("Unimplemented sys_get_mempolicy");
+    Ok(0)
+}
+
+pub fn sys_mlock(
+    _addr: usize,
+    _len: usize,
+) -> SyscallRet {
+    log::error!("Unimplemented sys_mlock");
+    Ok(0)
+}

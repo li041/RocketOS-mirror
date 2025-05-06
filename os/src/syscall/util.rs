@@ -174,7 +174,12 @@ pub fn sys_prlimit64(
         get_task(pid).expect("[sys_prlimit64]: invalid pid")
     };
     let resource = Resource::try_from(resource).unwrap();
-    log::error!("resource: {:?}", resource);
+    log::error!(
+        "resource: {:?}, new_limit: {:#x}, old_limit: {:#x}",
+        resource,
+        new_limit as usize,
+        old_limit as usize
+    );
     // 如果old_limit不为NULL, 则将当前的rlimit写入old_limit
     if !old_limit.is_null() {
         let old_rlimit = task
@@ -335,5 +340,19 @@ pub fn sys_getrusage(who: i32, rusage: *mut RUsage) -> SyscallRet {
         }
     }
     copy_to_user(rusage, &usage as *const RUsage, 1).expect("[sys_getrusage] copy_to_user failed");
+    Ok(0)
+}
+
+/*
+   函数 clock_getres() 用于查找指定时钟 clockid 的分辨率（精度）
+   如果 res 非空，则将其存储在 res 指向的 timespec 结构体中。
+   如果 clock_settime() 的参数 tp 指向的时间值不是 res 的倍数，则将其截断为 res 的倍数。（Todo)
+*/
+pub fn sys_clock_getres(_clockid: usize, res: usize) -> SyscallRet {
+    if res == 0 {
+        return Ok(0);
+    }
+    log::info!("[sys_clock_getres] res set 1 nanos");
+    copy_to_user(res as *mut TimeSpec, &TimeSpec::from_nanos(1), 1)?;
     Ok(0)
 }

@@ -30,17 +30,36 @@ pub fn c_str_to_string(ptr: *const u8) -> String {
 /// 由caller保证ptr的合法性
 /// Convert C-style string(end with '\0') to rust string
 pub fn c_str_to_string(ptr: *const u8) -> String {
-    use crate::{mm::VirtAddr, task::current_task};
+    use core::iter::Map;
+
+    use crate::{
+        mm::{MapPermission, VPNRange, VirtAddr},
+        syscall::errno::Errno,
+        task::current_task,
+    };
 
     assert!(
         !ptr.is_null(),
         "c_str_to_string: null pointer passed in, please check!"
     );
-    let mut ptr = current_task().op_memory_set(|memory_set| {
-        memory_set
-            .translate_va_to_pa(VirtAddr::from(ptr as usize))
-            .unwrap()
-    });
+    let start_vpn = VirtAddr::from(ptr as usize).floor();
+    let end_vpn = VirtAddr::from(ptr as usize).ceil();
+    let vpn_range = VPNRange::new(start_vpn, end_vpn);
+    let mut ptr = current_task().op_memory_set_mut(|memory_set| {
+        match memory_set.translate_va_to_pa(VirtAddr::from(ptr as usize)) {
+            Some(pa) => return Ok(pa),
+            None => {}
+        };
+        memory_set.check_valid_user_vpn_range(vpn_range, MapPermission::R)?;
+        memory_set.handle_lazy_allocation_area(
+            VirtAddr::from(ptr as usize),
+            crate::arch::trap::PageFaultCause::LOAD,
+        )?;
+        match memory_set.translate_va_to_pa(VirtAddr::from(ptr as usize)) {
+            Some(pa) => return Ok(pa),
+            None => return Err(Errno::EFAULT),
+        };
+    }).unwrap();
     let mut ret = String::new();
     // trace!("[c_str_to_string] convert ptr at {:#x} to string", ptr);
     loop {
