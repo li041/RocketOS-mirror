@@ -453,7 +453,7 @@ pub fn real_timer_callback(tid: Tid) {
             } else {
                 // 重新设置定时器
                 let dur = itimerval.it_interval;
-                add_real_timer(tid, dur);
+                add_real_timer(tid, dur.into());
             }
         })
     }

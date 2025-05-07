@@ -74,18 +74,79 @@ impl TimeSpec {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
+pub struct TimeVal {
+    /// 绝对时间, 表示从UNIX time以来的秒数
+    pub sec: usize,
+    /// 毫秒数, 表示秒数后剩余的部分
+    pub usec: usize,
+}
+
+impl From<TimeSpec> for TimeVal {
+    fn from(ts: TimeSpec) -> Self {
+        Self {
+            sec: ts.sec,
+            usec: ts.nsec / 1000,
+        }
+    }
+}
+
+impl From<TimeVal> for TimeSpec {
+    fn from(tv: TimeVal) -> Self {
+        Self {
+            sec: tv.sec,
+            nsec: tv.usec * 1000,
+        }
+    }
+}
+
+impl TimeVal {
+    pub fn is_zero(&self) -> bool {
+        self.sec == 0 && self.usec == 0
+    }
+}
+
+impl PartialEq for TimeVal {
+    fn eq(&self, other: &Self) -> bool {
+        self.sec == other.sec && self.usec == other.usec
+    }
+}
+
+impl PartialOrd for TimeVal {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        if self.sec == other.sec {
+            Some(self.usec.cmp(&other.usec))
+        } else {
+            Some(self.sec.cmp(&other.sec))
+        }
+    }
+}
+
+impl Sub for TimeVal {
+    type Output = Self;
+    fn sub(self, rhs: Self) -> Self::Output {
+        let mut sec = self.sec - rhs.sec;
+        let mut usec = self.usec - rhs.usec;
+        if usec < 0 {
+            sec -= 1;
+            usec += 1_000;
+        }
+        Self { sec, usec }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
 #[repr(C)]
 pub struct ITimerVal {
     /// 每次定时器触发之后, 重新设置的时间间隔
     /// 如果设置为0, 则定时器只触发一次
-    pub it_interval: TimeSpec,
+    pub it_interval: TimeVal,
     /// 相对时间, 表示从现在开始, 多少时间后第一次触发定时器
     /// 当这个值为0, 表示禁用定时器
-    pub it_value: TimeSpec,
+    pub it_value: TimeVal,
 }
 impl ITimerVal {
     pub fn is_valid(&self) -> bool {
-        self.it_interval.nsec < 1_000_000_000 && self.it_value.nsec < 1_000_000_000
+        self.it_interval.usec < 1_000_000_000 && self.it_value.usec < 1_000_000_000
     }
 }
 

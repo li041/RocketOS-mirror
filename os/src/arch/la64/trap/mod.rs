@@ -15,6 +15,7 @@ pub mod context;
 pub mod timer;
 
 use alloc::task;
+use context::dump_trap_context;
 pub use context::TrapContext;
 use timer::set_next_trigger;
 
@@ -115,6 +116,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
             current_task().op_memory_set_mut(|memory_set| {
                 if let Err(e) = memory_set.handle_recoverable_page_fault(va, cause) {
                         // memory_set.page_table.dump_all_user_mapping();
+                        dump_trap_context(&current_task());
                         panic!(
                             "Unrecoverble page fault in application, bad addr = {:#x}, scause = {:?}, era = {:#x}",
                             badv,

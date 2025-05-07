@@ -6,7 +6,7 @@ use core::{
 };
 
 use crate::{
-    timer::{StatxTimeStamp, TimeSpec, MSEC_PER_SEC},
+    timer::{StatxTimeStamp, TimeSpec, TimeVal, MSEC_PER_SEC},
     utils::{seconds_to_beijing_datetime, DateTime},
 };
 
@@ -38,6 +38,25 @@ impl TimeSpec {
         let sec = nanos / 1_000_000_000;
         let nsec = nanos % 1_000_000_000;
         TimeSpec { sec, nsec }
+    }
+}
+
+impl TimeVal {
+    pub fn new_machine_time() -> Self {
+        log::trace!("new machine time");
+        // new a time spec with machine time
+        let current_time = get_time_ms();
+        Self {
+            sec: current_time / 1000,
+            usec: (current_time % 1000),
+        }
+    }
+    pub fn new_wall_time() -> Self {
+        let mut time_val = TimeVal::default();
+        let current_time = get_time_ms();
+        time_val.sec = current_time / 1000;
+        time_val.usec = current_time % 1000;
+        time_val
     }
 }
 

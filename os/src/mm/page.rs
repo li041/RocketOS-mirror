@@ -59,16 +59,20 @@ impl Page {
         block_device: Arc<dyn BlockDevice>,
         inode: Weak<dyn InodeOp>,
     ) -> Self {
-        let start_block_id = fs_block_id * (*FS_BLOCK_SIZE / VIRTIO_BLOCK_SIZE);
+        let start_block_id = if fs_block_id != usize::MAX {
+            fs_block_id * (*FS_BLOCK_SIZE / VIRTIO_BLOCK_SIZE)
+        } else {
+            usize::MAX
+        };
         unsafe {
             let ppn = frame_alloc_ppn().unwrap();
             let vaddr = (ppn.0 << PAGE_SIZE_BITS) + KERNEL_BASE;
             let buf = core::slice::from_raw_parts_mut(vaddr as *mut u8, PAGE_SIZE);
             // 从块设备中读取数据到缓存中
-            if !fs_block_id != 0 {
+            if fs_block_id != usize::MAX {
                 block_device.read_blocks(start_block_id, buf);
             } else {
-                // 如果fs_block_id为0, 则不需要读取数据, 是稀疏文件的空洞
+                // 如果fs_block_id为usize::MAX, 则不需要读取数据, 是稀疏文件的空洞
                 // 直接清空页
                 buf.fill(0);
             }

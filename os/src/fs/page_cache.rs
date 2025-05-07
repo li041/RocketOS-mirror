@@ -51,8 +51,8 @@ impl AddressSpace {
         inode: Weak<dyn InodeOp>,
     ) -> Arc<Page> {
         // 注意有可能稀疏文件, 对应的fs_blcok_id可能是0
-        if fs_block_id == 0 {
-            log::error!("new_page_cache: fs_block_id is 0, sparse file");
+        if fs_block_id == usize::MAX {
+            log::error!("new_page_cache: fs_block_id is usize::MAX, sparse file");
         }
         let page = Arc::new(Page::new_filebe(fs_block_id, block_device, inode));
         self.i_pages.write().insert(page_offset, page.clone());

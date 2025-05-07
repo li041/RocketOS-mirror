@@ -576,7 +576,11 @@ impl MemorySet {
         let ph_entsize = elf_header.pt2.ph_entry_size() as usize;
         let mut entry_point = elf_header.pt2.entry_point() as usize;
         let mut aux_vec: Vec<AuxHeader> = Vec::with_capacity(64);
+        #[cfg(target_arch = "riscv64")]
         let ph_va = elf.program_header(0).unwrap().virtual_addr() as usize;
+        #[cfg(target_arch = "loongarch64")]
+        let ph_va = elf.program_header(0).unwrap().virtual_addr() as usize
+            + elf.header.pt2.ph_offset() as usize;
 
         /* 映射程序头 */
         // 程序头表在内存中的起始虚拟地址
@@ -640,12 +644,6 @@ impl MemorySet {
                         map_offset,
                     );
                 }
-            }
-            if ph_type == Type::Tls {
-                log::error!(
-                    "[from_elf_lazily] TLS: {:?}",
-                    &elf_data[ph.offset() as usize..ph.offset() as usize + ph.file_size() as usize]
-                );
             }
             // 判断是否需要动态链接
             if ph_type == Type::Interp {
@@ -937,7 +935,7 @@ impl MemorySet {
         let mut split_new_areas: Vec<MapArea> = Vec::new();
         let remap_vpn_end = remap_vpn_range.get_end();
         // 只检查可能与rnmap_vpn_range重叠的区域
-        for (_vpn, area) in self.areas.range_mut(..=remap_vpn_end).rev() {
+        for (_vpn, area) in self.areas.range_mut(..remap_vpn_end).rev() {
             if area.vpn_range.is_intersect_with(&remap_vpn_range) {
                 let old_vpn_start = area.vpn_range.get_start();
                 let old_vpn_end = area.vpn_range.get_end();
@@ -997,7 +995,7 @@ impl MemorySet {
         let unmap_vpn_end = unmap_vpn_range.get_end();
         // 只检查可能与unmap_vpn_range重叠的区域
         // self.areas.range_mut(..=unmap_vpn_end).rev().for_each(|(vpn, area)| {
-        for (vpn, area) in self.areas.range_mut(..=unmap_vpn_end).rev() {
+        for (vpn, area) in self.areas.range_mut(..unmap_vpn_end).rev() {
             if area.vpn_range.is_intersect_with(&unmap_vpn_range) {
                 let old_vpn_start = area.vpn_range.get_start();
                 let old_vpn_end = area.vpn_range.get_end();
@@ -1421,6 +1419,15 @@ impl MemorySet {
         log::trace!("[handle_recoverable_page_fault]");
         let vpn = va.floor();
         let page_table = &mut self.page_table;
+        // #[cfg(target_arch = "loongarch64")]
+        // if vpn == VirtPageNum(0) {
+        //     // tls相关的缺页
+        //     let page = Page::new_framed(None);
+        //     let pte_flags = PTEFlags::from(MapPermission::R | MapPermission::W | MapPermission::U);
+        //     let ppn = page.ppn();
+        //     page_table.map(vpn, ppn, pte_flags);
+        //     return Ok(());
+        // }
         if let Some(pte) = page_table.find_pte(vpn) {
             if pte.is_cow() {
                 log::error!(
