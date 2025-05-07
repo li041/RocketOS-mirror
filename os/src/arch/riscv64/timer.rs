@@ -7,7 +7,7 @@ use core::{
 use crate::{
     arch::{boards::qemu::CLOCK_FREQ, sbi::set_timer},
     mm::{VirtAddr, KERNEL_SPACE},
-    timer::{StatxTimeStamp, TimeSpec, MSEC_PER_SEC, TICKS_PER_SEC},
+    timer::{StatxTimeStamp, TimeSpec, TimeVal, MSEC_PER_SEC, TICKS_PER_SEC},
 };
 use riscv::register::time;
 
@@ -34,6 +34,25 @@ impl TimeSpec {
         let sec = nanos / 1_000_000_000;
         let nsec = nanos % 1_000_000_000;
         TimeSpec { sec, nsec }
+    }
+}
+
+impl TimeVal {
+    pub fn new_machine_time() -> Self {
+        // new a time spec with machine time
+        let current_time = get_time_ms();
+        Self {
+            sec: (current_time / 1000) as usize,
+            usec: (current_time % 1000) as usize,
+        }
+    }
+    pub fn new_wall_time() -> Self {
+        // new a time spec with machine time
+        let current_time = read_rtc();
+        Self {
+            sec: (current_time / NANOS_PER_SEC) as usize,
+            usec: ((current_time % NANOS_PER_SEC) / 1000) as usize,
+        }
     }
 }
 

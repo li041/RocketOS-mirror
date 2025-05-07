@@ -226,7 +226,7 @@ pub fn sys_rt_sigprocmask(how: usize, set: usize, oldset: usize) -> SyscallRet {
         copy_from_user(set_ptr, &mut new_mask as *mut SigSet, 1)?;
         // log::info!("[sys_rt_sigprocmask] current mask {:?}", new_mask);
         new_mask.remove(SigSet::SIGKILL | SigSet::SIGCONT);
-        log::info!("[sys_rt_sigprocmask] new mask {:?}", new_mask);
+        // log::info!("[sys_rt_sigprocmask] new mask {:?}", new_mask);
         let mut change_mask = SigSet::empty();
         match how {
             SIG_BLOCK => {
@@ -240,10 +240,10 @@ pub fn sys_rt_sigprocmask(how: usize, set: usize, oldset: usize) -> SyscallRet {
                 return Err(Errno::EINVAL);
             }
         }
-        log::info!(
-            "[sys_rt_sigprocmask] SIG_BLOCK: change_mask: {:?}",
-            change_mask
-        );
+        // log::info!(
+        //     "[sys_rt_sigprocmask] SIG_BLOCK: change_mask: {:?}",
+        //     change_mask
+        // );
         task.op_sig_pending_mut(|pending| {
             pending.change_mask(change_mask);
         })

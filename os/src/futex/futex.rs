@@ -181,11 +181,14 @@ pub fn futex_wait(
         }
         if deadline.is_none() || !is_timeout {
             yield_current_task();
+            // wait();
         }
 
         // If we were woken (and unqueued), we succeeded, whatever.
         // We doesn't care about the reason of wakeup if we were unqueued.
         let mut hash_bucket = FUTEXQUEUES.buckets[futex_hash(&key)].lock();
+        // 神奇小咒语
+        log::trace!("[futex_wait] hash_bucket len: {:?}", hash_bucket.len());
         let cur_id = current_task().tid();
         // 查看自己是否在队列中
         hash_bucket.retain(|futex_q| futex_q.task.upgrade().is_some());

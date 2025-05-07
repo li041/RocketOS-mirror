@@ -8,7 +8,7 @@ use crate::futex::do_futex;
 use crate::syscall::errno::Errno;
 use crate::syscall::util::{CLOCK_MONOTONIC, CLOCK_REALTIME};
 use crate::task::{get_scheduler_len, get_task, wait, wait_timeout, CloneFlags, Task};
-use crate::timer::TimeSpec;
+use crate::timer::{TimeSpec, TimeVal};
 use crate::{
     arch::mm::copy_to_user,
     arch::timer::get_time_ms,
@@ -355,16 +355,6 @@ pub fn sys_set_robust_list(_robust_list: usize, _len: usize) -> SyscallRet {
 
 pub fn sys_get_robust_list(_pid: i32, _robust_list: usize, _len: usize) -> SyscallRet {
     Ok(0)
-}
-
-/// sys_gettimeofday, current time = sec + usec
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct TimeVal {
-    /// seconds
-    pub sec: usize,
-    /// microseconds
-    pub usec: usize,
 }
 
 pub fn sys_get_time(time_val_ptr: usize) -> SyscallRet {

@@ -362,16 +362,16 @@ pub fn sys_linkat(
 /// mode是直接传递给ext4_create, 由其处理(仅当O_CREAT设置时有效, 指定inode的权限)
 /// flags影响文件的打开, 在flags中指定O_CREAT, 则创建文件
 pub fn sys_openat(dirfd: i32, pathname: *const u8, flags: i32, mode: usize) -> SyscallRet {
-    log::info!(
-        "[sys_openat] dirfd: {}, pathname: {:?}, flags: {:?}, mode: {}",
-        dirfd,
-        pathname,
-        flags,
-        mode
-    );
     let flags = OpenFlags::from_bits(flags).unwrap();
     let task = current_task();
     let path = c_str_to_string(pathname);
+    log::info!(
+        "[sys_openat] dirfd: {}, pathname: {:?}, flags: {:?}, mode: {}",
+        dirfd,
+        path,
+        flags,
+        mode
+    );
     if let Ok(file) = path_openat(&path, flags, dirfd, mode) {
         let fd_flags = FdFlags::from(&flags);
         task.fd_table().alloc_fd(file, fd_flags)
@@ -1320,19 +1320,11 @@ pub fn sys_statx(
     );
     if flags & AT_EMPTY_PATH != 0 {
         if let Some(file) = current_task().fd_table().get_file(dirfd as usize) {
-            match file.as_any().downcast_ref::<File>() {
-                Some(file) => {
-                    let inode = file.inner_handler(|inner| inner.inode.clone());
-                    let statx = Statx::from(inode.getattr());
-                    log::error!("statx: statx: {:?}", statx);
-                    copy_to_user(statxbuf, &statx as *const Statx, 1)?;
-                    return Ok(0);
-                }
-                None => {
-                    log::error!("statx: downcast_ref failed");
-                    return Err(Errno::EBADF);
-                }
-            }
+            let inode = file.get_inode();
+            let statx = Statx::from(inode.getattr());
+            log::error!("statx: statx: {:?}", statx);
+            copy_to_user(statxbuf, &statx as *const Statx, 1)?;
+            return Ok(0);
         }
         // 根据fd获取文件失败
         return Err(Errno::EBADF);

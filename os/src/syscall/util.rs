@@ -5,7 +5,7 @@ use crate::{
     fs::uapi::{RLimit, Resource},
     syscall::errno::Errno,
     task::{add_real_timer, current_task, get_task, remove_timer, update_real_timer},
-    timer::{ITimerVal, TimeSpec},
+    timer::{ITimerVal, TimeSpec, TimeVal},
 };
 
 use super::errno::SyscallRet;
@@ -265,9 +265,9 @@ pub fn sys_setitimer(
                 let should_update =
                     !real_itimeval.it_value.is_zero() || !real_itimeval.it_interval.is_zero();
                 // 计算旧的定时器值(it_value)剩余时间
-                let current_time = TimeSpec::new_wall_time();
+                let current_time = TimeVal::new_wall_time();
                 let old_it_value = if real_itimeval.it_value < current_time {
-                    TimeSpec { sec: 0, nsec: 0 }
+                    TimeVal { sec: 0, usec: 0 }
                 } else {
                     new.it_value - current_time
                 };
@@ -282,9 +282,9 @@ pub fn sys_setitimer(
             });
             // 设置或更新已有定时器
             if should_update {
-                update_real_timer(task.tid(), new.it_value);
+                update_real_timer(task.tid(), new.it_value.into());
             } else {
-                add_real_timer(task.tid(), new.it_value);
+                add_real_timer(task.tid(), new.it_value.into());
             }
             // 将旧的定时器值写入ovalue_ptr
             if !ovalue_ptr.is_null() {

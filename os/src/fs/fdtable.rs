@@ -55,7 +55,7 @@ impl From<&FcntlOp> for FdFlags {
 }
 
 /// Max file descriptors counts
-pub const MAX_FDS: usize = 128;
+pub const MAX_FDS: usize = 1024;
 
 /// 进程的文件描述符表
 pub struct FdTable {
