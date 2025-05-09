@@ -5,7 +5,9 @@ use super::{
     id::{tid_alloc, TidAddress, TidHandle},
     kstack::{get_stack_top_by_sp, kstack_alloc, KernelStack},
     manager::unregister_task,
-    remove_task, String, Tid,
+    remove_task,
+    rusage::TimeStat,
+    String, Tid,
 };
 use crate::{
     arch::{
@@ -38,7 +40,7 @@ use crate::{
         manager::{cancel_wait_alarm, delete_wait, register_task},
         wakeup, INITPROC,
     },
-    timer::ITimerVal,
+    timer::{ITimerVal, TimeVal},
 };
 use alloc::{
     collections::btree_map::BTreeMap,
@@ -48,7 +50,9 @@ use alloc::{
 };
 use bitflags::bitflags;
 use core::{
-    assert_ne, mem,
+    assert_ne,
+    cell::{SyncUnsafeCell, UnsafeCell},
+    mem,
     sync::atomic::{AtomicI32, AtomicUsize},
 };
 use spin::{Mutex, RwLock};
@@ -74,6 +78,7 @@ pub struct Task {
     tgid: AtomicUsize,                                      // 线程组id
     tid_address: SpinNoIrqLock<TidAddress>,                 // 线程id地址
     status: SpinNoIrqLock<TaskStatus>,                      // 任务状态
+    time_stat: SyncUnsafeCell<TimeStat>,                    // 任务时间统计
     parent: Arc<SpinNoIrqLock<Option<Weak<Task>>>>,         // 父任务
     children: Arc<SpinNoIrqLock<BTreeMap<Tid, Arc<Task>>>>, // 子任务
     thread_group: Arc<SpinNoIrqLock<ThreadGroup>>,          // 线程组
@@ -125,6 +130,7 @@ impl Task {
             tgid: AtomicUsize::new(0),
             tid_address: SpinNoIrqLock::new(TidAddress::new()),
             status: SpinNoIrqLock::new(TaskStatus::Ready),
+            time_stat: SyncUnsafeCell::new(TimeStat::default()),
             parent: Arc::new(SpinNoIrqLock::new(None)),
             children: Arc::new(SpinNoIrqLock::new(BTreeMap::new())),
             thread_group: Arc::new(SpinNoIrqLock::new(ThreadGroup::new())),
@@ -164,6 +170,7 @@ impl Task {
             tgid,
             tid_address: SpinNoIrqLock::new(TidAddress::new()),
             status: SpinNoIrqLock::new(TaskStatus::Ready),
+            time_stat: SyncUnsafeCell::new(TimeStat::default()),
             parent: Arc::new(SpinNoIrqLock::new(None)),
             // 注：children结构中保留了对任务的Arc引用
             children: Arc::new(SpinNoIrqLock::new(BTreeMap::new())),
@@ -303,6 +310,7 @@ impl Task {
         sig_stack = SpinNoIrqLock::new(None);
         let tid = RwLock::new(tid);
         let robust_list_head = AtomicUsize::new(0);
+        let time_stat = SyncUnsafeCell::new(TimeStat::default());
         // 创建新任务
         let task = Arc::new(Self {
             kstack,
@@ -310,6 +318,7 @@ impl Task {
             tgid,
             tid_address,
             status,
+            time_stat,
             parent,
             children,
             exit_code,
@@ -676,6 +685,18 @@ impl Task {
         }
         dst_trap_cx_ptr as usize
     }
+
+    pub fn process_us_time(&self) -> (TimeVal, TimeVal) {
+        self.op_thread_group(|tg| {
+            tg.iter()
+                .map(|thread| thread.time_stat().thread_us_time())
+                .reduce(|(acc_utime, acc_stime), (utime, stime)| {
+                    (acc_utime + utime, acc_stime + stime)
+                })
+                .unwrap()
+        })
+    }
+
     pub fn get_rlimit(&self, resource: Resource) -> Result<RLimit, &'static str> {
         match resource {
             Resource::STACK => {
@@ -724,6 +745,9 @@ impl Task {
     }
     pub fn status(&self) -> TaskStatus {
         *self.status.lock()
+    }
+    pub fn time_stat(&self) -> &mut TimeStat {
+        unsafe { &mut *self.time_stat.get() }
     }
     pub fn root(&self) -> Arc<Path> {
         self.root.lock().clone()

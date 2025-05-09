@@ -3,6 +3,7 @@
 #![feature(map_try_insert)]
 #![feature(alloc_error_handler)]
 #![feature(negative_impls)]
+#![feature(sync_unsafe_cell)]
 
 extern crate alloc;
 

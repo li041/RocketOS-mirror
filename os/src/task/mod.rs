@@ -4,7 +4,7 @@ mod id;
 mod kstack;
 mod manager;
 mod processor;
-mod rusage;
+pub mod rusage;
 mod scheduler;
 mod signal;
 mod task;

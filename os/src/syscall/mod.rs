@@ -32,7 +32,10 @@ use task::{
     sys_getegid, sys_geteuid, sys_getgid, sys_getpid, sys_getppid, sys_gettid, sys_getuid,
     sys_nanosleep, sys_set_tid_address, sys_setpgid, sys_waitpid, sys_yield,
 };
-use util::{sys_clock_gettime, sys_prlimit64, sys_setitimer, sys_syslog, sys_times, sys_uname};
+use util::{
+    sys_clock_gettime, sys_getrusage, sys_prlimit64, sys_setitimer, sys_syslog, sys_times,
+    sys_uname,
+};
 
 use crate::{
     fs::{
@@ -42,6 +45,7 @@ use crate::{
     futex::robust_list::{sys_get_robust_list, sys_set_robust_list},
     mm::shm::ShmId,
     signal::{SigInfo, SigSet},
+    task::rusage::RUsage,
     timer::{ITimerVal, TimeSpec},
 };
 pub use fs::FcntlOp;
@@ -145,7 +149,7 @@ const SYSCALL_GETRANDOM: usize = 278;
 const SYSCALL_MEMBARRIER: usize = 283;
 const SYSCALL_STATX: usize = 291;
 
-const CARELESS_SYSCALLS: [usize; 5] = [62, 63, 64, 124, 260];
+const CARELESS_SYSCALLS: [usize; 7] = [62, 63, 64, 113, 124, 165, 260];
 // const SYSCALL_NUM_2_NAME: [(&str, usize); 4] = [
 const SYSCALL_NUM_2_NAME: [(usize, &str); 5] = [
     (SYSCALL_SETGID, "SYS_SETGID"),
@@ -258,6 +262,7 @@ pub fn syscall(
         SYSCALL_TIMES => sys_times(a0),
         SYSCALL_SETPGID => sys_setpgid(a0, a1),
         SYSCALL_UNAME => sys_uname(a0),
+        SYSCALL_GETRUSAGE => sys_getrusage(a0 as i32, a1 as *mut RUsage),
         SYSCALL_GET_TIME => sys_get_time(a0),
         SYSCALL_GITPID => sys_getpid(),
         SYSCALL_GETPPID => sys_getppid(),

@@ -105,7 +105,10 @@ impl Processor {
         log::trace!("[current_task]");
         self.current.clone()
     }
+    /// 将switch的时间算到switch_in的task
     pub fn switch_to(&mut self, task: Arc<Task>) {
+        self.current.time_stat().record_switch_out();
+        task.time_stat().record_switch_in();
         self.current = task;
     }
 }
