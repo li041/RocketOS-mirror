@@ -134,6 +134,19 @@ impl Sub for TimeVal {
     }
 }
 
+impl Add for TimeVal {
+    type Output = Self;
+    fn add(self, rhs: Self) -> Self::Output {
+        let mut sec = self.sec + rhs.sec;
+        let mut usec = self.usec + rhs.usec;
+        if usec >= 1_000_000 {
+            sec += 1;
+            usec -= 1_000_000;
+        }
+        Self { sec, usec }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 #[repr(C)]
 pub struct ITimerVal {

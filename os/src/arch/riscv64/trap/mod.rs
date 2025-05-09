@@ -71,6 +71,7 @@ impl From<scause::Trap> for PageFaultCause {
 #[no_mangle]
 /// handle an interrupt, exception, or system call from user space
 pub fn trap_handler(cx: &mut TrapContext) {
+    current_task().time_stat().record_ecall();
     let scause = scause::read(); // get trap cause
     let stval = stval::read(); // get extra value
     match scause.cause() {
@@ -171,6 +172,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
         }
     }
     handle_signal();
+    current_task().time_stat().record_sret();
     return;
 }
 

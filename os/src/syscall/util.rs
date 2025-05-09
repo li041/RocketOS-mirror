@@ -4,7 +4,9 @@ use crate::{
     arch::mm::{copy_from_user, copy_to_user},
     fs::uapi::{RLimit, Resource},
     syscall::errno::Errno,
-    task::{add_real_timer, current_task, get_task, remove_timer, update_real_timer},
+    task::{
+        add_real_timer, current_task, get_task, remove_timer, rusage::RUsage, update_real_timer,
+    },
     timer::{ITimerVal, TimeSpec, TimeVal},
 };
 
@@ -214,12 +216,12 @@ pub fn sys_clock_gettime(clock_id: usize, timespec: *mut TimeSpec) -> SyscallRet
     match clock_id {
         CLOCK_REALTIME | CLOCK_REALTIME_COARSE => {
             let time = TimeSpec::new_wall_time();
-            log::info!("[sys_clock_gettime] CLOCK_REALTIME: {:?}", time);
+            // log::info!("[sys_clock_gettime] CLOCK_REALTIME: {:?}", time);
             copy_to_user(timespec, &time as *const TimeSpec, 1)?;
         }
         CLOCK_MONOTONIC => {
             let time = TimeSpec::new_machine_time();
-            log::info!("[sys_clock_gettime] CLOCK_MONOTONIC: {:?}", time);
+            // log::info!("[sys_clock_gettime] CLOCK_MONOTONIC: {:?}", time);
             copy_to_user(timespec, &time as *const TimeSpec, 1)?;
         }
         _ => {
@@ -304,4 +306,37 @@ pub fn sys_setitimer(
             panic!("[sys_setitimer] invalid which: {}", which);
         }
     };
+}
+/// 调用进程的资源使用情况。
+pub const RUSAGE_SELF: i32 = 0;
+/// 已终止并被等待的所有子进程的资源使用情况
+pub const RUSAGE_CHILDREN: i32 = -1;
+/// 调用线程的资源使用情况（需要 Linux 2.6.26 以上版本，并定义了 `_GNU_SOURCE` 宏）
+pub const RUSAGE_THREAD: i32 = 1;
+pub fn sys_getrusage(who: i32, rusage: *mut RUsage) -> SyscallRet {
+    if rusage.is_null() {
+        return Err(Errno::EINVAL);
+    }
+    let task = current_task();
+    let mut usage = RUsage::default();
+    match who {
+        RUSAGE_SELF => {
+            let (utime, stime) = task.process_us_time();
+            usage.utime = utime;
+            usage.stime = stime;
+        }
+        RUSAGE_CHILDREN => {
+            unimplemented!();
+        }
+        RUSAGE_THREAD => {
+            let (utime, stime) = task.time_stat().thread_us_time();
+            usage.utime = utime;
+            usage.stime = stime;
+        }
+        _ => {
+            return Err(Errno::EINVAL);
+        }
+    }
+    copy_to_user(rusage, &usage as *const RUsage, 1).expect("[sys_getrusage] copy_to_user failed");
+    Ok(0)
 }
