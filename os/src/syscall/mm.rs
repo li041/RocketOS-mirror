@@ -59,6 +59,8 @@ pub fn sys_brk(brk: usize) -> SyscallRet {
                     MapPermission::R | MapPermission::W | MapPermission::U,
                 );
             } else {
+                // 扩展堆空间
+                // 懒分配?
                 memory_set.remap_area_with_start_vpn(start_vpn, new_end_vpn);
             }
         } else if brk < floor_to_page_size(current_brk) {

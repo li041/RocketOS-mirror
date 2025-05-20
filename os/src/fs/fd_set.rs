@@ -1,63 +1,56 @@
-/*
- * @Author: Peter/peterluck2021@163.com
- * @Date: 2025-04-22 22:31:04
- * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-04-27 21:01:03
- * @FilePath: /RocketOS/os/src/fs/fdSet.rs
- * @Description:
- *
- * Copyright (c) 2025 by peterluck2021@163.com, All Rights Reserved.
- */
-use core::{default, ops::Add};
-
-use alloc::{sync::Arc, vec::Vec};
-
+use crate::task::current_task;
 use crate::{
-    arch::mm::copy_from_user,
-    mm::VirtAddr,
+    arch::mm::{copy_from_user, copy_to_user},
     syscall::errno::Errno,
-    task::{self, current_task},
 };
+use alloc::vec;
+use alloc::{sync::Arc, vec::Vec};
 
 use super::{fdtable::MAX_FDS, file::FileOp};
 
+/// 重构后的FdSet结构，通过RAII管理内核缓冲区
 pub struct FdSet {
-    //复制到的内核地址
+    // 内核缓冲区（所有权由FdSet持有）
+    kernel_buf: Vec<usize>,
+    // 指向缓冲区的指针
     addr: *mut usize,
-    //元素
+    // 元素数量（按位计算）
     len: usize,
 }
+
 impl FdSet {
-    pub fn new_raw() -> Self {
+    /// 创建一个空的FdSet（无缓冲区）
+    pub fn new_empty() -> Self {
         FdSet {
-            addr: 0 as *mut usize,
+            kernel_buf: Vec::new(),
+            addr: core::ptr::null_mut(),
             len: 0,
         }
     }
-    pub fn new(addr: *mut usize, len: usize) -> Self {
-        FdSet {
-            addr: addr,
-            len: len,
+
+    /// 从用户空间地址初始化（核心方法）
+    pub fn from_user(addr: usize, len: usize) -> Result<Self, Errno> {
+        if len > MAX_FDS || len == 0 {
+            return Err(Errno::EINVAL);
         }
+
+        // 创建内核缓冲区并拷贝数据
+        let mut kernel_buf = vec![0; len];
+        copy_from_user(addr as *const i32, kernel_buf.as_mut_ptr() as *mut i32, len)?;
+
+        Ok(FdSet {
+            addr: kernel_buf.as_mut_ptr(),
+            len,
+            kernel_buf,
+        })
     }
+
     pub fn get_addr(&self) -> *mut usize {
         self.addr
     }
     pub fn get_len(&self) -> usize {
         self.len
     }
-    /// set the index in the bitset
-    pub fn set(&mut self, index: usize) {
-        if index >= self.len {
-            return;
-        }
-        let byte_index = index / 64;
-        let bit_index = index & 0x3f;
-        unsafe {
-            *self.addr.add(byte_index) |= 1 << bit_index;
-        }
-    }
-    //检查i指定fd对应掩码是否为1
     pub fn check(&self, fd: usize) -> bool {
         if fd >= self.len {
             return false;
@@ -66,7 +59,21 @@ impl FdSet {
         let bit_index = fd & 0x3f;
         unsafe { *(self.addr.add(byte_index)) & (1 << bit_index) != 0 }
     }
-    // 清空自己
+
+    /// 设置指定fd位
+    pub fn set(&mut self, fd: usize) {
+        if fd >= self.len * 64 {
+            return;
+        }
+        let byte_index = fd / 64;
+        let bit_index = fd % 64;
+        unsafe {
+            *self.addr.add(byte_index) |= 1 << bit_index;
+        }
+    }
+    pub fn valid(&self) -> bool {
+        self.addr as usize != 0
+    }
     pub fn clear(&self) {
         for i in 0..=(self.len - 1) / 64 {
             unsafe {
@@ -74,19 +81,22 @@ impl FdSet {
             }
         }
     }
-    pub fn valid(&self) -> bool {
-        self.addr as usize != 0
+}
+
+impl Drop for FdSet {
+    fn drop(&mut self) {
+        // 缓冲区会随结构体自动释放
+        // 此处可以添加日志或其他清理操作
+        log::debug!("Dropping FdSet with {} entries", self.len);
     }
 }
-//用于保存一个fdset中满足要求的文件集合
+
+// 修改后的FdSetIter
 pub struct FdSetIter {
-    pub fdset: FdSet,
+    pub fdset: FdSet, // 现在由FdSet自己管理缓冲区
     pub files: Vec<Arc<dyn FileOp>>,
     pub fds: Vec<usize>,
 }
-
-///addr是数组地址，len是长度
-///
 pub fn init_fdset(addr: usize, len: usize) -> Result<FdSetIter, Errno> {
     if len > MAX_FDS || len < 0 {
         //非法长度
@@ -94,30 +104,31 @@ pub fn init_fdset(addr: usize, len: usize) -> Result<FdSetIter, Errno> {
     }
     if addr == 0 {
         return Ok(FdSetIter {
-            fdset: FdSet::new_raw(),
+            // kernel_buffer:Vec::new(),
+            fdset: FdSet::new_empty(),
             files: Vec::new(),
             fds: Vec::new(),
         });
     }
-    let addr = copy_from_user_mut(addr as *mut i32, len).unwrap();
-    let fdset = FdSet::new(addr.as_mut_ptr() as *mut usize, len);
+    let mut kernel_fs = vec![0; len];
+    copy_from_user(addr as *const i32, kernel_fs.as_mut_ptr(), len)?;
+    let fdset = FdSet::from_user(addr, len)?;
     let task = current_task();
-    let mut files = Vec::new();
-    let mut fds = Vec::new();
+    let mut files: Vec<Arc<dyn FileOp>> = Vec::new();
+    let mut fds: Vec<usize> = Vec::new();
     for fd in 0..len {
         if fdset.check(fd) {
             // let fd=addr[i] as usize;
-            log::error!("[init_fdset]:fdset check fd {} ", fd);
+            // log::error!("[init_fdset]:fdset check fd {} ", fd);
             // let file=task.fd_table().get_file(fd).unwrap();
             if let Some(file) = task.fd_table().get_file(fd) {
                 files.push(file.clone());
                 fds.push(fd);
             } else {
                 //不是合法的fd
+                log::error!("[init_fdset]:fd {} is not valid", fd);
                 return Err(Errno::EBADF);
             }
-            // files.push(task.fd_table().get_file(fd).unwrap().clone());
-            // fds.push(fd);
         }
     }
     fdset.clear();

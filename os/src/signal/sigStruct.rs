@@ -13,6 +13,7 @@ pub struct SigPending {
     pub pending: SigSet,              // 接收信号位图
     pub mask: SigSet,                 // 信号掩码
     pub info: BTreeMap<i32, SigInfo>, // 记录信息 key：信号值， value：信号信息
+    pub interrupted: bool,            // 是否被信号中断
 }
 
 impl SigPending {
@@ -21,6 +22,7 @@ impl SigPending {
             pending: SigSet::empty(),
             mask: SigSet::empty(),
             info: BTreeMap::new(),
+            interrupted: false,
         }
     }
 
@@ -92,6 +94,21 @@ impl SigPending {
         let old_mask = self.mask;
         self.mask = mask;
         old_mask
+    }
+
+    // 设定当前任务被信号中断
+    pub fn set_interrupted(&mut self) {
+        self.interrupted = true;
+    }   
+
+    // 设定当前任务没有被信号中断
+    pub fn set_uninterrupted(&mut self) {
+        self.interrupted = false;
+    }
+
+    // 检查当前任务是否被信号中断
+    pub fn is_interrupted(&self) -> bool {
+        self.interrupted
     }
 }
 

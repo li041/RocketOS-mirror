@@ -9,14 +9,12 @@ use axfutex::{flags::FLAGS_SHARED, futex::{FutexKey, FutexQ}, queues::{futex_has
 
 extern crate alloc;
 
-use core::time::Duration;
-
 use super::{flags::*, queue::FUTEXQUEUES};
 use crate::{
     arch::{config::PAGE_SIZE_BITS, mm::copy_from_user},
-    futex::queue::futex_hash,
+    futex::{self, queue::futex_hash},
     syscall::errno::{Errno, SyscallRet},
-    task::{current_task, dump_scheduler, wait, wakeup, yield_current_task, Task},
+    task::{current_task, dump_scheduler, dump_wait_queue, wait, wakeup, yield_current_task, Task},
     timer::TimeSpec,
 };
 use alloc::{sync::Arc, sync::Weak};
@@ -164,6 +162,7 @@ pub fn futex_wait(
     // 比较后相等，放入等待队列
     {
         let mut hash_bucket = FUTEXQUEUES.buckets[futex_hash(&key)].lock();
+        //hash_bucket.retain(|futex_q| futex_q.task.upgrade().is_some());
         let cur_futexq = FutexQ::new(key, current_task().clone(), bitset);
         hash_bucket.push_back(cur_futexq);
 
@@ -171,6 +170,7 @@ pub fn futex_wait(
         drop(hash_bucket);
     }
     loop {
+        // Todo: 超时等待暂且使用yield来代替
         if let Some(deadline) = deadline {
             let now = if flags & FLAGS_CLOCKRT != 0 {
                 TimeSpec::new_wall_time()
@@ -178,10 +178,25 @@ pub fn futex_wait(
                 TimeSpec::new_machine_time()
             };
             is_timeout = deadline < now;
+            if !is_timeout {
+                yield_current_task();   // 返回时状态会变成running
+                current_task().set_interruptable();
+            }
+            if current_task().check_interrupt() {
+                log::error!(
+                    "[futex_wait] task{} wakeup by signal",
+                    current_task().tid()
+                );
+                return Err(Errno::EINTR);
+            }
         }
-        if deadline.is_none() || !is_timeout {
-            yield_current_task();
-            // wait();
+        // 无计时情况
+        if deadline.is_none() {
+            if wait() == -1 {
+                let mut hash_bucket = FUTEXQUEUES.buckets[futex_hash(&key)].lock();
+                hash_bucket.retain(|futex_q| futex_q.task.upgrade().unwrap().tid() != current_task().tid());
+                return Err(Errno::EINTR);
+            }
         }
 
         // If we were woken (and unqueued), we succeeded, whatever.
@@ -196,7 +211,7 @@ pub fn futex_wait(
             .iter()
             .position(|futex_q| futex_q.task.upgrade().unwrap().tid() == cur_id)
         {
-            // hash_bucket.remove(idx);
+            hash_bucket.remove(idx);
             if is_timeout {
                 return Err(Errno::ETIMEDOUT);
             }
@@ -215,7 +230,8 @@ pub fn futex_wait(
 /// no need to check the bitset, faster than futex_wake_bitset
 pub fn futex_wake(uaddr: usize, flags: i32, nr_waken: u32) -> SyscallRet {
     log::error!(
-        "[futex_wake] uaddr: {:#x}, flags: {:?}, nr_waken: {:?}",
+        "[futex_wake] current task: {}, uaddr: {:#x}, flags: {:?}, nr_waken: {:?}",
+        current_task().tid(),
         uaddr,
         flags,
         nr_waken
@@ -226,13 +242,16 @@ pub fn futex_wake(uaddr: usize, flags: i32, nr_waken: u32) -> SyscallRet {
         let mut hash_bucket = FUTEXQUEUES.buckets[futex_hash(&key)].lock();
 
         if hash_bucket.is_empty() {
-            log::info!("hash_bucket is empty");
+            log::info!("[futex_wake] hash_bucket is empty");
             return Ok(0);
         } else {
             hash_bucket.retain(|futex_q| {
+                if futex_q.task.upgrade().is_none() {
+                    return false;
+                }
                 if ret < nr_waken && futex_q.key == key {
-                    // wakeup(futex_q.task.upgrade().unwrap().tid());
-                    log::info!("wake up task {:?}", futex_q.task.upgrade().unwrap().tid());
+                    wakeup(futex_q.task.upgrade().unwrap().tid());
+                    log::error!("[futex_wake] wake up task {:?}", futex_q.task.upgrade().unwrap().tid());
                     ret += 1;
                     return false;
                 }
@@ -307,6 +326,7 @@ pub fn futex_requeue(
                 if futex_q.key == key {
                     //WAIT_FOR_FUTEX.notify_task(&futex_q.task);
                     ret += 1;
+                    wakeup(futex_q.task.upgrade().unwrap().tid());
                     if ret == nr_waken {
                         break;
                     }

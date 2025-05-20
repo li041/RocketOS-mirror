@@ -397,7 +397,11 @@ impl<'a> Ext4Bitmap<'a> {
 
     // 注意block_offset只是inode_num % (block_size * 8), 需要上层调用者负责转换
     pub fn dealloc(&mut self, block_offset: usize) {
-        assert!(block_offset < PAGE_SIZE);
+        assert!(
+            block_offset < PAGE_SIZE * 8,
+            "block_offset out of range, block_offset: {}",
+            block_offset
+        );
         let byte_offset = block_offset / 8;
         let bit_offset = block_offset % 8;
         self.bitmap[byte_offset] &= !(1 << bit_offset);

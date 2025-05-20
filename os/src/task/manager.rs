@@ -1,11 +1,9 @@
-use core::clone;
-
 use crate::{
+    arch::trap::context::dump_trap_context,
     signal::{SiField, Sig, SigInfo},
     task::{add_task, current_task, schedule, scheduler::dump_scheduler},
     timer::{self, ITimerVal, TimeSpec},
 };
-use alloc::vec;
 use alloc::{
     boxed::Box,
     collections::btree_map::BTreeMap,
@@ -13,6 +11,7 @@ use alloc::{
     sync::{Arc, Weak},
     vec::Vec,
 };
+use alloc::{task, vec};
 use hashbrown::HashMap;
 use lazy_static::lazy_static;
 use spin::Mutex;
@@ -89,14 +88,19 @@ impl TaskManager {
 // Todo: 为可中断的任务的支持
 
 // 将当前任务加入到basic队列并阻塞
-pub fn wait() {
+// 返回值：0：正常被唤醒； -1：被中断唤醒
+pub fn wait() -> isize {
     log::trace!("[wait]");
     let task = current_task();
-    task.set_uninterruptable();
+    task.set_interruptable();
     WAIT_MANAGER.add(task);
     // log::warn!("[wait] task{} block", current_task().tid());
     schedule(); // 调度其他任务
-                // log::warn!("[wait] task{} unblock", current_task().tid());
+    let task = current_task();
+    if task.is_interrupted() {
+        return -1;
+    }
+    return 0;
 }
 
 // 条件阻塞，只有当满足条件时才会被唤醒
@@ -179,7 +183,7 @@ pub fn dealloc_wait_queue(name: &String) {
 }
 
 // 打印所有阻塞队列中的内容
-pub fn dump_task_queue() -> () {
+pub fn dump_wait_queue() -> () {
     for (name, que) in WAIT_MANAGER.wait_queue.lock().iter() {
         log::error!("dump wait queue: {}", name);
         que.dump_queue();

@@ -14,8 +14,7 @@ use crate::{
     },
     syscall::errno::Errno,
     task::{
-        current_task, for_each_task, get_stack_top_by_sp, get_task, yield_current_task, INITPROC,
-        INIT_PROC_PID,
+        current_task, dump_scheduler, dump_wait_queue, for_each_task, get_stack_top_by_sp, get_task, yield_current_task, INITPROC, INIT_PROC_PID
     },
     timer::TimeSpec,
 };
@@ -128,6 +127,32 @@ pub fn sys_tkill(tid: isize, sig: i32) -> SyscallRet {
 /// ESRCH 不存在具有指定线程 ID（和线程组 ID）的进程。
 /// ToDo: 进程组
 pub fn sys_tgkill(tgid: isize, tid: isize, sig: i32) -> SyscallRet {
+    log::info!(
+        "[sys_tgkill] tgid: {}, tid: {}, signal: {:?}",
+        tgid,
+        tid,
+        sig
+    );
+    let sig = Sig::from(sig);
+    if !sig.is_valid() || tid < 0 {
+        return Err(Errno::EINVAL);
+    }
+    
+    if let Some(task) = get_task(tid as usize) {
+        if task.tgid() != tgid as usize {
+            return Err(Errno::EINVAL);
+        }
+        task.receive_siginfo(
+            SigInfo {
+                signo: sig.raw(),
+                code: SigInfo::TKILL,
+                fields: SiField::Kill { tid: tid as usize },
+            },
+            true,
+        );
+    } else {
+        return Err(Errno::ESRCH);
+    }
     Ok(0)
 }
 

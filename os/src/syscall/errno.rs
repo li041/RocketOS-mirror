@@ -110,4 +110,6 @@ pub enum Errno {
     /// 套接字为非阻塞模式且连接无法立即完成
     /// （通常需要配合 select/poll 检查可写性）
     EINPROGRESS = -115,
+    /// 内核自动重启系统调用
+    ERESTARTSYS = -512,
 }

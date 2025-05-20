@@ -37,15 +37,15 @@ pub trait FileOp: Any + Send + Sync {
         unimplemented!();
     }
     // 从文件中读取数据到buf中, 返回读取的字节数, 同时更新文件偏移量
-    fn read<'a>(&'a self, buf: &'a mut [u8]) -> usize {
+    fn read<'a>(&'a self, buf: &'a mut [u8]) -> SyscallRet {
         unimplemented!();
     }
     // 从文件偏移量为offset处读取数据到buf中, 返回读取的字节数, 不会更新文件偏移量
-    fn pread<'a>(&'a self, buf: &'a mut [u8], offset: usize) -> usize {
+    fn pread<'a>(&'a self, buf: &'a mut [u8], offset: usize) -> SyscallRet {
         unimplemented!();
     }
     // 从文件偏移量为offset处写数据到buf中, 返回写的字节数, 不会更新文件偏移量
-    fn pwrite<'a>(&'a self, buf: &'a [u8], offset: usize) -> usize {
+    fn pwrite<'a>(&'a self, buf: &'a [u8], offset: usize) -> SyscallRet {
         unimplemented!();
     }
 
@@ -59,7 +59,7 @@ pub trait FileOp: Any + Send + Sync {
         unimplemented!();
     }
     /// Write `UserBuffer` to file
-    fn write<'a>(&'a self, buf: &'a [u8]) -> usize {
+    fn write<'a>(&'a self, buf: &'a [u8]) -> SyscallRet {
         unimplemented!();
     }
     // move the file offset
@@ -172,18 +172,18 @@ impl FileOp for File {
     fn as_any(&self) -> &dyn Any {
         self
     }
-    fn read<'a>(&'a self, buf: &'a mut [u8]) -> usize {
+    fn read<'a>(&'a self, buf: &'a mut [u8]) -> SyscallRet {
         let read_size = self.inner_handler(|inner| inner.inode.read(inner.offset, buf));
         self.add_offset(read_size);
-        read_size
+        Ok(read_size)
     }
-    fn pread<'a>(&'a self, buf: &'a mut [u8], offset: usize) -> usize {
+    fn pread<'a>(&'a self, buf: &'a mut [u8], offset: usize) -> SyscallRet {
         let read_size = self.inner_handler(|inner| inner.inode.read(offset, buf));
-        read_size
+        Ok(read_size)
     }
-    fn pwrite<'a>(&'a self, buf: &'a [u8], offset: usize) -> usize {
+    fn pwrite<'a>(&'a self, buf: &'a [u8], offset: usize) -> SyscallRet {
         let write_size = self.inner_handler(|inner| inner.inode.write(offset, buf));
-        write_size
+        Ok(write_size)
     }
     fn read_all(&self) -> Vec<u8> {
         self.read_all()
@@ -198,7 +198,7 @@ impl FileOp for File {
         self.inner_handler(|inner| inner.inode.clone())
     }
 
-    fn write<'a>(&'a self, buf: &'a [u8]) -> usize {
+    fn write<'a>(&'a self, buf: &'a [u8]) -> SyscallRet {
         let write_size = self.inner_handler(|inner| {
             if inner.flags.contains(OpenFlags::O_APPEND) {
                 inner.offset = inner.inode.get_size();
@@ -206,7 +206,7 @@ impl FileOp for File {
             inner.inode.write(inner.offset, buf)
         });
         self.add_offset(write_size);
-        write_size
+        Ok(write_size)
     }
     fn seek(&self, offset: isize, whence: Whence) -> SyscallRet {
         self.inner_handler(|inner| {

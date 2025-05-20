@@ -6,7 +6,7 @@ use crate::{
         mm::PageTable,
         tlbrelo::{TLBRELo0, TLBRELo1},
         Interrupt, TLBRBadV, TLBREHi, PGDL, PWCL, TLBRERA,
-    }, mm::VirtAddr, signal::handle_signal, syscall::{errno::Errno, syscall}, task::{current_task, handle_timeout, yield_current_task}
+    }, mm::VirtAddr, signal::{handle_signal, SiField, Sig, SigInfo}, syscall::{errno::Errno, syscall}, task::{current_task, handle_timeout, yield_current_task}
 };
 
 use super::{register, Exception, TIClr, Trap, ERA};
@@ -113,15 +113,20 @@ pub fn trap_handler(cx: &mut TrapContext) {
             log::error!("{:?} at {:#x}", cause, badv);
             let va = VirtAddr::from(badv);
             let cause = PageFaultCause::from(cause);
-            current_task().op_memory_set_mut(|memory_set| {
+            let task = current_task();
+            task.op_memory_set_mut(|memory_set| {
                 if let Err(e) = memory_set.handle_recoverable_page_fault(va, cause) {
                         // memory_set.page_table.dump_all_user_mapping();
-                        dump_trap_context(&current_task());
-                        panic!(
+                        // dump_trap_context(&current_task());
+                        log::error!(
                             "Unrecoverble page fault in application, bad addr = {:#x}, scause = {:?}, era = {:#x}",
                             badv,
                             register::EStat::read().cause(),
                             ERA::read().get_pc()
+                        );
+                        task.receive_siginfo(
+                            SigInfo::new(Sig::SIGSEGV.raw(), SigInfo::KERNEL, SiField::None),
+                            false,
                         );
                 }
             });

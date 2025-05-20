@@ -1,13 +1,13 @@
-mod sigHandler;
 mod sigFrame;
+mod sigHandler;
 mod sigStack;
 mod sigStruct;
 
 use core::arch::global_asm;
 
 use alloc::sync::Arc;
-pub use sigHandler::*;
 pub use sigFrame::*;
+pub use sigHandler::*;
 pub use sigStack::*;
 pub use sigStruct::*;
 
@@ -20,9 +20,7 @@ use crate::{
         },
     },
     mm::VirtAddr,
-    task::{
-        current_task, get_stack_top_by_sp, kernel_exit, remove_task, schedule, Task
-    },
+    task::{current_task, get_stack_top_by_sp, kernel_exit, remove_task, schedule, Task},
 };
 
 // 用户栈构造如下
@@ -50,32 +48,38 @@ pub fn handle_signal() {
     use crate::arch::trampoline::sigreturn_trampoline;
     let task = current_task();
     // 检查是否有信号触发
-    while let Some((sig, sig_info)) = task.op_sig_pending_mut(|pending| pending.fetch_signal(SigSet::all())) {
+    while let Some((sig, sig_info)) =
+        task.op_sig_pending_mut(|pending| pending.fetch_signal(SigSet::all()))
+    {
         let old_mask = task.mask();
         log::info!(
             "[handle_signal] task{} is handling signal {}",
-            task.tid(), sig.raw()
+            task.tid(),
+            sig.raw()
         );
         let action = task.op_sig_handler(|handler| handler.get(sig));
         let mut trap_cx = get_trap_context(&task);
 
         // Todo: 中断处理，测试
         #[cfg(target_arch = "riscv64")]
-        if action.flags.contains(SigActionFlag::SA_RESTART) {
+        if action.flags.contains(SigActionFlag::SA_RESTART) && task.is_interrupted() {
             // 回到用户调用ecall的指令
-            // trap_cx.set_pc(trap_cx.sepc - 4);
-            // trap_cx.restore_a0(); // 从last_a0中恢复a0
-            // log::warn!("[handle_signal] handle SA_RESTART");
+            log::warn!("[handle_signal] handle SA_RESTART");
+            trap_cx.set_pc(trap_cx.sepc - 4);
+            trap_cx.restore_a0(); // 从last_a0中恢复a0
         }
 
+        // 回到用户调用ecall的指令
         #[cfg(target_arch = "loongarch64")]
-        if action.flags.contains(SigActionFlag::SA_RESTART) {
-            // 回到用户调用ecall的指令
-            // trap_cx.set_pc(trap_cx.era - 4);
-            // trap_cx.restore_a0();   // 从last_a0中恢复a0
-            // log::warn!("[handle_signal] handle SA_RESTART");
+        if action.flags.contains(SigActionFlag::SA_RESTART) && task.is_interrupted() {
+            log::warn!("[handle_signal] handle SA_RESTART");
+            trap_cx.set_pc(trap_cx.era - 4);
+            trap_cx.restore_a0(); // 从last_a0中恢复a0
         }
 
+        if task.is_interrupted() {
+            task.set_uninterrupted();
+        }
         //log::info!("[handle_signal] kstack_top: {:x}", kstack);
         // 非用户定义
         if !action.is_user() {
@@ -84,7 +88,7 @@ pub fn handle_signal() {
                 ActionType::Term => terminate(task, sig),
                 ActionType::Stop => stop(),
                 ActionType::Cont => cont(),
-                ActionType::Core => core(),
+                ActionType::Core => core(task, sig),
             }
         }
         // 用户定义
@@ -93,7 +97,8 @@ pub fn handle_signal() {
             log::warn!("[handle_signal] Using user {:?} signal handlers", sig);
             log::info!(
                 "[handle_signal] sa_handler: {:#x}, sigActionFlags: {:x}",
-                action.sa_handler, action.flags
+                action.sa_handler,
+                action.flags
             );
 
             if !action.flags.contains(SigActionFlag::SA_NODEFER) {
@@ -127,31 +132,28 @@ pub fn handle_signal() {
 
                 // 制作sigcontext
                 let sig_context = SigContext::init(&trap_cx, old_mask);
-                
+
                 // 创建siginfo
                 user_sp -= core::mem::size_of::<LinuxSigInfo>();
-                let siginfo_sp = user_sp;   // siginfo_sp：塞入siginfo后的用户栈位置
+                let siginfo_sp = user_sp; // siginfo_sp：塞入siginfo后的用户栈位置
                 trap_cx.set_a1(siginfo_sp);
                 log::info!("[handle_signal] a1 = {:#x}", siginfo_sp);
                 let linux_siginfo = LinuxSigInfo::new(sig.raw(), sig_info.code);
-                
+
                 // 创建ucontext
                 user_sp = user_sp - core::mem::size_of::<UContext>();
-                let ucontext_sp = user_sp;  // ucontext_sp：塞入ucontext后的用户栈位置
+                let ucontext_sp = user_sp; // ucontext_sp：塞入ucontext后的用户栈位置
                 trap_cx.set_a2(ucontext_sp);
                 log::info!("[handle_signal] a2 = {:#x}", ucontext_sp);
                 let ucontext = UContext::new(sig_context, old_mask);
-                
+
                 // 创建sigframe
                 user_sp = user_sp - core::mem::size_of::<FrameFlags>();
                 let frame_flags_sp = user_sp; // frame_flags_sp：塞入frame_flags后的用户栈位置
                 let sig_rt_frame = SigRTFrame::new(ucontext, linux_siginfo);
                 log::info!("[handle_signal] frame_flags_sp = {:#x}", frame_flags_sp);
-                if let Err(err) = copy_to_user(
-                    frame_flags_sp as *mut SigRTFrame,
-                    &sig_rt_frame,
-                    1,
-                ) {
+                if let Err(err) = copy_to_user(frame_flags_sp as *mut SigRTFrame, &sig_rt_frame, 1)
+                {
                     panic!("[handle_signal] copy_to_user failed: {:?}", err);
                 }
             }
@@ -183,7 +185,6 @@ pub fn handle_signal() {
 }
 
 fn terminate(task: Arc<Task>, sig: Sig) {
-    task.close_thread();
     // 将信号放入低7位 (第8位是core dump标志,在gdb调试崩溃程序中用到)
     kernel_exit(task, sig.raw() as i32 & 0x7F);
     schedule();
@@ -191,4 +192,17 @@ fn terminate(task: Arc<Task>, sig: Sig) {
 // Todo:
 fn stop() {}
 fn cont() {}
-fn core() {}
+// Todo: 转储任务崩溃时的内存快照
+// 目前只有page fault恢复失败时, 内核会发送SIGSEGV信号
+fn core(task: Arc<Task>, sig: Sig) {
+    task.op_memory_set(|memory_set| {
+        memory_set.page_table.dump_all_user_mapping();
+    });
+    dump_trap_context(&task);
+    task.close_thread();
+    // 将信号放入低7位 (第8位是core dump标志,在gdb调试崩溃程序中用到)
+    kernel_exit(task, sig.raw() as i32 & 0x7F);
+    // panic!("core dump: {:?}", sig);
+    log::error!("[core] core dump: {:?}", sig);
+    schedule();
+}

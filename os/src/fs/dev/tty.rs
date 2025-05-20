@@ -278,7 +278,7 @@ impl FileOp for TtyFile {
     fn as_any(&self) -> &dyn Any {
         self
     }
-    fn read<'a>(&'a self, buf: &'a mut [u8]) -> usize {
+    fn read<'a>(&'a self, buf: &'a mut [u8]) -> SyscallRet {
         // let mut c: usize;
         let mut inner = self.inner.write();
         loop {
@@ -296,14 +296,14 @@ impl FileOp for TtyFile {
         unsafe {
             buf.as_mut_ptr().write_volatile(ch);
         }
-        1
+        Ok(1)
     }
     // #[cfg(target_arch = "riscv64")]
-    fn write<'a>(&'a self, buf: &'a [u8]) -> usize {
+    fn write<'a>(&'a self, buf: &'a [u8]) -> SyscallRet {
         let mut _inner = self.inner.write();
         // print!("{}", core::str::from_utf8(buf).unwrap());
         print!("{}", core::str::from_utf8(buf).unwrap());
-        buf.len()
+        Ok(buf.len())
     }
     fn seek(&self, _offset: isize, _whence: crate::fs::uapi::Whence) -> SyscallRet {
         Err(Errno::ESPIPE)

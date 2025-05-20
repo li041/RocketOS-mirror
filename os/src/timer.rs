@@ -125,12 +125,15 @@ impl Sub for TimeVal {
     type Output = Self;
     fn sub(self, rhs: Self) -> Self::Output {
         let mut sec = self.sec - rhs.sec;
-        let mut usec = self.usec - rhs.usec;
+        let mut usec = self.usec as isize - rhs.usec as isize;
         if usec < 0 {
             sec -= 1;
             usec += 1_000;
         }
-        Self { sec, usec }
+        Self {
+            sec,
+            usec: usec as usize,
+        }
     }
 }
 

@@ -31,7 +31,7 @@ pub use context::TaskContext;
 pub use id::IdAllocator;
 pub use kstack::get_stack_top_by_sp;
 pub use manager::{
-    add_real_timer, dump_task_queue, for_each_task, get_task, handle_timeout, remove_timer,
+    add_real_timer, dump_wait_queue, for_each_task, get_task, handle_timeout, remove_timer,
     update_real_timer, wait, wait_timeout, wakeup,
 };
 pub use processor::{current_task, run_tasks};
