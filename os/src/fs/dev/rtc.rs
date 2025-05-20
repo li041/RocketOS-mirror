@@ -133,7 +133,7 @@ impl RtcFile {
 }
 
 impl FileOp for RtcFile {
-    fn read(&self, buf: &mut [u8]) -> usize {
+    fn read(&self, buf: &mut [u8]) -> SyscallRet {
         let current_time = TimeSpec::new_wall_time();
         let date_time = DateTime::from(&current_time);
         let rtc_time = RtcTime {
@@ -151,11 +151,11 @@ impl FileOp for RtcFile {
         let size = core::mem::size_of::<RtcTime>();
         let buf_size = buf.len();
         if buf_size < size {
-            return 0;
+            return Ok(0);
         }
         unimplemented!()
     }
-    fn write<'a>(&'a self, buf: &'a [u8]) -> usize {
+    fn write<'a>(&'a self, buf: &'a [u8]) -> SyscallRet {
         unimplemented!();
     }
     fn ioctl(&self, op: usize, arg_ptr: usize) -> SyscallRet {

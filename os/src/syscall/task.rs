@@ -181,6 +181,12 @@ pub fn sys_setpgid(pid: usize, pgid: usize) -> SyscallRet {
     Ok(0)
 }
 
+pub fn sys_getpgid(pid: usize) -> SyscallRet {
+    log::info!("[sys_getpgid] pid: {}", pid);
+    log::warn!("[sys_getpgid] Uimplemented");
+    Ok(0)
+}
+
 pub fn sys_set_tid_address(tidptr: usize) -> SyscallRet {
     let task = current_task();
     log::info!("[sys_set_tid_address] tidptr:{:#x}", tidptr);
@@ -249,6 +255,7 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: usize, option: i32) -> SyscallRet 
         exit_code_ptr,
         option,
     );
+    log::error!("current_task: {}", current_task().tid());
     let cur_task = current_task();
     loop {
         let mut first = true;
@@ -278,7 +285,11 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: usize, option: i32) -> SyscallRet 
             }
         });
         if let Some(wait_task) = target_task {
-            log::error!("wait_task: {}", wait_task.tid());
+            log::error!(
+                "cur_task: {}, wait_task: {}",
+                cur_task.tid(),
+                wait_task.tid()
+            );
             // 目标子进程已死
             if wait_task.is_zombie() {
                 cur_task.remove_child_task(wait_task.tid());
@@ -309,7 +320,10 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: usize, option: i32) -> SyscallRet 
                 if option.contains(WaitOption::WNOHANG) {
                     return Ok(0);
                 } else {
-                    wait();
+                    if wait() == -1 {
+                        log::error!("[sys_waitpid] wait interrupted");
+                        return Err(Errno::EINTR);
+                    };
                 }
             }
         }
@@ -393,19 +407,25 @@ pub fn sys_nanosleep(time_val_ptr: usize) -> SyscallRet {
         current_task().tid(),
         time_val
     );
+    // Todo: 为防止无任务的情况，超时阻塞先用yield代替
     loop {
         if current_task().check_interrupt() {
             log::error!(
                 "[sys_nanosleep] task{} wakeup by signal",
                 current_task().tid()
             );
+            let remained_time = TimeSpec::new_machine_time() - start_time;
+            copy_to_user(time_val_ptr as *mut TimeSpec, &remained_time, 1)?;
             return Err(Errno::EINTR);
         }
         let current_time = TimeSpec::new_machine_time();
         if current_time >= time_val + start_time {
             break;
         }
-        yield_current_task();
+        yield_current_task();   // 返回时状态会变成running
+        // 在yield回来之后设置成interruptable可以有效的避免任务状态被覆盖
+        // 并且可以有效的保证收到信号的时候不会触发信号中断
+        current_task().set_interruptable();
     }
     Ok(0)
 }

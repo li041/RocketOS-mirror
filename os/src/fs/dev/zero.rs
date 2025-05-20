@@ -110,12 +110,12 @@ impl ZeroFile {
 }
 
 impl FileOp for ZeroFile {
-    fn read(&self, buf: &mut [u8]) -> usize {
+    fn read(&self, buf: &mut [u8]) -> SyscallRet {
         buf.fill(0);
-        buf.len()
+        Ok(buf.len())
     }
-    fn write(&self, buf: &[u8]) -> usize {
-        buf.len()
+    fn write(&self, buf: &[u8]) -> SyscallRet {
+        Ok(buf.len())
     }
     fn readable(&self) -> bool {
         true

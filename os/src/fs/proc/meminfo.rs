@@ -121,15 +121,15 @@ impl MemInfoFile {
 }
 
 impl FileOp for MemInfoFile {
-    fn read(&self, buf: &mut [u8]) -> usize {
+    fn read(&self, buf: &mut [u8]) -> SyscallRet {
         let info = FAKEMEMINFO.read().serialize();
         let len = info.len();
         if self.inner.read().offset >= len {
-            return 0;
+            return Ok(0);
         }
         buf[..len].copy_from_slice(info.as_bytes());
         self.add_offset(len);
-        len
+        Ok(len)
     }
     fn readable(&self) -> bool {
         true

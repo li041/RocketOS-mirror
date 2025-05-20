@@ -12,7 +12,7 @@ impl FileOp for Stdin {
     fn as_any(&self) -> &dyn core::any::Any {
         self
     }
-    fn read<'a>(&'a self, buf: &'a mut [u8]) -> usize {
+    fn read<'a>(&'a self, buf: &'a mut [u8]) -> SyscallRet {
         // assert_eq!(buf.len(), 1);
         // busy loop
         let mut c: usize;
@@ -35,9 +35,9 @@ impl FileOp for Stdin {
             // buf.buffers[0].as_mut_ptr().write_volatile(ch);
             buf.as_mut_ptr().write_volatile(ch);
         }
-        1
+        Ok(1)
     }
-    fn write(&self, _buf: &[u8]) -> usize {
+    fn write(&self, _buf: &[u8]) -> SyscallRet {
         panic!("Cannot write to stdin!");
     }
     fn seek(&self, _offset: isize, _whence: Whence) -> SyscallRet {
@@ -58,17 +58,17 @@ impl FileOp for Stdout {
     fn as_any(&self) -> &dyn core::any::Any {
         self
     }
-    fn read(&self, _buf: &mut [u8]) -> usize {
+    fn read(&self, _buf: &mut [u8]) -> SyscallRet {
         panic!("Cannot read from stdout!");
     }
-    fn write<'a>(&'a self, buf: &'a [u8]) -> usize {
+    fn write<'a>(&'a self, buf: &'a [u8]) -> SyscallRet {
         // for buffer in user_buf.buffers.iter() {
         //     print!("{}", core::str::from_utf8(*buffer).unwrap());
         // }
         unsafe {
             print!("{}", core::str::from_utf8_unchecked(buf));
         }
-        buf.len()
+        Ok(buf.len())
     }
     fn seek(&self, _offset: isize, _whence: Whence) -> SyscallRet {
         panic!("Cannot seek stdin!");

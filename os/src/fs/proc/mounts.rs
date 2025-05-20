@@ -117,15 +117,15 @@ impl MountsFile {
 }
 
 impl FileOp for MountsFile {
-    fn read(&self, buf: &mut [u8]) -> usize {
+    fn read(&self, buf: &mut [u8]) -> SyscallRet {
         let mount_info = read_proc_mounts();
         let len = mount_info.len();
         if self.inner.read().offset >= len {
-            return 0;
+            return Ok(0);
         }
         buf[..len].copy_from_slice(mount_info.as_bytes());
         self.add_offset(len);
-        len
+        Ok(len)
     }
     fn seek(&self, offset: isize, whence: crate::fs::uapi::Whence) -> SyscallRet {
         let mut inner_guard = self.inner.write();

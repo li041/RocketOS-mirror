@@ -111,12 +111,12 @@ impl NullFile {
 }
 
 impl FileOp for NullFile {
-    fn read(&self, _buf: &mut [u8]) -> usize {
+    fn read(&self, _buf: &mut [u8]) -> SyscallRet {
         // 从/dev/null读取数据, 总是会立刻返回EOF, 表示没有数据可读
-        0
+        Ok(0)
     }
-    fn write(&self, buf: &[u8]) -> usize {
-        buf.len()
+    fn write(&self, buf: &[u8]) -> SyscallRet {
+        Ok(buf.len())
     }
     fn readable(&self) -> bool {
         true
