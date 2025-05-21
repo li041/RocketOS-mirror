@@ -1,10 +1,12 @@
 //! Implementation of [`FrameAllocator`] which
 //! controls all the frames in the operating system.
+use crate::fs::dentry::dump_dentry_cache;
 use crate::mutex::SpinNoIrqLock;
 use crate::utils::ceil_to_page_size;
 use crate::{arch::boards::qemu::MEMORY_END, arch::config::KERNEL_BASE};
 use alloc::vec::Vec;
 use core::fmt::{self, Debug, Formatter};
+use core::panic;
 use lazy_static::*;
 use spin::Mutex;
 
@@ -118,8 +120,14 @@ pub fn frame_alloc() -> Option<FrameTracker> {
 }
 
 /// 由调用者负责清理
-pub fn frame_alloc_ppn() -> Option<PhysPageNum> {
-    FRAME_ALLOCATOR.lock().alloc()
+pub fn frame_alloc_ppn() -> PhysPageNum {
+    match FRAME_ALLOCATOR.lock().alloc() {
+        Some(ppn) => ppn,
+        None => {
+            dump_dentry_cache();
+            panic!("frame alloc failed!");
+        }
+    }
 }
 
 /// deallocate a frame
