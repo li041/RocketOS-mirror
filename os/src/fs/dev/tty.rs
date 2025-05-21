@@ -291,7 +291,11 @@ impl FileOp for TtyFile {
                 break;
             }
         }
-        let ch = inner.last_char as u8;
+        let mut ch = inner.last_char as u8;
+        if ch == b'\r' {
+            log::info!("[TtyFile::read] got CR");
+            ch = b'\n';
+        }
         drop(inner);
         unsafe {
             buf.as_mut_ptr().write_volatile(ch);

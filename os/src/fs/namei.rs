@@ -298,7 +298,7 @@ fn create_file_from_dentry(
                     ZERO.get().unwrap().clone()
                 } // /dev/zero
                 (5, 0) => {
-                    assert!(dentry.absolute_path == "/dev/tty");
+                    assert!(dentry.absolute_path.starts_with("/dev/tty"));
                     TTY.get().unwrap().clone()
                 } // /dev/tty
                 (10, 0) => {

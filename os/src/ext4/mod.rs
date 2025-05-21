@@ -404,7 +404,7 @@ impl InodeOp for Ext4Inode {
             (5, 0) => {
                 // /dev/tty
                 // 分配inode_num
-                assert!(dentry.absolute_path == "/dev/tty");
+                assert!(dentry.absolute_path.starts_with("/dev/tty"));
                 let new_inode_num = self
                     .ext4_fs
                     .upgrade()

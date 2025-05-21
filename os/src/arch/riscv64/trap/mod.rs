@@ -92,6 +92,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
                     if e == Errno::EFAULT {
                         panic!("EFAULT in syscall");
                     }
+                    log::error!("syscall error: {:?}", e);
                     e as usize
                 }
             }

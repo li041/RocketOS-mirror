@@ -70,6 +70,7 @@ pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> SyscallRet {
     if let Some(file) = file {
         let file = file.clone();
         if !file.readable() {
+            log::error!("[sys_read] fd {} not readable", fd);
             return Err(Errno::EBADF);
         }
         // let ret = file.read(unsafe { core::slice::from_raw_parts_mut(buf, len) });
@@ -921,7 +922,6 @@ pub fn sys_pselect6(
     return Ok(0);
 }
 
-// #[cfg(target_arch = "riscv64")]
 pub fn sys_ppoll(
     fds: *mut PollFd,
     nfds: usize,
@@ -991,34 +991,8 @@ pub fn sys_ppoll(
                 }
             }
         }
-        // for poll_fd in poll_fds.iter_mut() {
-        //     if poll_fd.fd < 0 {
-        //         continue;
-        //     } else {
-        //         if let Some(file) = task.fd_table().get_file(poll_fd.fd as usize) {
-        //             let mut trigger = 0;
-        //             if file.hang_up() {
-        //                 poll_fd.revents |= PollEvents::HUP;
-        //                 trigger = 1;
-        //             }
-        //             // Todo: 如果文件描述符是pipe写端, 且没有读端打开, 则设置POLLERR
-        //             if poll_fd.events.contains(PollEvents::IN) && file.r_ready() {
-        //                 poll_fd.revents |= PollEvents::IN;
-        //                 trigger = 1;
-        //             }
-        //             if poll_fd.events.contains(PollEvents::OUT) && file.w_ready() {
-        //                 poll_fd.revents |= PollEvents::OUT;
-        //                 trigger = 1;
-        //             }
-        //             done += trigger;
-        //         } else {
-        //             // pollfd的fd字段大于0, 但是对应文件描述符并没有打开, 设置pollfd.revents为POLLNVAL
-        //             poll_fd.revents |= PollEvents::INVAL;
-        //             log::error!("[sys_ppoll] invalid fd: {}", poll_fd.fd);
-        //         }
-        //     }
-        // }
         if done > 0 {
+            log::error!("[sys_ppoll] done: {}", done);
             break;
         }
         if timeout == 0 {

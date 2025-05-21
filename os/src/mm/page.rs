@@ -65,7 +65,7 @@ impl Page {
             usize::MAX
         };
         unsafe {
-            let ppn = frame_alloc_ppn().unwrap();
+            let ppn = frame_alloc_ppn();
             let vaddr = (ppn.0 << PAGE_SIZE_BITS) + KERNEL_BASE;
             let buf = core::slice::from_raw_parts_mut(vaddr as *mut u8, PAGE_SIZE);
             // 从块设备中读取数据到缓存中
@@ -90,7 +90,7 @@ impl Page {
     /// 用于私有页面, 匿名共享映射和System V shm
     pub fn new_framed(data: Option<&[u8; PAGE_SIZE]>) -> Self {
         unsafe {
-            let ppn = frame_alloc_ppn().unwrap();
+            let ppn = frame_alloc_ppn();
             let vaddr = (ppn.0 << PAGE_SIZE_BITS) + KERNEL_BASE;
             let buf = core::slice::from_raw_parts_mut(vaddr as *mut u8, PAGE_SIZE);
             if let Some(data) = data {
@@ -112,7 +112,7 @@ impl Page {
         unsafe {
             // let layout = Layout::from_size_align_unchecked(PAGE_SIZE, PAGE_SIZE);
             // let vaddr = alloc(layout);
-            let ppn = frame_alloc_ppn().unwrap();
+            let ppn = frame_alloc_ppn();
             let vaddr = (ppn.0 << PAGE_SIZE_BITS) + KERNEL_BASE;
             let buf = core::slice::from_raw_parts_mut(vaddr as *mut u8, PAGE_SIZE);
             let len_to_copy = inline_data.len();

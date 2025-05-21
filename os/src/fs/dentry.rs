@@ -198,6 +198,29 @@ lazy_static! {
     pub static ref DENTRY_CACHE: RwLock<DentryCache> = RwLock::new(DentryCache::new(1024));
 }
 
+pub fn dump_dentry_cache() {
+    let cache = DENTRY_CACHE.read();
+    log::info!("[DentryCache] Dumping dentry cache:");
+    for (key, value) in cache.cache.read().iter() {
+        if let Some(dentry) = value.upgrade() {
+            let inode_strong_count = if let Some(inode) = dentry.inner.lock().inode.as_ref() {
+                Arc::strong_count(inode)
+            } else {
+                0
+            };
+            println!(
+                "[DentryCache] Key: {}, Value: {:?}, dentry strong count: {}, inode stong count: {}",
+                key,
+                dentry.absolute_path,
+                Arc::strong_count(&dentry),
+                inode_strong_count,
+            );
+        } else {
+            println!("[DentryCache] Weak reference to dentry {} has expired", key);
+        }
+    }
+}
+
 pub fn lookup_dcache_with_absolute_path(absolute_path: &str) -> Option<Arc<Dentry>> {
     DENTRY_CACHE.read().get(absolute_path)
 }

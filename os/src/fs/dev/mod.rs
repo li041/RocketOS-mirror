@@ -84,6 +84,32 @@ pub fn init_devfs(root_path: Arc<Path>) {
             panic!("create {} failed: {:?}", tty_path, e);
         }
     };
+    // /dev/ttyS0
+    let tty_path = "/dev/ttyS0";
+    let tty_mode = S_IFCHR as u16 | 0o666;
+    let tty_devt = DevT::tty_devt();
+    nd = Nameidata {
+        path_segments: parse_path(tty_path),
+        dentry: root_path.dentry.clone(),
+        mnt: root_path.mnt.clone(),
+        depth: 0,
+    };
+    match filename_create(&mut nd, 0) {
+        Ok(dentry) => {
+            let parent_inode = nd.dentry.get_inode();
+            parent_inode.mknod(dentry.clone(), tty_mode, tty_devt);
+            // 现在dentry的inode指向/dev/ttyS0
+            let tty_file = TtyFile::new(
+                Path::new(root_path.mnt.clone(), dentry.clone()),
+                dentry.get_inode().clone(),
+                OpenFlags::O_RDWR,
+            );
+            TTY.call_once(|| tty_file.clone());
+        }
+        Err(e) => {
+            panic!("create {} failed: {:?}", tty_path, e);
+        }
+    };
     // /dev/rtc
     let rtc_path = "/dev/rtc";
     let rtc_mode = S_IFCHR as u16 | 0o666;
