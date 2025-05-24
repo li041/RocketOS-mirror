@@ -213,7 +213,7 @@ impl FileOp for File {
             match whence {
                 Whence::SeekSet => {
                     if offset < 0 {
-                        panic!("SeekSet offset < 0");
+                        return Err(Errno::EINVAL);
                     }
                     inner.offset = offset as usize;
                 }

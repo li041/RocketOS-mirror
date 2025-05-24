@@ -1,9 +1,9 @@
 //! new
-use crate::timer::TimeSpec;
 use crate::ext4::inode::Ext4Inode;
 use crate::mm::Page;
 use crate::mutex::SpinNoIrqLock;
 use crate::syscall::errno::SyscallRet;
+use crate::timer::TimeSpec;
 use log::SetLoggerError;
 use spin::RwLock;
 
@@ -112,6 +112,9 @@ pub trait InodeOp: Any + Send + Sync {
         unimplemented!();
     }
     fn get_size(&self) -> usize {
+        unimplemented!();
+    }
+    fn get_resident_page_count(&self) -> usize {
         unimplemented!();
     }
     fn get_mode(&self) -> u16 {

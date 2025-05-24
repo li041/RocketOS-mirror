@@ -70,6 +70,9 @@ impl InodeOp for ExeInode {
 
         kstat
     }
+    fn get_resident_page_count(&self) -> usize {
+        0
+    }
 
     /* get/set属性方法 */
     // Todo

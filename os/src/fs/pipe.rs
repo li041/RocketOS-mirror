@@ -1,12 +1,23 @@
+/*
+ * @Author: Peter/peterluck2021@163.com
+ * @Date: 2025-04-16 21:36:51
+ * @LastEditors: Peter/peterluck2021@163.com
+ * @LastEditTime: 2025-05-24 17:07:35
+ * @FilePath: /RocketOS_netperfright/os/src/fs/pipe.rs
+ * @Description:
+ *
+ * Copyright (c) 2025 by peterluck2021@163.com, All Rights Reserved.
+ */
 use alloc::boxed::Box;
 use alloc::sync::{Arc, Weak};
 use alloc::vec;
 use alloc::vec::Vec;
+use core::any::Any;
 use core::ptr::copy_nonoverlapping;
-use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::{AtomicBool, AtomicUsize};
 use spin::{Mutex, RwLock};
 
-use crate::ext4::inode::{Ext4InodeDisk, S_IFIFO};
+use crate::ext4::inode::{self, Ext4InodeDisk, S_IFIFO};
 use crate::signal::{Sig, SigInfo};
 use crate::syscall::errno::{Errno, SyscallRet};
 use crate::task::{current_task, wait, wakeup, yield_current_task, Tid};
@@ -16,24 +27,37 @@ use super::file::{FileOp, OpenFlags};
 use super::inode::InodeOp;
 use super::kstat::Kstat;
 
-lazy_static::lazy_static! {
-    static ref PIPEINODE: Arc<dyn InodeOp> =
-     {
-        let mut inode_on_disk = Ext4InodeDisk::default();
-        inode_on_disk.set_mode(S_IFIFO);
-        inode_on_disk.set_size(RING_DEFAULT_BUFFER_SIZE as u64);
-        Arc::new(PipeInode {
-            inode_num: 0,
-            inner: RwLock::new(PipeInodeInner {
-                inode_on_disk
-            }),
-        })
-    };
+// lazy_static::lazy_static! {
+//     static ref PIPEINODE: Arc<dyn InodeOp> =
+//      {
+//         let mut inode_on_disk = Ext4InodeDisk::default();
+//         inode_on_disk.set_mode(S_IFIFO);
+//         inode_on_disk.set_size(RING_DEFAULT_BUFFER_SIZE as u64);
+//         Arc::new(PipeInode {
+//             inode_num: 0,
+//             inner: RwLock::new(PipeInodeInner {
+//                 inode_on_disk
+//             }),
+//         })
+//     };
+// }
+
+pub struct PipeInode {
+    inode_num: usize,
+    buffer: Arc<Mutex<PipeRingBuffer>>,
+    inner: RwLock<PipeInodeInner>,
 }
 
-struct PipeInode {
-    inode_num: usize,
-    inner: RwLock<PipeInodeInner>,
+impl PipeInode {
+    pub fn new(inode_num: usize) -> Arc<Self> {
+        let mut inode_on_disk = Ext4InodeDisk::default();
+        inode_on_disk.set_mode(S_IFIFO);
+        Arc::new(Self {
+            inode_num,
+            buffer: Arc::new(Mutex::new(PipeRingBuffer::new())),
+            inner: RwLock::new(PipeInodeInner { inode_on_disk }),
+        })
+    }
 }
 
 struct PipeInodeInner {
@@ -41,6 +65,9 @@ struct PipeInodeInner {
 }
 
 impl InodeOp for PipeInode {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
     fn can_lookup(&self) -> bool {
         false
     }
@@ -61,6 +88,9 @@ impl InodeOp for PipeInode {
         kstat.nlink = 1;
         kstat.blocks = 0;
         kstat
+    }
+    fn get_resident_page_count(&self) -> usize {
+        0
     }
     fn get_inode_num(&self) -> usize {
         self.inode_num
@@ -93,26 +123,52 @@ impl InodeOp for PipeInode {
 pub struct Pipe {
     readable: bool,
     writable: bool,
-    buffer: Arc<Mutex<PipeRingBuffer>>,
+    inode: Arc<PipeInode>,
     flags: OpenFlags,
+    is_named_pipe: bool,
 }
 
 impl Pipe {
-    pub fn read_end_with_buffer(buffer: Arc<Mutex<PipeRingBuffer>>, flags: OpenFlags) -> Self {
-        Self {
+    pub fn read_end(inode: Arc<PipeInode>, flags: OpenFlags, is_named_pipe: bool) -> Arc<Self> {
+        let read_end = Arc::new(Self {
             readable: true,
             writable: false,
-            buffer,
+            inode: inode.clone(),
             flags,
+            is_named_pipe,
+        });
+        let mut buffer = inode.buffer.lock();
+        buffer.set_read_end(&read_end);
+        if is_named_pipe {
+            if buffer.get_waiter() != 0 {
+                // wake up writer
+                let waiter = buffer.get_waiter();
+                buffer.set_waiter(0);
+                wakeup(waiter);
+            }
         }
+        read_end
     }
-    pub fn write_end_with_buffer(buffer: Arc<Mutex<PipeRingBuffer>>, flags: OpenFlags) -> Self {
-        Self {
+    pub fn write_end(inode: Arc<PipeInode>, flags: OpenFlags, is_named_pipe: bool) -> Arc<Self> {
+        let write_end = Arc::new(Self {
             readable: false,
             writable: true,
-            buffer,
+            inode: inode.clone(),
             flags,
+            is_named_pipe,
+        });
+        let mut buffer = inode.buffer.lock();
+        buffer.set_write_end(&write_end);
+        if is_named_pipe {
+            if buffer.get_waiter() != 0 {
+                // wake up writer
+                log::info!("[Pipe::write_end] wake up reader");
+                let waiter = buffer.get_waiter();
+                buffer.set_waiter(0);
+                wakeup(waiter);
+            }
         }
+        write_end
     }
 }
 
@@ -236,12 +292,11 @@ impl PipeRingBuffer {
 /// Return (read_end, write_end)
 pub fn make_pipe(flags: OpenFlags) -> (Arc<Pipe>, Arc<Pipe>) {
     log::trace!("[make_pipe]");
-    let buffer = Arc::new(Mutex::new(PipeRingBuffer::new()));
+    // let buffer = Arc::new(Mutex::new(PipeRingBuffer::new()));
+    let inode = PipeInode::new(0);
     // buffer仅剩两个强引用，这样读写端关闭后就会被释放
-    let read_end = Arc::new(Pipe::read_end_with_buffer(buffer.clone(), flags));
-    let write_end = Arc::new(Pipe::write_end_with_buffer(buffer.clone(), flags));
-    buffer.lock().set_write_end(&write_end);
-    buffer.lock().set_read_end(&read_end);
+    let read_end = Pipe::read_end(inode.clone(), flags, false);
+    let write_end = Pipe::write_end(inode.clone(), flags, false);
     (read_end, write_end)
 }
 
@@ -252,9 +307,23 @@ impl FileOp for Pipe {
     fn read<'a>(&'a self, buf: &'a mut [u8]) -> SyscallRet {
         debug_assert!(self.readable);
         let mut read_size = 0usize;
+        if self.is_named_pipe {
+            let mut guard = self.inode.buffer.lock();
+            // 命名管道对端还没打开, 需阻塞
+            if guard.write_end.is_none() {
+                guard.set_waiter(current_task().tid());
+                drop(guard);
+                if wait() == -1 {
+                    // log::error!("[Pipe::read] wait failed");
+                    return Err(Errno::ERESTARTSYS);
+                }
+            } else {
+                drop(guard);
+            }
+        }
         let mut buffer;
         loop {
-            buffer = self.buffer.lock();
+            buffer = self.inode.buffer.lock();
             core::hint::black_box(&buffer);
             if buffer.status == RingBufferStatus::EMPTY {
                 if buffer.all_write_ends_closed() {
@@ -294,9 +363,23 @@ impl FileOp for Pipe {
     fn write<'a>(&'a self, buf: &'a [u8]) -> SyscallRet {
         assert!(self.writable);
         let mut write_size = 0;
+        if self.is_named_pipe {
+            let mut guard = self.inode.buffer.lock();
+            // 命名管道对端还没打开, 需阻塞
+            if guard.read_end.is_none() {
+                guard.set_waiter(current_task().tid());
+                drop(guard);
+                if wait() == -1 {
+                    // log::error!("[Pipe::read] wait failed");
+                    return Err(Errno::ERESTARTSYS);
+                }
+            } else {
+                drop(guard);
+            }
+        }
         let mut buffer;
         loop {
-            buffer = self.buffer.lock();
+            buffer = self.inode.buffer.lock();
             core::hint::black_box(&buffer);
             // 检查读端是否关闭
             if buffer.all_read_ends_closed() {
@@ -353,7 +436,7 @@ impl FileOp for Pipe {
     }
     fn r_ready(&self) -> bool {
         if self.readable {
-            let buffer = self.buffer.lock();
+            let buffer = self.inode.buffer.lock();
             buffer.status != RingBufferStatus::EMPTY
         } else {
             false
@@ -361,7 +444,7 @@ impl FileOp for Pipe {
     }
     fn w_ready(&self) -> bool {
         if self.writable {
-            let buffer = self.buffer.lock();
+            let buffer = self.inode.buffer.lock();
             buffer.status != RingBufferStatus::FULL
         } else {
             false
@@ -370,13 +453,13 @@ impl FileOp for Pipe {
     /// 表示另一端已关闭
     fn hang_up(&self) -> bool {
         if self.readable {
-            self.buffer.lock().all_write_ends_closed()
+            self.inode.buffer.lock().all_write_ends_closed()
         } else {
-            self.buffer.lock().all_read_ends_closed()
+            self.inode.buffer.lock().all_read_ends_closed()
         }
     }
     fn get_inode(&self) -> Arc<dyn InodeOp> {
-        PIPEINODE.clone()
+        self.inode.clone() as Arc<dyn InodeOp>
     }
     fn get_flags(&self) -> OpenFlags {
         self.flags
@@ -386,7 +469,7 @@ impl FileOp for Pipe {
 impl Drop for Pipe {
     fn drop(&mut self) {
         log::trace!("[Pipe::drop]");
-        let buffer = self.buffer.lock();
+        let buffer = self.inode.buffer.lock();
         let waiter = buffer.get_waiter();
         if waiter != 0 {
             // wake up reader or writer

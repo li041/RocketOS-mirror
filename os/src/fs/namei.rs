@@ -7,6 +7,7 @@ use super::{
     inode::InodeOp,
     mount::VfsMount,
     path::Path,
+    pipe::Pipe,
     proc::{
         exe::EXE,
         meminfo::MEMINFO,
@@ -17,7 +18,7 @@ use super::{
 use crate::{
     ext4::{
         dentry,
-        inode::{self, S_IFCHR, S_IFDIR, S_IFMT, S_IFREG},
+        inode::{self, S_IFCHR, S_IFDIR, S_IFIFO, S_IFMT, S_IFREG},
     },
     fs::{
         dentry::DentryFlags,
@@ -286,6 +287,17 @@ fn create_file_from_dentry(
     let file: Arc<dyn FileOp> = match file_type {
         S_IFREG => Arc::new(File::new(path, inode, flags)),
         S_IFDIR => Arc::new(File::new(path, inode, flags)),
+        S_IFIFO => {
+            // 创建命名管道
+            // 根据flags创建读/写端
+            let inode = Arc::downcast(inode).unwrap();
+            if flags.contains(OpenFlags::O_WRONLY) || flags.contains(OpenFlags::O_RDWR) {
+                Pipe::write_end(inode, flags, true)
+            } else {
+                // O_RDONLY = 0
+                Pipe::read_end(inode, flags, true)
+            }
+        }
         S_IFCHR => {
             // 根据设备号创建对应字符设备文件
             match inode.get_devt() {

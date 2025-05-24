@@ -33,6 +33,7 @@ use crate::{
     mm::{MapArea, MapPermission, MapType, MemorySet, VPNRange, VirtAddr},
     mutex::{Spin, SpinNoIrq, SpinNoIrqLock},
     signal::{SiField, Sig, SigHandler, SigInfo, SigPending, SigSet, SignalStack, UContext},
+    syscall::errno::SyscallRet,
     task::{
         self, add_task,
         context::write_task_cx,
@@ -721,22 +722,22 @@ impl Task {
             }
         }
     }
-    pub fn set_rlimit(&self, resource: Resource, rlim: &RLimit) -> Result<(), &'static str> {
+    pub fn set_rlimit(&self, resource: Resource, rlim: &RLimit) -> SyscallRet {
         match resource {
             Resource::NOFILE => {
                 self.fd_table().set_rlimit(&rlim);
-                Ok(())
+                Ok(0)
             }
             Resource::STACK => {
                 log::error!("[set_rlimit] Fake stack");
-                Ok(())
+                Ok(0)
             }
             _ => {
                 self.op_rlimit_mut(|rlimit| {
                     rlimit[resource as usize].rlim_cur = rlim.rlim_cur;
                     rlimit[resource as usize].rlim_max = rlim.rlim_max;
                 });
-                Ok(())
+                Ok(0)
             }
         }
     }

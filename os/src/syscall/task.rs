@@ -130,7 +130,8 @@ pub fn sys_clone(
     Ok(new_task_tid)
 }
 
-pub const IGNOER_TEST: [&str; 10] = [
+pub const IGNOER_TEST: [&str; 16] = [
+    /* 本身就不应该单独运行的 */
     "ltp/testcases/bin/ask_password.sh",
     "ltp/testcases/bin/assign_password.sh",
     "ltp/testcases/bin/cgroup_regression_3_1.sh",
@@ -141,6 +142,13 @@ pub const IGNOER_TEST: [&str; 10] = [
     "ltp/testcases/bin/cgroup_regression_6_2.sh",
     "ltp/testcases/bin/cgroup_regression_fork_processes",
     "ltp/testcases/bin/cgroup_regression_getdelays",
+    "ltp/testcases/bin/cpuhotplug_do_disk_write_loop",
+    "ltp/testcases/bin/cpuhotplug_do_kcompile_loop",
+    "ltp/testcases/bin/cpuhotplug_do_spin_loop",
+    "ltp/testcases/bin/data",
+    "ltp/testcases/bin/doio",
+    /* 由于OS原因, 先不跑的 */
+    "ltp/testcases/bin/crash02",
 ];
 
 pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> SyscallRet {

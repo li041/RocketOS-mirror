@@ -77,6 +77,9 @@ impl InodeOp for RtcInode {
 
         kstat
     }
+    fn get_resident_page_count(&self) -> usize {
+        0
+    }
     /* get/set属性方法 */
     // Todo
     fn get_devt(&self) -> (u32, u32) {

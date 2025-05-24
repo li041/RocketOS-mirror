@@ -6,6 +6,7 @@ use crate::{
         dev::{null::NullInode, rtc::RtcInode, tty::TtyInode},
         inode::InodeOp,
         kstat::Kstat,
+        pipe::PipeInode,
         uapi::{DevT, RenameFlags},
     },
     mm::Page,
@@ -19,11 +20,11 @@ use alloc::{
     sync::Arc,
 };
 use block_op::{Ext4DirContentRO, Ext4DirContentWE};
-use dentry::{EXT4_DT_CHR, EXT4_DT_DIR};
+use dentry::{EXT4_DT_CHR, EXT4_DT_DIR, EXT4_DT_FIFO};
 use fs::EXT4_BLOCK_SIZE;
 use inode::{
     load_inode, write_inode, Ext4Inode, EXT4_EXTENTS_FL, EXT4_INLINE_DATA_FL, S_IALLUGO, S_IFCHR,
-    S_IFDIR, S_IFLNK, S_IFREG,
+    S_IFDIR, S_IFIFO, S_IFLNK, S_IFMT, S_IFREG,
 };
 
 use alloc::vec::Vec;
@@ -70,7 +71,7 @@ impl InodeOp for Ext4Inode {
             format!("{}/{}", parent_entry.absolute_path, name),
             Some(parent_entry.clone()),
         );
-        if let Some(child) = parent_entry.inner.lock().children.get(name) {
+        if let Some(child) = parent_entry.get_child(name) {
             // 先查找parent_entry的child
             assert!(child.absolute_path == format!("{}/{}", parent_entry.absolute_path, name));
             return child.clone();
@@ -88,13 +89,27 @@ impl InodeOp for Ext4Inode {
                 );
 
                 let inode_mode = inode.get_mode();
+                log::warn!("inode_mode: {}", inode_mode);
                 let dentry_flags;
-                match inode_mode & 0o170000 {
+                match inode_mode & S_IFMT {
                     S_IFREG => dentry_flags = DentryFlags::DCACHE_REGULAR_TYPE,
                     S_IFDIR => dentry_flags = DentryFlags::DCACHE_DIRECTORY_TYPE,
                     S_IFCHR => dentry_flags = DentryFlags::DCACHE_SPECIAL_TYPE,
                     S_IFLNK => dentry_flags = DentryFlags::DCACHE_SYMLINK_TYPE,
-                    _ => panic!("[InodeOp::lookup] unknown inode type"),
+                    S_IFIFO => {
+                        dentry_flags = DentryFlags::DCACHE_SPECIAL_TYPE;
+                        let pipe_inode = PipeInode::new(inode_num);
+                        return Dentry::new(
+                            absolute_path,
+                            Some(parent_entry.clone()),
+                            dentry_flags,
+                            pipe_inode,
+                        );
+                    }
+                    _ => {
+                        log::error!("inode: {:?}", inode.inner.write().inode_on_disk);
+                        panic!("[InodeOp::lookup] unknown inode type: {}", inode_mode);
+                    }
                 }
                 // 2. 关联到Dentry
                 dentry = Dentry::new(
@@ -114,7 +129,7 @@ impl InodeOp for Ext4Inode {
             .inner
             .lock()
             .children
-            .insert(name.to_string(), dentry.clone());
+            .insert(name.to_string(), Arc::downgrade(&dentry));
         dentry
     }
     // Todo: 增加日志
@@ -272,11 +287,12 @@ impl InodeOp for Ext4Inode {
         // 1. 更新inode的硬链接数, ctime
         let inode = dentry.get_inode();
         let inode_num = inode.get_inode_num();
-        let ext4_inode = inode.as_any().downcast_ref::<Ext4Inode>().unwrap();
-        ext4_inode.sub_nlinks();
-        // Todo: 检查硬链接数是否为0, 如果是则加入orphan list延迟删除
-        if ext4_inode.get_nlinks() == 0 {
-            self.ext4_fs.upgrade().unwrap().add_orphan_inode(inode_num);
+        if let Some(ext4_inode) = inode.as_any().downcast_ref::<Ext4Inode>() {
+            ext4_inode.sub_nlinks();
+            // Todo: 检查硬链接数是否为0, 如果是则加入orphan list延迟删除
+            if ext4_inode.get_nlinks() == 0 {
+                self.ext4_fs.upgrade().unwrap().add_orphan_inode(inode_num);
+            }
         }
         // 2. 在父目录中删除对应项
         self.delete_entry(&dentry.get_last_name(), inode_num as u32);
@@ -370,66 +386,83 @@ impl InodeOp for Ext4Inode {
     /// 目前仅支持字符设备, 设备号都是静态分配
     fn mknod<'a>(&'a self, dentry: Arc<Dentry>, mode: u16, dev: DevT) {
         assert!(dentry.is_negative());
-        assert!(mode & S_IFCHR != 0);
-        // 提取主,次设备号
-        let (major, minor) = dev.unpack();
-        // 主设备号1表示mem
-        match (major, minor) {
-            (1, 3) => {
-                assert!(dentry.absolute_path == "/dev/null");
+        let file_type = mode & S_IFMT;
+        match file_type {
+            S_IFIFO => {
                 let new_inode_num = self
                     .ext4_fs
                     .upgrade()
                     .unwrap()
                     .alloc_inode(self.block_device.clone(), true);
-                let null_inode = NullInode::new(new_inode_num, mode, 1, 3);
+                let pipe_inode = PipeInode::new(new_inode_num);
                 // 在父目录中添加对应项
-                self.add_entry(dentry.clone(), new_inode_num as u32, EXT4_DT_CHR);
+                self.add_entry(dentry.clone(), new_inode_num as u32, EXT4_DT_FIFO);
                 // 关联到dentry
-                dentry.inner.lock().inode = Some(null_inode);
-            } // /dev/null
-            (1, 5) => {
-                assert!(dentry.absolute_path == "/dev/zero");
-                let new_inode_num = self
-                    .ext4_fs
-                    .upgrade()
-                    .unwrap()
-                    .alloc_inode(self.block_device.clone(), true);
-                let zero_inode = NullInode::new(new_inode_num, mode, 1, 5);
-                // 在父目录中添加对应项
-                self.add_entry(dentry.clone(), new_inode_num as u32, EXT4_DT_CHR);
-                // 关联到dentry
-                dentry.inner.lock().inode = Some(zero_inode);
-            } // /dev/zero
-            (5, 0) => {
-                // /dev/tty
-                // 分配inode_num
-                assert!(dentry.absolute_path.starts_with("/dev/tty"));
-                let new_inode_num = self
-                    .ext4_fs
-                    .upgrade()
-                    .unwrap()
-                    .alloc_inode(self.block_device.clone(), true);
-                let tty_inode = TtyInode::new(new_inode_num, mode, 5, 0);
-                // 在父目录中添加对应项
-                self.add_entry(dentry.clone(), new_inode_num as u32, EXT4_DT_CHR);
-                // 关联到dentry
-                dentry.inner.lock().inode = Some(tty_inode);
-            } // /dev/tty
-            (10, 0) => {
-                assert!(dentry.absolute_path == "/dev/rtc");
-                let new_inode_num = self
-                    .ext4_fs
-                    .upgrade()
-                    .unwrap()
-                    .alloc_inode(self.block_device.clone(), true);
-                let rtc_inode = RtcInode::new(new_inode_num, mode, 10, 0);
-                // 在父目录中添加对应项
-                self.add_entry(dentry.clone(), new_inode_num as u32, EXT4_DT_CHR);
-                // 关联到dentry
-                dentry.inner.lock().inode = Some(rtc_inode);
+                dentry.inner.lock().inode = Some(pipe_inode);
             }
-            _ => panic!("Unsupported device: major: {}, minor: {}", major, minor),
+            S_IFCHR => {
+                // 提取主,次设备号
+                let (major, minor) = dev.unpack();
+                // 主设备号1表示mem
+                match (major, minor) {
+                    (1, 3) => {
+                        assert!(dentry.absolute_path == "/dev/null");
+                        let new_inode_num = self
+                            .ext4_fs
+                            .upgrade()
+                            .unwrap()
+                            .alloc_inode(self.block_device.clone(), true);
+                        let null_inode = NullInode::new(new_inode_num, mode, 1, 3);
+                        // 在父目录中添加对应项
+                        self.add_entry(dentry.clone(), new_inode_num as u32, EXT4_DT_CHR);
+                        // 关联到dentry
+                        dentry.inner.lock().inode = Some(null_inode);
+                    } // /dev/null
+                    (1, 5) => {
+                        assert!(dentry.absolute_path == "/dev/zero");
+                        let new_inode_num = self
+                            .ext4_fs
+                            .upgrade()
+                            .unwrap()
+                            .alloc_inode(self.block_device.clone(), true);
+                        let zero_inode = NullInode::new(new_inode_num, mode, 1, 5);
+                        // 在父目录中添加对应项
+                        self.add_entry(dentry.clone(), new_inode_num as u32, EXT4_DT_CHR);
+                        // 关联到dentry
+                        dentry.inner.lock().inode = Some(zero_inode);
+                    } // /dev/zero
+                    (5, 0) => {
+                        // /dev/tty
+                        // 分配inode_num
+                        assert!(dentry.absolute_path.starts_with("/dev/tty"));
+                        let new_inode_num = self
+                            .ext4_fs
+                            .upgrade()
+                            .unwrap()
+                            .alloc_inode(self.block_device.clone(), true);
+                        let tty_inode = TtyInode::new(new_inode_num, mode, 5, 0);
+                        // 在父目录中添加对应项
+                        self.add_entry(dentry.clone(), new_inode_num as u32, EXT4_DT_CHR);
+                        // 关联到dentry
+                        dentry.inner.lock().inode = Some(tty_inode);
+                    } // /dev/tty
+                    (10, 0) => {
+                        assert!(dentry.absolute_path == "/dev/rtc");
+                        let new_inode_num = self
+                            .ext4_fs
+                            .upgrade()
+                            .unwrap()
+                            .alloc_inode(self.block_device.clone(), true);
+                        let rtc_inode = RtcInode::new(new_inode_num, mode, 10, 0);
+                        // 在父目录中添加对应项
+                        self.add_entry(dentry.clone(), new_inode_num as u32, EXT4_DT_CHR);
+                        // 关联到dentry
+                        dentry.inner.lock().inode = Some(rtc_inode);
+                    }
+                    _ => panic!("Unsupported device: major: {}, minor: {}", major, minor),
+                }
+            }
+            _ => panic!("Unsupported file type: {}", file_type),
         }
         // 更新dentry flags, 去掉负目录项标志, 添加特殊设备标志
         dentry
@@ -462,6 +495,9 @@ impl InodeOp for Ext4Inode {
     }
     fn get_size(&self) -> usize {
         self.inner.read().inode_on_disk.get_size() as usize
+    }
+    fn get_resident_page_count(&self) -> usize {
+        self.address_space.len()
     }
     fn get_mode(&self) -> u16 {
         self.inner.read().inode_on_disk.get_mode()
