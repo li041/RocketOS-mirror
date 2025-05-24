@@ -15,7 +15,7 @@ use spin::{Mutex, RwLock};
 
 use crate::{
     ext4::{
-        dentry::Ext4DirEntry,
+        dentry::{self, Ext4DirEntry},
         inode::{self, S_IFDIR},
     },
     mutex::SpinNoIrqLock,
@@ -62,7 +62,7 @@ pub struct DentryInner {
     // pub inode: Option<Arc<SpinNoIrqLock<OSInode>>>,
     pub parent: Option<Weak<Dentry>>,
     // chrildren 是一个哈希表, 用于存储子目录/文件, name不是绝对路径
-    pub children: HashMap<String, Arc<Dentry>>,
+    pub children: HashMap<String, Weak<Dentry>>,
 }
 
 // impl Drop for Dentry {
@@ -145,6 +145,15 @@ impl Dentry {
             .last()
             .unwrap_or(&self.absolute_path)
     }
+    pub fn get_child(self: &Arc<Dentry>, name: &str) -> Option<Arc<Dentry>> {
+        let inner = self.inner.lock();
+        if let Some(child) = inner.children.get(name) {
+            if let Some(child) = child.upgrade() {
+                return Some(child);
+            }
+        }
+        None
+    }
 
     // 判断ancestor是否是child的祖先
     pub fn is_ancestor(self: &Arc<Dentry>, child: &Arc<Dentry>) -> bool {
@@ -198,27 +207,34 @@ lazy_static! {
     pub static ref DENTRY_CACHE: RwLock<DentryCache> = RwLock::new(DentryCache::new(1024));
 }
 
-pub fn dump_dentry_cache() {
+/// 当frame不够时, 需要清理掉一些不常用的dentry
+pub fn clean_dentry_cache() {
     let cache = DENTRY_CACHE.read();
-    log::info!("[DentryCache] Dumping dentry cache:");
-    for (key, value) in cache.cache.read().iter() {
-        if let Some(dentry) = value.upgrade() {
-            let inode_strong_count = if let Some(inode) = dentry.inner.lock().inode.as_ref() {
-                Arc::strong_count(inode)
+    let mut cache_map = cache.cache.write(); // 需要写锁来删除
+    let mut lru = cache.lru_list.lock();
+
+    for name in lru.iter() {
+        if let Some(dentry) = cache_map.get(name) {
+            let strong_count = Arc::strong_count(dentry);
+            let count = if let Some(inode) = dentry.inner.lock().inode.as_ref() {
+                inode.get_resident_page_count()
             } else {
                 0
             };
-            println!(
-                "[DentryCache] Key: {}, Value: {:?}, dentry strong count: {}, inode stong count: {}",
-                key,
-                dentry.absolute_path,
-                Arc::strong_count(&dentry),
-                inode_strong_count,
-            );
-        } else {
-            println!("[DentryCache] Weak reference to dentry {} has expired", key);
+            // println!(
+            //     "[DentryCache] Key: {}, Path: {:?}, Strong Count: {}, pages: {}",
+            //     name, dentry.absolute_path, strong_count, count
+            // );
+            if strong_count == 1 && count > 0 {
+                // 没有其他强引用，可以安全移除
+                cache_map.remove(name);
+                // println!("[DentryCache] Removed {} due to low strong count", name);
+            }
         }
     }
+
+    // 清理掉 lru_list 中不再存在于 cache 的条目
+    lru.retain(|key| cache_map.contains_key(key));
 }
 
 pub fn lookup_dcache_with_absolute_path(absolute_path: &str) -> Option<Arc<Dentry>> {
@@ -248,7 +264,7 @@ pub fn delete_dentry(dentry: Arc<Dentry>) {
 // 全局单例, 外层拿锁
 // 注意管理器中对于Dentry的管理应该是Weak
 pub struct DentryCache {
-    cache: RwLock<HashMap<String, Weak<Dentry>>>,
+    cache: RwLock<HashMap<String, Arc<Dentry>>>,
     // 用于LRU策略的列表
     lru_list: Mutex<VecDeque<String>>,
     capacity: usize,
@@ -273,18 +289,19 @@ impl DentryCache {
             }
             lru_list.push_back(absolute_path.to_string());
             // 返回 dentry 的引用
-            if let Some(dentry) = dentry.upgrade() {
-                return Some(dentry);
-            } else {
-                // 如果 Weak 引用已经失效，则从缓存中移除
-                log::error!(
-                    "[DentryCache] Weak reference to dentry {} has expired",
-                    absolute_path
-                );
-                drop(cache);
-                let mut cache = self.cache.write();
-                cache.remove(absolute_path);
-            }
+            // if let Some(dentry) = dentry.upgrade() {
+            //     return Some(dentry);
+            // } else {
+            //     // 如果 Weak 引用已经失效，则从缓存中移除
+            //     log::error!(
+            //         "[DentryCache] Weak reference to dentry {} has expired",
+            //         absolute_path
+            //     );
+            //     drop(cache);
+            //     let mut cache = self.cache.write();
+            //     cache.remove(absolute_path);
+            // }
+            return Some(dentry.clone());
         }
         None
     }
@@ -305,7 +322,7 @@ impl DentryCache {
             }
         }
 
-        cache.insert(absolute_path.clone(), Arc::downgrade(&dentry));
+        cache.insert(absolute_path.clone(), dentry);
         lru_list.push_back(absolute_path);
     }
 

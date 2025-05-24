@@ -119,6 +119,9 @@ pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> SyscallRet {
     if len == 0 {
         return Ok(0);
     }
+    if fd >= 3 {
+        log::info!("sys_write: fd: {}, len: {}", fd, len);
+    }
     let task = current_task();
     let file = task.fd_table().get_file(fd);
     if let Some(file) = file {
@@ -127,10 +130,7 @@ pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> SyscallRet {
         }
         let file = file.clone();
         let mut ker_buf = vec![0u8; len];
-        copy_from_user(buf, ker_buf.as_mut_ptr(), len).unwrap();
-        if fd >= 3 {
-            log::info!("sys_write: fd: {}, len: {}", fd, len,);
-        }
+        copy_from_user(buf, ker_buf.as_mut_ptr(), len)?;
         let ret = file.write(&ker_buf)?;
         Ok(ret)
     } else {
@@ -154,7 +154,7 @@ pub fn sys_readv(fd: usize, iov_ptr: *const IoVec, iovcnt: usize) -> SyscallRet 
     }
     let mut total_read = 0;
     let mut iov: Vec<IoVec> = vec![IoVec::default(); iovcnt];
-    copy_from_user(iov_ptr, iov.as_mut_ptr(), iovcnt).unwrap();
+    copy_from_user(iov_ptr, iov.as_mut_ptr(), iovcnt)?;
     for iovec in iov.iter() {
         if iovec.len == 0 {
             continue;
@@ -197,7 +197,7 @@ pub fn sys_writev(fd: usize, iov_ptr: *const IoVec, iovcnt: usize) -> SyscallRet
     }
     let mut total_written = 0;
     let mut iov: Vec<IoVec> = vec![IoVec::default(); iovcnt];
-    copy_from_user(iov_ptr, iov.as_mut_ptr(), iovcnt).unwrap();
+    copy_from_user(iov_ptr, iov.as_mut_ptr(), iovcnt)?;
     for iovec in iov.iter() {
         if iovec.len == 0 {
             continue;
@@ -259,7 +259,7 @@ pub fn sys_pwrite(fd: usize, buf: *const u8, count: usize, offest: usize) -> Sys
             return Err(Errno::EBADF);
         }
         let mut ker_buf = vec![0u8; count];
-        copy_from_user(buf, ker_buf.as_mut_ptr(), count).unwrap();
+        copy_from_user(buf, ker_buf.as_mut_ptr(), count)?;
         file.pwrite(&ker_buf, offest)
     } else {
         log::error!("[sys_pwrite] fd {} not opened", fd);
@@ -380,14 +380,14 @@ pub fn sys_openat(dirfd: i32, pathname: *const u8, flags: i32, mode: usize) -> S
 
 /// mode是inode类型+文件权限
 pub fn sys_mknodat(dirfd: i32, pathname: *const u8, mode: usize, dev: u64) -> SyscallRet {
+    let path = c_str_to_string(pathname);
     log::info!(
         "[sys_mknodat] dirfd: {}, pathname: {:?}, mode: {}, dev: {}",
         dirfd,
-        pathname,
+        path,
         mode,
         dev
     );
-    let path = c_str_to_string(pathname);
     let mut nd = Nameidata::new(&path, dirfd);
     let fake_lookup_flags = 0;
     match filename_create(&mut nd, fake_lookup_flags) {
@@ -768,7 +768,7 @@ pub fn sys_pselect6(
         -1
     } else {
         let mut tmo: TimeSpec = TimeSpec::default();
-        copy_from_user(timeout, &mut tmo as *mut TimeSpec, 1).unwrap();
+        copy_from_user(timeout, &mut tmo as *mut TimeSpec, 1)?;
         (tmo.sec * 1000 + tmo.nsec / 1000000) as isize
     };
     // log::error!(
@@ -942,7 +942,7 @@ pub fn sys_ppoll(
         -1
     } else {
         let mut tmo: TimeSpec = TimeSpec::default();
-        copy_from_user(timeout, &mut tmo as *mut TimeSpec, 1).unwrap();
+        copy_from_user(timeout, &mut tmo as *mut TimeSpec, 1)?;
         (tmo.sec * 1000 + tmo.nsec / 1000000) as isize
     };
     // Todo: 设置sigmaskconst
@@ -956,7 +956,7 @@ pub fn sys_ppoll(
     drop(task);
 
     let mut poll_fds: Vec<PollFd> = vec![PollFd::default(); nfds];
-    copy_from_user(fds, poll_fds.as_mut_ptr(), nfds).unwrap();
+    copy_from_user(fds, poll_fds.as_mut_ptr(), nfds)?;
     for poll_fd in poll_fds.iter_mut() {
         poll_fd.revents = PollEvents::empty();
     }
@@ -1194,7 +1194,7 @@ pub fn sys_utimensat(
     let time_specs = if time_spec2.is_null() {
         None
     } else {
-        copy_from_user(time_spec2, &mut time_spec2_buf as *mut TimeSpec, 2).unwrap();
+        copy_from_user(time_spec2, &mut time_spec2_buf as *mut TimeSpec, 2)?;
         Some(&time_spec2_buf)
     };
     let inode = if let Some(path) = path {
@@ -1292,7 +1292,7 @@ pub fn sys_sendfile(
     } else {
         // offset不为NULL, 则sendfile不会修改`in_fd`的文件偏移量
         let mut offset = 0;
-        copy_from_user(offset_ptr, &mut offset, 1).unwrap();
+        copy_from_user(offset_ptr, &mut offset, 1)?;
         let origin_offset = in_file.get_offset();
         in_file.seek(offset as isize, Whence::SeekSet)?;
         len = in_file.read(&mut buf)?;
@@ -1465,18 +1465,22 @@ pub fn sys_ioctl(fd: usize, op: usize, _arg_ptr: usize) -> SyscallRet {
 /// 检查进程是否可以访问指定的文件
 /// Todo: 目前只检查pathname指定的文件是否存在, 没有检查权限
 pub fn sys_faccessat(fd: usize, pathname: *const u8, mode: i32, flags: i32) -> SyscallRet {
-    log::info!(
-        "[sys_faccessat] fd: {}, pathname: {:?}, mode: {}, flags: {}",
-        fd,
-        pathname,
-        mode,
-        flags
-    );
     log::warn!("[sys_faccessat] Unimplemented");
     let path = c_str_to_string(pathname);
     if path.is_empty() {
         log::error!("[sys_faccessat] pathname is empty");
         return Err(Errno::EINVAL);
+    }
+    log::info!(
+        "[sys_faccessat] fd: {}, pathname: {:?}, mode: {}, flags: {}",
+        fd,
+        path,
+        mode,
+        flags
+    );
+    // 5.22
+    if path == "/dev/shm" {
+        log::info!("Breakpoint: [sys_faccessat] dev");
     }
     let mut nd = Nameidata::new(&path, fd as i32);
     let fake_lookup_flags = 0;

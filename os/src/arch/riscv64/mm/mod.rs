@@ -75,7 +75,6 @@ pub fn copy_to_user<T: Copy>(to: *mut T, from: *const T, n: usize) -> SyscallRet
 }
 
 /// 逐字节复制数据到内核空间, n为元素个数, 注意不是字节数
-/// 由调用者保证地址合法性
 pub fn copy_from_user<'a, T: Copy>(from: *const T, to: *mut T, n: usize) -> SyscallRet {
     if from.is_null() {
         return Err(Errno::EINVAL);
@@ -83,6 +82,13 @@ pub fn copy_from_user<'a, T: Copy>(from: *const T, to: *mut T, n: usize) -> Sysc
     if n == 0 {
         return Err(Errno::EINVAL);
     }
+    // 检查地址是否合法
+    let start_vpn = VirtAddr::from(from as usize).floor();
+    let end_vpn = VirtAddr::from(from as usize + n * core::mem::size_of::<T>()).ceil();
+    let vpn_range = VPNRange::new(start_vpn, end_vpn);
+    current_task().op_memory_set_mut(|memory_set| {
+        memory_set.check_valid_user_vpn_range(vpn_range, MapPermission::R)
+    })?;
     let total_bytes = n * core::mem::size_of::<T>();
     let to_bytes = unsafe { core::slice::from_raw_parts_mut(to as *mut u8, total_bytes) };
     let mut copied = 0;

@@ -637,15 +637,16 @@ impl Drop for Ext4Inode {
     // 释放页缓存, inode bitmap, block bitmap, inode table
     // Todo: 可能有资源还没有释放
     fn drop(&mut self) {
-        log::error!("[Ext4Inode::drop] drop inode {}", self.inode_num);
         // 释放页缓存
+        // println!("before clear address space");
         self.address_space.clear();
+        // println!("after clear address space");
         // 释放inode bitmap和inode table
-        self.ext4_fs.upgrade().unwrap().dealloc_inode(
-            self.block_device.clone(),
-            self.inode_num,
-            self.inner.read().inode_on_disk.is_dir(),
-        );
+        // self.ext4_fs.upgrade().unwrap().dealloc_inode(
+        //     self.block_device.clone(),
+        //     self.inode_num,
+        //     self.inner.read().inode_on_disk.is_dir(),
+        // );
         // Todo: 释放extent_tree
     }
 }

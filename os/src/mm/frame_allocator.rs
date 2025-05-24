@@ -1,6 +1,6 @@
 //! Implementation of [`FrameAllocator`] which
 //! controls all the frames in the operating system.
-use crate::fs::dentry::dump_dentry_cache;
+use crate::fs::dentry::clean_dentry_cache;
 use crate::mutex::SpinNoIrqLock;
 use crate::utils::ceil_to_page_size;
 use crate::{arch::boards::qemu::MEMORY_END, arch::config::KERNEL_BASE};
@@ -105,6 +105,8 @@ pub fn init_frame_allocator() {
     // 在entry.asm中设置了映射: 0xffff_ffc0_8000_0000 -> 0x8000_0000, 分配了1G的内存(超出实际)
     FRAME_ALLOCATOR.lock().init(
         PhysAddr::from((ekernel as usize - KERNEL_BASE) as usize).ceil(),
+        // PhysAddr::from(MEMORY_END).floor(),
+        // 5.21 Debug
         PhysAddr::from(MEMORY_END).floor(),
     );
     log::info!(
@@ -121,12 +123,15 @@ pub fn frame_alloc() -> Option<FrameTracker> {
 
 /// 由调用者负责清理
 pub fn frame_alloc_ppn() -> PhysPageNum {
-    match FRAME_ALLOCATOR.lock().alloc() {
-        Some(ppn) => ppn,
-        None => {
-            dump_dentry_cache();
-            panic!("frame alloc failed!");
-        }
+    if let Some(ppn) = FRAME_ALLOCATOR.lock().alloc() {
+        ppn
+    } else {
+        clean_dentry_cache();
+        let ppn = FRAME_ALLOCATOR
+            .lock()
+            .alloc()
+            .expect("frame alloc failed after clean dentry cache");
+        ppn
     }
 }
 

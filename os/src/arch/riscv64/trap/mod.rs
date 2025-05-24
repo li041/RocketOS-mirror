@@ -15,6 +15,7 @@ use riscv::register::{
 
 use crate::{
     arch::mm::PageTable,
+    fs::dentry::clean_dentry_cache,
     mm::VirtAddr,
     signal::{handle_signal, SiField, Sig, SigInfo},
     syscall::{errno::Errno, syscall},
@@ -89,9 +90,9 @@ pub fn trap_handler(cx: &mut TrapContext) {
                 Ok(ret) => ret as usize,
                 Err(e) => {
                     // 在开发阶段, 如果发生了EFAULT, 直接panic
-                    if e == Errno::EFAULT {
-                        panic!("EFAULT in syscall");
-                    }
+                    // if e == Errno::EFAULT {
+                    //     panic!("EFAULT in syscall");
+                    // }
                     log::error!("syscall error: {:?}", e);
                     e as usize
                 }
@@ -156,6 +157,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
             set_next_trigger();
             handle_timeout();
+            clean_dentry_cache();
             yield_current_task();
         }
         _ => {

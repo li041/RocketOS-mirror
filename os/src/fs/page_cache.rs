@@ -17,7 +17,7 @@ pub struct AddressSpace {
     // Todo: linux使用的是`xarray`, 这里先用`BTreeMap`代替
     // 页缓存, key是页在文件中的页偏移(Page->index), value是页缓存
     // Todo: 这个要换成读写锁
-    i_pages: RwLock<BTreeMap<usize, Arc<Page>>>, // 文件对应的页缓存
+    pub i_pages: RwLock<BTreeMap<usize, Arc<Page>>>, // 文件对应的页缓存
 }
 
 impl AddressSpace {
@@ -73,5 +73,8 @@ impl AddressSpace {
     // Page有Drop trait, 会写回到磁盘
     pub fn clear(self: &Self) {
         self.i_pages.write().clear();
+    }
+    pub fn len(self: &Self) -> usize {
+        self.i_pages.read().len()
     }
 }

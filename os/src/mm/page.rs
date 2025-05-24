@@ -39,18 +39,20 @@ pub struct ShreadPageInfo {
     start_block_id: usize,
     block_device: Weak<dyn BlockDevice>,
     inode: Weak<dyn InodeOp>,
+    /// whether the page is dirty
+    modified: bool,
 }
 
 pub struct InlinePageInfo {
     inode: Weak<dyn InodeOp>,
+    /// whether the page is dirty
+    modified: bool,
 }
 
 // 页缓存中使用的页结构
 pub struct Page {
     vaddr: usize,
     page_kind: PageKind,
-    /// whether the page is dirty
-    modified: bool,
 }
 
 impl Page {
@@ -82,8 +84,8 @@ impl Page {
                     start_block_id,
                     block_device: Arc::downgrade(&block_device),
                     inode,
+                    modified: false,
                 })),
-                modified: false,
             };
         };
     }
@@ -103,7 +105,6 @@ impl Page {
             return Self {
                 vaddr: vaddr as usize,
                 page_kind: PageKind::Framed,
-                modified: false,
             };
         }
     }
@@ -119,8 +120,10 @@ impl Page {
             buf[..len_to_copy].copy_from_slice(inline_data);
             return Self {
                 vaddr: vaddr as usize,
-                page_kind: PageKind::Inline(RwLock::new(InlinePageInfo { inode })),
-                modified: false,
+                page_kind: PageKind::Inline(RwLock::new(InlinePageInfo {
+                    inode,
+                    modified: false,
+                })),
             };
         }
     }
@@ -179,21 +182,23 @@ impl Page {
         match &self.page_kind {
             PageKind::Framed => self.modify_private(offset, f),
             PageKind::Filebe(info) => {
-                let _guard = info.write(); // 加写锁
+                let mut guard = info.write(); // 加写锁
                 let ptr = unsafe {
                     let addr = self.addr_of_offset(offset);
                     assert!(offset + core::mem::size_of::<T>() <= PAGE_SIZE);
                     &mut *(addr as *mut T)
                 };
+                guard.modified = true;
                 f(ptr)
             }
             PageKind::Inline(info) => {
-                let _guard = info.write(); // 加写锁
+                let mut guard = info.write(); // 加写锁
                 let ptr = unsafe {
                     let addr = self.addr_of_offset(offset);
                     assert!(offset + core::mem::size_of::<T>() <= PAGE_SIZE);
                     &mut *(addr as *mut T)
                 };
+                guard.modified = true;
                 f(ptr)
             }
         }
@@ -209,38 +214,66 @@ impl Page {
     }
 
     pub fn sync(&mut self) {
-        if self.modified {
-            match &self.page_kind {
-                PageKind::Filebe(info) => {
-                    // 判断文件是否已删除, 若已删除, 则不需要回写
-                    // 注意ext4可能有稀疏文件, 当第一次读extent_tree时发现空洞, 页缓存直接分配一个全0页面, 并没有对应磁盘的block
-                    if let Some(_) = info.read().inode.upgrade() {
+        // if self.modified {
+        //     println!("[Page::modified]sync page: {:#x}", self.vaddr);
+        //     match &self.page_kind {
+        //         PageKind::Filebe(info) => {
+        //             // 判断文件是否已删除, 若已删除, 则不需要回写
+        //             // 注意ext4可能有稀疏文件, 当第一次读extent_tree时发现空洞, 页缓存直接分配一个全0页面, 并没有对应磁盘的block
+        //             if let Some(_) = info.read().inode.upgrade() {
+        //                 let cache = unsafe {
+        //                     core::slice::from_raw_parts_mut(self.vaddr as *mut u8, PAGE_SIZE)
+        //                 };
+        //                 // let start_block_id = info.read().start_block_id;
+        //                 // info.write()
+        //                 //     .block_device
+        //                 //     .upgrade()
+        //                 //     .unwrap()
+        //                 //     .write_blocks(start_block_id, cache);
+        //                 info.write().inode.upgrade().unwrap().write(0, cache);
+        //             }
+        //         }
+        //         PageKind::Inline(info) => {
+        //             let inline_data = unsafe {
+        //                 core::slice::from_raw_parts_mut(self.vaddr as *mut u8, PAGE_SIZE)
+        //             };
+        //             info.write().inode.upgrade().unwrap().write(0, inline_data);
+        //         }
+        //         // Private does not need to sync when dropping
+        //         _ => {}
+        //     }
+        // }
+        match &self.page_kind {
+            PageKind::Filebe(info) => {
+                let guard = info.write(); // 加写锁
+                if guard.modified {
+                    // println!("[Page::modified]sync page: {:#x}", self.vaddr);
+                    if let Some(block_device) = guard.block_device.upgrade() {
                         let cache = unsafe {
                             core::slice::from_raw_parts_mut(self.vaddr as *mut u8, PAGE_SIZE)
                         };
-                        // let start_block_id = info.read().start_block_id;
-                        // info.write()
-                        //     .block_device
-                        //     .upgrade()
-                        //     .unwrap()
-                        //     .write_blocks(start_block_id, cache);
-                        info.write().inode.upgrade().unwrap().write(0, cache);
+                        block_device.write_blocks(guard.start_block_id, cache);
                     }
                 }
-                PageKind::Inline(info) => {
+            }
+            PageKind::Inline(info) => {
+                let guard = info.write(); // 加写锁
+                if guard.modified {
+                    // println!("[Page::modified]sync page: {:#x}", self.vaddr);
                     let inline_data = unsafe {
                         core::slice::from_raw_parts_mut(self.vaddr as *mut u8, PAGE_SIZE)
                     };
-                    info.write().inode.upgrade().unwrap().write(0, inline_data);
+                    if let Some(inode) = guard.inode.upgrade() {
+                        inode.write(0, inline_data);
+                    }
                 }
-                // Private does not need to sync when dropping
-                _ => {}
             }
+            _ => {}
         }
         // 释放内存
         let ppn = (self.vaddr - KERNEL_BASE) >> PAGE_SIZE_BITS;
         frame_dealloc(PhysPageNum(ppn));
-        self.modified = false;
+        // println!("dealloc page: {:#x}", self.vaddr);
     }
 }
 

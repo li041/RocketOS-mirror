@@ -186,10 +186,8 @@ pub fn sys_prlimit64(
     // 如果new_limit不为NULL, 则将new_limit写入当前的rlimit
     if !new_limit.is_null() {
         let mut limit_buf = RLimit::default();
-        copy_from_user(new_limit, &mut limit_buf as *mut RLimit, 1)
-            .expect("[sys_prlimit64]: copy_from_user failed");
-        task.set_rlimit(resource, &limit_buf)
-            .expect("[sys_prlimit64]: set rlimit failed");
+        copy_from_user(new_limit, &mut limit_buf as *mut RLimit, 1)?;
+        return task.set_rlimit(resource, &limit_buf);
     }
     Ok(0)
 }
@@ -241,8 +239,7 @@ pub fn sys_setitimer(
         return Err(Errno::EINVAL);
     }
     let mut new = ITimerVal::default();
-    copy_from_user(value_ptr, &mut new as *mut ITimerVal, 1)
-        .expect("[sys_setitimer] copy_from_user failed");
+    copy_from_user(value_ptr, &mut new as *mut ITimerVal, 1)?;
     if !new.is_valid() {
         return Err(Errno::EINVAL);
     }

@@ -6,7 +6,7 @@ use crate::{
         inode::InodeOp,
         kstat::Kstat,
         path::Path,
-        uapi::DevT,
+        uapi::{DevT, Whence},
     },
     syscall::errno::{Errno, SyscallRet},
     timer::TimeSpec,
@@ -15,7 +15,7 @@ use crate::{
 
 use alloc::sync::Arc;
 
-use spin::{Once, RwLock};
+use spin::{Mutex, Once, RwLock};
 
 pub static NULL: Once<Arc<dyn FileOp>> = Once::new();
 
@@ -69,6 +69,9 @@ impl InodeOp for NullInode {
         kstat.blocks = 0;
         kstat
     }
+    fn get_resident_page_count(&self) -> usize {
+        0
+    }
     /* get/set属性方法 */
     // Todo
     fn get_devt(&self) -> (u32, u32) {
@@ -102,11 +105,21 @@ pub struct NullFile {
     pub path: Arc<Path>,
     pub inode: Arc<dyn InodeOp>,
     pub flags: OpenFlags,
+    pub inner: Mutex<NullFileInner>,
+}
+
+struct NullFileInner {
+    offset: usize,
 }
 
 impl NullFile {
     pub fn new(path: Arc<Path>, inode: Arc<dyn InodeOp>, flags: OpenFlags) -> Arc<Self> {
-        Arc::new(Self { path, inode, flags })
+        Arc::new(Self {
+            path,
+            inode,
+            flags,
+            inner: Mutex::new(NullFileInner { offset: 0 }),
+        })
     }
 }
 
@@ -123,5 +136,14 @@ impl FileOp for NullFile {
     }
     fn writable(&self) -> bool {
         true
+    }
+    fn seek(&self, offset: isize, whence: Whence) -> SyscallRet {
+        let mut inner = self.inner.lock();
+        match whence {
+            Whence::SeekSet => inner.offset = offset as usize,
+            Whence::SeekCur => inner.offset = (inner.offset as isize + offset) as usize,
+            Whence::SeekEnd => inner.offset = 0,
+        }
+        Ok(inner.offset)
     }
 }
