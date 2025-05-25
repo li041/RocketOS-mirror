@@ -205,17 +205,17 @@ impl FakeMemInfo {
     }
     pub fn serialize(&self) -> String {
         let mut res = "".to_string();
-        let end = " KB\n";
+        let end = " kB\n";
         let total_mem = "MemTotal:\t".to_string() + self.total_mem.to_string().as_str() + end;
         let free_mem = "MemFree:\t".to_string() + self.free_mem.to_string().as_str() + end;
         let avail_mem = "MemAvailable:\t".to_string() + self.avail_mem.to_string().as_str() + end;
         let buffers = "Buffers:\t".to_string() + self.buffers.to_string().as_str() + end;
-        let cached = "Cached:\t".to_string() + self.cached.to_string().as_str() + end;
+        let cached = "Cached:\t\t".to_string() + self.cached.to_string().as_str() + end;
         let cached_swap = "SwapCached:\t".to_string() + 0.to_string().as_str() + end;
         let total_swap = "SwapTotal:\t".to_string() + self.total_swap.to_string().as_str() + end;
         let free_swap = "SwapFree:\t".to_string() + self.free_swap.to_string().as_str() + end;
-        let shmem = "Shmem:\t".to_string() + self.shmem.to_string().as_str() + end;
-        let slab = "Slab:\t".to_string() + self.slab.to_string().as_str() + end;
+        let shmem = "Shmem:\t\t".to_string() + self.shmem.to_string().as_str() + end;
+        let slab = "Slab:\t\t".to_string() + self.slab.to_string().as_str() + end;
         res += total_mem.as_str();
         res += free_mem.as_str();
         res += avail_mem.as_str();

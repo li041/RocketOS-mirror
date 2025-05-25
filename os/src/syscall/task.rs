@@ -245,7 +245,7 @@ pub fn sys_yield() -> SyscallRet {
 }
 
 pub fn sys_exit(exit_code: i32) -> ! {
-    kernel_exit(current_task(), exit_code);
+    kernel_exit(current_task(), (exit_code & 0xff) << 8);
     log::warn!(
         "[sys_exit] task {} exit with code {}",
         current_task().tid(),
@@ -269,7 +269,7 @@ pub fn sys_exit_group(exit_code: i32) -> SyscallRet {
     });
     for tid in to_exit {
         if let Some(thread) = get_task(tid) {
-            kernel_exit(thread, exit_code);
+            kernel_exit(thread, (exit_code & 0xff) << 8);
         }
     }
     drop(task);
@@ -334,11 +334,11 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: usize, option: i32) -> SyscallRet 
                     wait_task.exit_code(),
                     exit_code_ptr
                 );
+                // exit_code_ptr为空, 表示不关心子进程的退出状态
                 if exit_code_ptr != 0 {
-                    // exit_code_ptr为空, 表示不关心子进程的退出状态
                     copy_to_user(
                         exit_code_ptr as *mut i32,
-                        &((wait_task.exit_code() & 0xff) << 8) as *const i32,
+                        & wait_task.exit_code() as *const i32,
                         1,
                     )
                     .unwrap();

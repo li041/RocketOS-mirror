@@ -913,6 +913,7 @@ impl Task {
 /// 4. 托孤给initproc
 /// 5. 将当前进程的fd_table清空, memory_set回收, children清空, sigpending清空
 /// 6. 向父进程发送SIGCHLD
+/// 注：现在改为调用者负责提前设置正确退出码（ 如进行操作(exit_code & 0xff)<<8 ）
 pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
     log::error!("[kernel_exit] Task{} ready to exit ...", task.tid(),);
     assert_ne!(
