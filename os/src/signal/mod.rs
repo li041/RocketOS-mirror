@@ -195,13 +195,12 @@ fn cont() {}
 // Todo: 转储任务崩溃时的内存快照
 // 目前只有page fault恢复失败时, 内核会发送SIGSEGV信号
 fn core(task: Arc<Task>, sig: Sig) {
-    task.op_memory_set(|memory_set| {
-        memory_set.page_table.dump_all_user_mapping();
-    });
-    dump_trap_context(&task);
+    // task.op_memory_set(|memory_set| {
+    //     memory_set.page_table.dump_all_user_mapping();
+    // });
     task.close_thread();
     // 将信号放入低7位 (第8位是core dump标志,在gdb调试崩溃程序中用到)
-    kernel_exit(task, sig.raw() as i32 & 0x7F);
+    kernel_exit(task, sig.raw() as i32 & 0x7F | 0x80);
     // panic!("core dump: {:?}", sig);
     log::error!("[core] core dump: {:?}", sig);
     schedule();

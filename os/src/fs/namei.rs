@@ -10,7 +10,7 @@ use super::{
     pipe::Pipe,
     proc::{
         exe::EXE,
-        meminfo::MEMINFO,
+        meminfo::{self, MEMINFO},
         mounts::{MountsFile, MOUNTS},
     },
     Stdin, FS_BLOCK_SIZE,
@@ -277,7 +277,9 @@ fn create_file_from_dentry(
             return Ok(MOUNTS.get().unwrap().clone());
         }
         if dentry.absolute_path == "/proc/meminfo" {
-            return Ok(MEMINFO.get().unwrap().clone());
+            let meminfo: Arc<dyn FileOp> = MEMINFO.get().unwrap().clone();
+            meminfo.seek(0, super::uapi::Whence::SeekSet).unwrap();
+            return Ok(meminfo);
         }
         if dentry.absolute_path == "/proc/self/exe" {
             return Ok(EXE.get().unwrap().clone());
