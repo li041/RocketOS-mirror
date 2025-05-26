@@ -135,7 +135,7 @@ pub fn sys_clone(
     Ok(new_task_tid)
 }
 
-pub const IGNOER_TEST: [&str; 16] = [
+pub const IGNOER_TEST: [&str; 17] = [
     /* 本身就不应该单独运行的 */
     "ltp/testcases/bin/ask_password.sh",
     "ltp/testcases/bin/assign_password.sh",
@@ -152,6 +152,7 @@ pub const IGNOER_TEST: [&str; 16] = [
     "ltp/testcases/bin/cpuhotplug_do_spin_loop",
     "ltp/testcases/bin/data",
     "ltp/testcases/bin/doio",
+    "ltp/testcases/bin/acl1",
     /* 由于OS原因, 先不跑的 */
     "ltp/testcases/bin/crash02",
 ];
@@ -338,7 +339,7 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: usize, option: i32) -> SyscallRet 
                 if exit_code_ptr != 0 {
                     copy_to_user(
                         exit_code_ptr as *mut i32,
-                        & wait_task.exit_code() as *const i32,
+                        &wait_task.exit_code() as *const i32,
                         1,
                     )
                     .unwrap();

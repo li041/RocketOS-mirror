@@ -82,6 +82,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
             ) {
                 Ok(ret) => ret as usize,
                 Err(e) => {
+                    log::error!("syscall error: {:?}", e);
                     e as usize
                 }
             };

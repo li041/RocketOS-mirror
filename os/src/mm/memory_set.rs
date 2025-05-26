@@ -278,7 +278,7 @@ impl MemorySet {
                 0,
             );
         }
-        // #[cfg(target_arch = "riscv64")]
+        #[cfg(target_arch = "riscv64")]
         {
             let dev_tree_size=get_dev_tree_size(0xbfe00000 as usize);
             log::error!("[Dev_tree] size is {}",dev_tree_size);

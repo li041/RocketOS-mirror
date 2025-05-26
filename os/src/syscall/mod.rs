@@ -141,6 +141,7 @@ const SYSCALL_SETPGID: usize = 154;
 const SYSCALL_GETPGID: usize = 155;
 const SYSCALL_UNAME: usize = 160;
 const SYSCALL_GETRUSAGE: usize = 165;
+const SYSCALL_UMASK: usize = 166;
 const SYSCALL_GET_TIME: usize = 169;
 const SYSCALL_GITPID: usize = 172;
 const SYSCALL_GETPPID: usize = 173;
@@ -188,7 +189,6 @@ const SYSCALL_STATX: usize = 291;
 const SYSCALL_STRERROR: usize = 300;
 const SYSCALL_PERROR: usize = 301;
 const SYSCALL_PSELECT: usize = 72;
-const SYSCALL_SELECT: usize = 23;
 const SYSCALL_SETSID: usize = 157;
 
 const CARELESS_SYSCALLS: [usize; 9] = [62, 63, 64, 72, 113, 124, 129, 165, 260];

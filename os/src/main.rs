@@ -60,6 +60,7 @@ fn clear_bss() {
 
 #[no_mangle]
 #[cfg(target_arch = "riscv64")]
+#[link_section = ".text.main"]
 pub fn fake_main(hart_id: usize, dtb_address: usize) {
     use arch::config::KERNEL_BASE;
     unsafe {
