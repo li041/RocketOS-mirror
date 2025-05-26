@@ -158,7 +158,7 @@ pub const IGNOER_TEST: [&str; 17] = [
 ];
 
 pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> SyscallRet {
-    let path = c_str_to_string(path);
+    let path = c_str_to_string(path)?;
     // 过滤掉一些不必要的测试
     if IGNOER_TEST.contains(&path.as_str()) {
         log::warn!("[sys_execve] ignore test: {}", path);
@@ -172,8 +172,8 @@ pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> Sy
     );
     // argv[0]是应用程序的名字
     // 后续元素是用户在命令行中输入的参数
-    let mut args_vec = extract_cstrings(args);
-    let envs_vec = extract_cstrings(envs);
+    let mut args_vec = extract_cstrings(args)?;
+    let envs_vec = extract_cstrings(envs)?;
     let task = current_task();
     // OpenFlags::empty() = RDONLY = 0, 以只读方式打开文件
     if let Ok(file) = path_openat(&path, OpenFlags::empty(), AT_FDCWD, 0) {
@@ -557,6 +557,10 @@ pub fn sys_clock_nansleep(clock_id: usize, flags: i32, t: usize, remain: usize) 
 
 /* fake */
 pub fn sys_getuid() -> SyscallRet {
+    Ok(0)
+}
+pub fn sys_setuid(uid: usize) -> SyscallRet {
+    log::warn!("[sys_setuid] Uimplemented");
     Ok(0)
 }
 pub fn sys_geteuid() -> SyscallRet {

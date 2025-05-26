@@ -2,6 +2,7 @@
 use core::{arch::asm, iter::Map, mem, ops::Range, usize};
 
 use super::{address::StepByOne, area::MapArea, shm::ShmSegment, VPNRange};
+use crate::drivers::get_dev_tree_size;
 use crate::{
     arch::mm::{sfence_vma_vaddr, PTEFlags, PageTable, PageTableEntry},
     fs::{fdtable::FdFlags, file::OpenFlags},
@@ -13,7 +14,6 @@ use crate::{
     syscall::errno::{Errno, SyscallRet},
     task::current_task,
 };
-use crate::drivers::get_dev_tree_size;
 
 use crate::{
     arch::{
@@ -280,16 +280,22 @@ impl MemorySet {
         }
         #[cfg(target_arch = "riscv64")]
         {
-            let dev_tree_size=get_dev_tree_size(0xbfe00000 as usize);
-            log::error!("[Dev_tree] size is {}",dev_tree_size);
+            let dev_tree_size = get_dev_tree_size(0xbfe00000 as usize);
+            log::error!("[Dev_tree] size is {}", dev_tree_size);
             memory_set.push_with_offset(
-                MapArea::new(VPNRange::new(VirtAddr::from(KERNEL_BASE+0xbfe00000).floor(),VirtAddr::from(KERNEL_BASE+0xbfe00000+dev_tree_size).ceil()), 
-                    MapType::Linear, 
-                    MapPermission::R|MapPermission::W, 
-                    None, 
-                    0), 
-                None, 
-                0);
+                MapArea::new(
+                    VPNRange::new(
+                        VirtAddr::from(KERNEL_BASE + 0xbfe00000).floor(),
+                        VirtAddr::from(KERNEL_BASE + 0xbfe00000 + dev_tree_size).ceil(),
+                    ),
+                    MapType::Linear,
+                    MapPermission::R | MapPermission::W,
+                    None,
+                    0,
+                ),
+                None,
+                0,
+            );
         }
         #[cfg(target_arch = "riscv64")]
         {
@@ -1236,14 +1242,13 @@ impl MemorySet {
                         self.page_table.map(vpn, ppn, pte_flags);
                         // 增加页的引用计数
                         area.pages.insert(va.floor(), Arc::new(new_page));
-                        // 刷新tlb
                         return Ok(());
                     }
                 } else {
                     if area.is_shared() {
+                        // 目前不支持共享区域的懒分配, 需要改areas: BTreeMap<VirtPageNum, Arc<MapArea>>
                         unimplemented!();
-                    }
-                    {
+                    } else {
                         // 处理匿名区域的懒分配
                         // 目前只有mmap匿名区域是懒分配
                         let page = Page::new_framed(None);
@@ -1337,7 +1342,7 @@ impl MemorySet {
             for (_, area) in self.areas.iter() {
                 if area.vpn_range.contains_vpn(current_vpn) {
                     if !area.map_perm.contains(wanted_map_perm) {
-                        return Err(Errno::EACCES);
+                        return Err(Errno::EFAULT);
                     }
                     current_vpn = core::cmp::min(area.vpn_range.get_end(), end_vpn);
                     found = true;
@@ -1363,19 +1368,18 @@ impl MemorySet {
         }
         Ok(0)
     }
-
     // 检查是否是COW或者lazy_allocation的区域
     // 逐页处理
     // used by `copy_to_user`, 不仅会检查, 还会提前处理, 避免实际写的时候发生page fault
     // 由调用者保证pte存在
-    pub fn pre_handle_cow(&mut self, vpn_range: VPNRange) -> SyscallRet {
+    pub fn pre_handle_cow_and_lazy_alloc(&mut self, vpn_range: VPNRange) -> SyscallRet {
         let mut vpn = vpn_range.get_start();
         while vpn < vpn_range.get_end() {
             if let Some(pte) = self.page_table.find_pte(vpn) {
                 if pte.is_cow() {
                     debug_assert!(!pte.is_shared());
                     log::warn!(
-                        "[copy_to_user] pre handle cow page fault, vpn {:#x}, pte: {:#x?}",
+                        "[pre_handle_cow_and_lazy_alloc] pre handle cow page fault, vpn {:#x}, pte: {:#x?}",
                         vpn.0,
                         pte
                     );
@@ -1383,7 +1387,7 @@ impl MemorySet {
                         if area.vpn_range.contains_vpn(vpn) {
                             let data_frame = area.pages.get(&vpn).unwrap();
                             if Arc::strong_count(data_frame) == 1 {
-                                log::warn!("[pre_handle_cow] arc strong count == 1");
+                                log::warn!("[pre_handle_cow_and_lazy_alloc] arc strong count == 1");
                                 let mut flags = pte.flags();
                                 flags.remove(PTEFlags::COW);
                                 flags.insert(PTEFlags::W);
@@ -1408,6 +1412,28 @@ impl MemorySet {
                             unsafe {
                                 sfence_vma_vaddr(vpn.0 << PAGE_SIZE_BITS);
                             }
+                        }
+                    }
+                }
+            } else {
+                // 页表中没有对应的页表项, 可能是lazy allocation区域
+                if let Some((_, area)) = self.areas.range_mut(..=vpn).next_back() {
+                    if area.vpn_range.contains_vpn(vpn) {
+                        log::warn!(
+                            "[pre_handle_cow_and_lazy_alloc] lazy allocation area, vpn: {:#x}, area: {:#x?}",
+                            vpn.0,
+                            area.vpn_range
+                        );
+                        // 处理lazy allocation区域
+                        if let Err(e) = self.handle_lazy_allocation_area(
+                            VirtAddr::from(vpn.0 << PAGE_SIZE_BITS),
+                            PageFaultCause::STORE,
+                        ) {
+                            log::error!(
+                                "[pre_handle_cow_and_lazy_alloc] handle lazy allocation area failed: {:?}",
+                                e
+                            );
+                            return Err(e);
                         }
                     }
                 }

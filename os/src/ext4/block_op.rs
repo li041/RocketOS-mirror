@@ -7,6 +7,7 @@ use crate::drivers::block::block_cache::get_block_cache;
 use crate::drivers::block::block_dev::BlockDevice;
 use crate::ext4::dentry::Ext4DirEntry;
 use crate::fs::dentry::LinuxDirent64;
+use crate::syscall::errno::Errno;
 
 use super::extent_tree::{Ext4Extent, Ext4ExtentHeader, Ext4ExtentIdx};
 use super::{dentry::EXT4_DT_DIR, fs::EXT4_BLOCK_SIZE};
@@ -218,7 +219,7 @@ impl<'a> Ext4DirContentWE<'a> {
     /// 基于合并相邻目录项的方式
     ///     1. 如果删除的dentry前面有目录项, 则将`rec_len`合并到前一个目录项
     ///     2. 如果删除的dentry是块中的第一个, 则仅见`inode`设为0
-    pub fn delete_entry(&mut self, name: &str, inode_num: u32) -> Result<(), &'static str> {
+    pub fn delete_entry(&mut self, name: &str, inode_num: u32) -> Result<(), Errno> {
         let mut rec_len_total = 0;
         let mut prev_len_total = 0;
         let content_len = self.content.len();
@@ -262,7 +263,7 @@ impl<'a> Ext4DirContentWE<'a> {
             prev_len_total = rec_len_total;
             rec_len_total += rec_len as usize;
         }
-        Err("Entry not found")
+        Err(Errno::ENOENT)
     }
     // 在rename的时候如果new_dentry存在, 调用这个函数修改inode_num和file_type
     pub fn set_entry(

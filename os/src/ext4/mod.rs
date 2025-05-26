@@ -20,7 +20,7 @@ use alloc::{
     sync::Arc,
 };
 use block_op::{Ext4DirContentRO, Ext4DirContentWE};
-use dentry::{EXT4_DT_CHR, EXT4_DT_DIR, EXT4_DT_FIFO};
+use dentry::{EXT4_DT_CHR, EXT4_DT_DIR, EXT4_DT_FIFO, EXT4_DT_LNK};
 use fs::EXT4_BLOCK_SIZE;
 use inode::{
     load_inode, write_inode, Ext4Inode, EXT4_EXTENTS_FL, EXT4_INLINE_DATA_FL, S_IALLUGO, S_IFCHR,
@@ -286,7 +286,41 @@ impl InodeOp for Ext4Inode {
             .write()
             .update_type_from_negative(old_dentry.flags.read().get_type());
     }
-    fn unlink<'a>(&'a self, dentry: Arc<Dentry>) {
+    fn symlink<'a>(&'a self, dentry: Arc<Dentry>, target: String) {
+        // dentry应该是负目录项
+        assert!(dentry.is_negative());
+        assert!(target.len() < 4096); // 符号链接目标路径长度限制
+                                      // 分配inode_num
+        let new_inode_num = self
+            .ext4_fs
+            .upgrade()
+            .unwrap()
+            .alloc_inode(self.block_device.clone(), false);
+        // 初始化新的inode结构
+        let new_inode = Ext4Inode::new(
+            (S_IALLUGO | S_IFLNK) as u16,
+            EXT4_INLINE_DATA_FL,
+            self.ext4_fs.clone(),
+            new_inode_num,
+            self.block_device.clone(),
+        );
+        // 设置符号链接目标路径
+        new_inode.write_inline_data_dio(0, target.as_bytes());
+        // 设置快速路径
+        new_inode.link.write().replace(target);
+        // 将inode写入block_cache
+        write_inode(&new_inode, new_inode_num, self.block_device.clone());
+        // 在父目录中添加对应项
+        self.add_entry(dentry.clone(), new_inode_num as u32, EXT4_DT_LNK);
+        // 关联到dentry
+        dentry.inner.lock().inode = Some(new_inode);
+        // 更新dentry flags, 去掉负目录项标志, 添加符号链接标志
+        dentry
+            .flags
+            .write()
+            .update_type_from_negative(DentryFlags::DCACHE_SYMLINK_TYPE);
+    }
+    fn unlink<'a>(&'a self, dentry: Arc<Dentry>) -> Result<(), Errno> {
         // 1. 更新inode的硬链接数, ctime
         let inode = dentry.get_inode();
         let inode_num = inode.get_inode_num();
@@ -298,7 +332,7 @@ impl InodeOp for Ext4Inode {
             }
         }
         // 2. 在父目录中删除对应项
-        self.delete_entry(&dentry.get_last_name(), inode_num as u32);
+        self.delete_entry(&dentry.get_last_name(), inode_num as u32)
     }
     fn tmpfile<'a>(&'a self, mode: u16) -> Arc<Ext4Inode> {
         // 创建临时文件, 用于临时文件系统, inode没有对应的路径, 不会分配目录项

@@ -285,8 +285,9 @@ pub fn sys_dup3(oldfd: usize, newfd: usize, flags: i32) -> SyscallRet {
     task.fd_table().dup3(oldfd, newfd, flags)
 }
 
+/// 如果最后一个路径组件是符号链接, 则删除符号链接不跟随
 pub fn sys_unlinkat(dirfd: i32, pathname: *const u8, flag: i32) -> SyscallRet {
-    let path = c_str_to_string(pathname);
+    let path = c_str_to_string(pathname)?;
     log::info!(
         "[sys_unlinkat] dirfd: {}, pathname: {:?}, flag: {}",
         dirfd,
@@ -294,12 +295,11 @@ pub fn sys_unlinkat(dirfd: i32, pathname: *const u8, flag: i32) -> SyscallRet {
         flag
     );
     let mut nd = Nameidata::new(&path, dirfd);
-    let fake_lookup_flags = 0;
-    match filename_lookup(&mut nd, fake_lookup_flags) {
+    match filename_lookup(&mut nd, AT_SYMLINK_NOFOLLOW) {
         Ok(dentry) => {
             assert!(!dentry.is_negative());
             let parent_inode = nd.dentry.get_inode();
-            parent_inode.unlink(dentry.clone());
+            parent_inode.unlink(dentry.clone())?;
             // 从dentry cache中删除
             delete_dentry(dentry);
             return Ok(0);
@@ -318,8 +318,8 @@ pub fn sys_linkat(
     newpath: *const u8,
     flags: i32,
 ) -> SyscallRet {
-    let oldpath = c_str_to_string(oldpath);
-    let newpath = c_str_to_string(newpath);
+    let oldpath = c_str_to_string(oldpath)?;
+    let newpath = c_str_to_string(newpath)?;
     log::info!(
         "[sys_linkat] olddirfd: {}, oldpath: {:?}, newdirfd: {}, newpath: {:?}, flags: {}",
         olddirfd,
@@ -353,12 +353,46 @@ pub fn sys_linkat(
     }
 }
 
+/// 创建符号链接
+/// 如果 linkpath 已存在，则不会被覆盖。
+pub fn sys_symlinkat(target: *const u8, newdirfd: i32, linkpath: *const u8) -> SyscallRet {
+    let target = c_str_to_string(target)?;
+    let linkpath = c_str_to_string(linkpath)?;
+    if linkpath.len() > 4096 {
+        log::error!("[sys_symlinkat] target is too long: {}", target.len());
+        return Err(Errno::ENAMETOOLONG);
+    }
+    log::info!(
+        "[sys_symlinkat] target: {:?}, newdirfd: {}, linkpath: {:?}",
+        target,
+        newdirfd,
+        linkpath
+    );
+    let mut nd = Nameidata::new(&linkpath, newdirfd);
+    let fake_lookup_flags = 0;
+    match filename_create(&mut nd, fake_lookup_flags) {
+        Ok(dentry) => {
+            let parent_inode = nd.dentry.get_inode();
+            parent_inode.symlink(dentry, target);
+            return Ok(0);
+        }
+        Err(e) => {
+            log::info!(
+                "[sys_symlinkat] fail to create symlink: {}, {:?}",
+                linkpath,
+                e
+            );
+            return Err(e);
+        }
+    }
+}
+
 /// mode是直接传递给ext4_create, 由其处理(仅当O_CREAT设置时有效, 指定inode的权限)
 /// flags影响文件的打开, 在flags中指定O_CREAT, 则创建文件
 pub fn sys_openat(dirfd: i32, pathname: *const u8, flags: i32, mode: usize) -> SyscallRet {
     let flags = OpenFlags::from_bits(flags).unwrap();
     let task = current_task();
-    let path = c_str_to_string(pathname);
+    let path = c_str_to_string(pathname)?;
     log::info!(
         "[sys_openat] dirfd: {}, pathname: {:?}, flags: {:?}, mode: {}",
         dirfd,
@@ -377,7 +411,7 @@ pub fn sys_openat(dirfd: i32, pathname: *const u8, flags: i32, mode: usize) -> S
 
 /// mode是inode类型+文件权限
 pub fn sys_mknodat(dirfd: i32, pathname: *const u8, mode: usize, dev: u64) -> SyscallRet {
-    let path = c_str_to_string(pathname);
+    let path = c_str_to_string(pathname)?;
     log::info!(
         "[sys_mknodat] dirfd: {}, pathname: {:?}, mode: {}, dev: {}",
         dirfd,
@@ -407,7 +441,7 @@ pub fn sys_mkdirat(dirfd: isize, pathname: *const u8, mode: usize) -> SyscallRet
         pathname,
         mode
     );
-    let path = c_str_to_string(pathname);
+    let path = c_str_to_string(pathname)?;
     let mut nd = Nameidata::new(&path, dirfd as i32);
     let fake_lookup_flags = 0;
     match filename_create(&mut nd, fake_lookup_flags) {
@@ -465,12 +499,14 @@ pub fn sys_fstat(dirfd: i32, statbuf: *mut Stat) -> SyscallRet {
 }
 
 pub const AT_EMPTY_PATH: i32 = 0x1000;
+/// 中间路径部分始终会跟随符号链接, 只有最后一部分受AT_SYMLINK_NOFOLLOW影响
+pub const AT_SYMLINK_NOFOLLOW: i32 = 0x100;
 
 pub fn sys_fstatat(dirfd: i32, pathname: *const u8, statbuf: *mut Stat, flags: i32) -> SyscallRet {
     if flags & AT_EMPTY_PATH != 0 {
         return sys_fstat(dirfd, statbuf);
     }
-    let path = c_str_to_string(pathname);
+    let path = c_str_to_string(pathname)?;
     if path.is_empty() {
         log::error!("[sys_fstatat] pathname is empty");
         return Err(Errno::ENOENT);
@@ -482,8 +518,7 @@ pub fn sys_fstatat(dirfd: i32, pathname: *const u8, statbuf: *mut Stat, flags: i
         flags
     );
     let mut nd = Nameidata::new(&path, dirfd);
-    let fake_lookup_flags = 0;
-    match filename_lookup(&mut nd, fake_lookup_flags) {
+    match filename_lookup(&mut nd, flags) {
         Ok(dentry) => {
             let inode = dentry.get_inode();
             let stat = Stat::from(inode.getattr());
@@ -517,7 +552,7 @@ pub fn sys_getdents64(fd: usize, dirp: usize, count: usize) -> SyscallRet {
 }
 
 pub fn sys_chdir(pathname: *const u8) -> SyscallRet {
-    let path = c_str_to_string(pathname);
+    let path = c_str_to_string(pathname)?;
     let mut nd = Nameidata::new(&path, AT_FDCWD);
     let fake_lookup_flags = 0;
     match filename_lookup(&mut nd, fake_lookup_flags) {
@@ -581,8 +616,8 @@ pub fn sys_renameat2(
         newpath,
         flags
     );
-    let oldpath = c_str_to_string(oldpath);
-    let newpath = c_str_to_string(newpath);
+    let oldpath = c_str_to_string(oldpath)?;
+    let newpath = c_str_to_string(newpath)?;
     let flags = RenameFlags::from_bits(flags).unwrap();
     // 检查flags
     if (flags.contains(RenameFlags::NOREPLACE) || flags.contains(RenameFlags::WHITEOUT))
@@ -1006,7 +1041,7 @@ pub fn sys_ppoll(
 }
 
 pub fn sys_readlinkat(dirfd: i32, pathname: *const u8, buf: *mut u8, bufsiz: usize) -> SyscallRet {
-    let path = c_str_to_string(pathname);
+    let path = c_str_to_string(pathname)?;
     let mut nd = Nameidata::new(&path, dirfd);
     let fake_lookup_flags = 0;
     match filename_lookup(&mut nd, fake_lookup_flags) {
@@ -1176,7 +1211,7 @@ pub fn sys_utimensat(
         }
         None
     } else {
-        Some(c_str_to_string(pathname))
+        Some(c_str_to_string(pathname)?)
     };
     let mut time_spec2_buf: [TimeSpec; 2] = [TimeSpec::default(); 2];
     let time_specs = if time_spec2.is_null() {
@@ -1335,7 +1370,7 @@ pub fn sys_statx(
         // 根据fd获取文件失败
         return Err(Errno::EBADF);
     }
-    let path = c_str_to_string(pathname);
+    let path = c_str_to_string(pathname)?;
     if path.is_empty() {
         log::error!("[sys_statx] pathname is empty");
         return Err(Errno::EINVAL);
@@ -1366,7 +1401,7 @@ pub fn sys_statx(
 
 // Todo: 需要支持除根目录以外的vfs挂载
 pub fn sys_statfs(path: *const u8, buf: *mut StatFs) -> SyscallRet {
-    let path = c_str_to_string(path);
+    let path = c_str_to_string(path)?;
     if path.is_empty() {
         log::error!("[sys_statfs] pathname is empty");
         return Err(Errno::EINVAL);
@@ -1412,9 +1447,9 @@ pub fn sys_mount(
     flags: usize,
     _data: *const u8,
 ) -> SyscallRet {
-    let source = c_str_to_string(source);
-    let target = c_str_to_string(target);
-    let fs_type = c_str_to_string(fs_type);
+    let source = c_str_to_string(source)?;
+    let target = c_str_to_string(target)?;
+    let fs_type = c_str_to_string(fs_type)?;
     log::info!(
         "[sys_mount] source: {:?}, target: {:?}, fs: {:?}, flags: {}",
         source,
@@ -1454,7 +1489,7 @@ pub fn sys_ioctl(fd: usize, op: usize, _arg_ptr: usize) -> SyscallRet {
 /// Todo: 目前只检查pathname指定的文件是否存在, 没有检查权限
 pub fn sys_faccessat(fd: usize, pathname: *const u8, mode: i32, flags: i32) -> SyscallRet {
     log::warn!("[sys_faccessat] Unimplemented");
-    let path = c_str_to_string(pathname);
+    let path = c_str_to_string(pathname)?;
     if path.is_empty() {
         log::error!("[sys_faccessat] pathname is empty");
         return Err(Errno::EINVAL);
@@ -1471,8 +1506,7 @@ pub fn sys_faccessat(fd: usize, pathname: *const u8, mode: i32, flags: i32) -> S
         log::info!("Breakpoint: [sys_faccessat] dev");
     }
     let mut nd = Nameidata::new(&path, fd as i32);
-    let fake_lookup_flags = 0;
-    match filename_lookup(&mut nd, fake_lookup_flags) {
+    match filename_lookup(&mut nd, flags) {
         Ok(_) => {
             // let inode = dentry.get_inode();
             // if inode.mode() & mode as u16 == 0 {
@@ -1504,7 +1538,33 @@ pub fn sys_msync(addr: usize, len: usize, flags: i32) -> SyscallRet {
     Ok(0)
 }
 
-pub fn sys_fchmodat(fd: usize, mode: usize) -> SyscallRet {
+/// 将path参数指向的文件权限位修改为mode
+/// 5.26 Todo
+pub fn sys_fchmodat(fd: usize, path: *const u8, mode: usize) -> SyscallRet {
+    //     let path = c_str_to_string(path)?;
+    //     log::info!(
+    //         "[sys_fchmodat] fd: {}, path: {:?}, mode: {:o}",
+    //         fd,
+    //         path,
+    //         mode
+    //     );
+    //     let mut nd = Nameidata::new(&path, fd as i32);
+    //     match filename_lookup(&mut nd, 0) {
+    //         Ok(dentry) => {
+    //             let inode = dentry.get_inode();
+    //             // 检查权限
+    //             if !current_task().can_write(inode) {
+    //                 log::error!("[sys_fchmodat] permission denied");
+    //                 return Err(Errno::EACCES);
+    //             }
+    //             // 修改权限
+    //             inode.set_mode(mode as u16);
+    //             return Ok(0);
+    //         }
+    //         Err(e) => {
+    //             log::info!("[sys_fchmodat] fail to fchmodat: {}, {:?}", path, e);
+    //         }
+    //     }
     Ok(0)
 }
 
