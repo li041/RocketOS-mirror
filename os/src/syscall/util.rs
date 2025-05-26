@@ -1,5 +1,6 @@
 use core::time;
 
+use super::errno::SyscallRet;
 use crate::{
     arch::mm::{copy_from_user, copy_to_user},
     fs::uapi::{RLimit, Resource},
@@ -8,10 +9,9 @@ use crate::{
         add_real_timer, current_task, get_task, remove_timer, rusage::RUsage, update_real_timer,
         ITIMER_PROF, ITIMER_REAL, ITIMER_VIRTUAL,
     },
+    time::{config::ClockIdFlags, do_adjtimex, KernelTimex},
     timer::{ITimerVal, TimeSpec, TimeVal},
 };
-
-use super::errno::SyscallRet;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -365,4 +365,63 @@ pub fn sys_clock_getres(_clockid: usize, res: usize) -> SyscallRet {
     log::info!("[sys_clock_getres] res set 1 nanos");
     copy_to_user(res as *mut TimeSpec, &TimeSpec::from_nanos(1), 1)?;
     Ok(0)
+}
+
+/// 调用进程的系统时间调整
+/// 根据传入的kernelTimex调整时间并返回最新的内核结构体到指针
+pub fn sys_adjtimex(user_timex: *mut KernelTimex) -> SyscallRet {
+    log::info!("[sys_adjtimex] user_timex: {:#x}", user_timex as usize);
+    if user_timex.is_null() {
+        return Err(Errno::EFAULT);
+    }
+    if user_timex as usize == 0xffffffffffffffff {
+        return Err(Errno::EFAULT);
+    }
+    let task = current_task();
+    log::error!("[sys_adjtimex] task uid: {:?}", task.euid());
+    let mut kernel_timex = KernelTimex::default();
+
+    // let len = size_of::<KernelTime
+    copy_from_user(
+        user_timex as *const KernelTimex,
+        core::ptr::addr_of_mut!(kernel_timex),
+        1,
+    )?;
+    //todo
+    if kernel_timex.modes != 0 && task.euid() != 0 {
+        return Err(Errno::EPERM);
+    }
+    if kernel_timex.modes == 16384 {
+        let tick_val = kernel_timex.tick as i64;
+        if tick_val < 9000 || tick_val > 11000 {
+            return Err(Errno::EINVAL);
+        }
+    }
+    println!("[sys_adjtimex] kernel_timex: {:?}", kernel_timex);
+    let status = do_adjtimex(&mut kernel_timex)?;
+
+    let out_from = (&kernel_timex as *const KernelTimex);
+    copy_to_user(user_timex, out_from, 1)?;
+    Ok(status as usize)
+}
+//较adjtimex,可以选择调整哪个时钟
+pub fn sys_clock_adjtime(clock_id: i32, user_timex: *mut KernelTimex) -> SyscallRet {
+    log::error!(
+        "[sys_clock_adjtime] clock_id: {}, user_timex: {:#x}",
+        clock_id,
+        user_timex as usize
+    );
+    if user_timex.is_null() {
+        return Err(Errno::EINVAL);
+    }
+    let clock_type = ClockIdFlags::from_clockid(clock_id)?;
+    if clock_type.contains(ClockIdFlags::REALTIME) {
+        // 调整实时时钟
+        return sys_adjtimex(user_timex);
+    } else if clock_type.contains(ClockIdFlags::MONOTONIC) {
+        // 调整单调时钟
+        unimplemented!()
+    } else {
+        unimplemented!()
+    }
 }

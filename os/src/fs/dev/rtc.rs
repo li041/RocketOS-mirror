@@ -107,6 +107,9 @@ impl InodeOp for RtcInode {
     fn set_ctime(&self, ctime: TimeSpec) {
         self.inner.write().inode_on_disk.set_ctime(ctime);
     }
+    fn set_mode(&self, mode: u16) {
+        self.inner.write().inode_on_disk.set_mode(mode);
+    }
 }
 
 #[derive(Default, Clone, Copy)]
@@ -136,6 +139,9 @@ impl RtcFile {
 }
 
 impl FileOp for RtcFile {
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
     fn read(&self, buf: &mut [u8]) -> SyscallRet {
         let current_time = TimeSpec::new_wall_time();
         let date_time = DateTime::from(&current_time);

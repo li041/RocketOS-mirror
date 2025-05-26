@@ -107,6 +107,9 @@ impl InodeOp for PipeInode {
     fn set_ctime(&self, ctime: TimeSpec) {
         self.inner.write().inode_on_disk.set_ctime(ctime);
     }
+    fn set_mode(&self, mode: u16) {
+        self.inner.write().inode_on_disk.set_mode(mode);
+    }
 }
 
 /// 匿名管道不占用磁盘inode, 其元数据仅存在于内核内存中

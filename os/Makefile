@@ -114,7 +114,7 @@ run: build
 	$(QEMU_CMD) $(QEMU_ARGS)
 
 clean:
-	@cargo clean
+	@$(shell which cargo)  clean
 
 move-cargo:
 	@rm -rf .cargo

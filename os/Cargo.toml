@@ -28,13 +28,15 @@ num_enum = { version="0.5", default-features = false }
 spin = "0.7"
 cfg-if = "1.0"
 
+hmac = { version = "0.12", default-features = false }
+
 embedded-hal = "=1.0.0-alpha.7"
 nb = "1.0"
 bit_field = "0.10.2"
 lazyinit="0.2.1"
 [dependencies.smoltcp]
-git = "https://github.com/rcore-os/smoltcp.git"
-rev = "8bf9a9a"
+git = "https://github.com/BiorelaxA/smoltcp.git"
+branch = "main"
 default-features = false
 features = [
   "alloc", "log",   # no std

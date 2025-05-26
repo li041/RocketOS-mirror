@@ -95,6 +95,9 @@ impl InodeOp for MemInfoInode {
     fn set_ctime(&self, ctime: TimeSpec) {
         self.inner.write().inode_on_disk.set_ctime(ctime);
     }
+    fn set_mode(&self, mode: u16) {
+        self.inner.write().inode_on_disk.set_mode(mode);
+    }
 }
 
 pub struct MemInfoFile {
@@ -124,6 +127,9 @@ impl MemInfoFile {
 }
 
 impl FileOp for MemInfoFile {
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
     fn read(&self, buf: &mut [u8]) -> SyscallRet {
         let info = FAKEMEMINFO.read().serialize();
         let len = info.len();

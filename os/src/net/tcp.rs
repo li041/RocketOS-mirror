@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-30 16:26:09
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-05-25 16:54:14
+ * @LastEditTime: 2025-05-28 20:09:58
  * @FilePath: /RocketOS_netperfright/os/src/net/tcp.rs
  * @Description: tcp file 
  * 
@@ -171,7 +171,7 @@ impl TcpSocket {
     fn block_on<F,T>(&self,mut f:F)->Result<T,Errno>
     where F:FnMut()->Result<T,Errno>
     {
-        if self.is_nonblocking() {
+        if self.is_block() {
             //如果不是阻塞，则立刻返回
             f()
         }
@@ -241,8 +241,12 @@ impl TcpSocket {
             _=>Err(Errno::ENOTCONN)
         }
     }
-    pub fn is_nonblocking(&self)->bool {
+    pub fn is_block(&self)->bool {
+        //如果是非阻塞则返回false
         false
+    }
+    pub fn is_nonblocking(&self)->bool {
+        self.nonblock.load(Ordering::Acquire)
     }
     pub fn set_nonblocking(&self,block:bool) {
         self.nonblock.store(block, Ordering::Release);
@@ -298,7 +302,7 @@ impl TcpSocket {
         });
         //等待server返回synack
         yield_current_task();
-        if self.is_nonblocking() {
+        if false {
             //非阻塞等待
             Err(Errno::EAGAIN)
         }

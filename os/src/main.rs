@@ -29,6 +29,7 @@ mod ext4;
 
 mod fat32;
 
+mod time;
 mod fs;
 
 // 目前只支持riscv64
