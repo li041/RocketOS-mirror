@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-30 16:26:05
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-05-24 17:52:11
+ * @LastEditTime: 2025-05-28 18:23:55
  * @FilePath: /RocketOS_netperfright/os/src/net/mod.rs
  * @Description: net mod for interface wrapper,socketset 
  * 
@@ -29,6 +29,8 @@ mod listentable;
 mod loopback;
 mod udp;
 pub mod socket;
+mod alg;
+pub mod unix;
 
 
 ///用于在使用函数返回错误时返回，如果是true可以yield_now,反之必须退出，可能等待没有意义
@@ -161,6 +163,15 @@ pub fn add_membership(multicast_addr: IpAddress, _interface_addr: IpAddress) {
         timestamp,
     );
 }
+pub fn remove_membership(multicast_addr: IpAddress, _interface_addr: IpAddress) {
+    // println!("[remove_membership]remove membership");
+    let timestamp = SmolInstant::from_micros_const((get_time() / 1000) as i64);
+    let _ = LOOPBACK.lock().leave_multicast_group(
+        LOOPBACK_DEV.lock().deref_mut(),
+        multicast_addr,
+        timestamp,
+    );
+}
 
 //注意这里h生命周期a确保从ig地一个socket开始到最后一个socket结束，socketset均有效
 struct SocketSetWrapper<'a>(Mutex<SocketSet<'a>>);
@@ -236,15 +247,6 @@ impl<'a> SocketSetWrapper<'a> {
         LOOPBACK_DEV.lock().deref_mut(), 
     &mut self.0.lock());
         log::error!("[poll_interfaces]:LoopbackDev may readiness {}",b);
-        // let a=ETH0.poll(&self.0);
-        // log::error!("[poll_interfaces]:ETH0 may readiness {}",a);
-        // }
-        // else {
-            
-        //嗅探网卡，查看是否有输入输出的字符
-
-        // }
-
     }
 
     pub fn bind_check(&self, addr: IpAddress, port: u16) -> Result<usize, Errno> {

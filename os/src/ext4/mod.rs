@@ -137,6 +137,7 @@ impl InodeOp for Ext4Inode {
 
                 let inode_mode = inode.get_mode();
                 let dentry_flags;
+                log::error!("inode: {:#x}",inode_mode&S_IFMT);
                 match inode_mode & S_IFMT {
                     S_IFREG => dentry_flags = DentryFlags::DCACHE_REGULAR_TYPE,
                     S_IFDIR => dentry_flags = DentryFlags::DCACHE_DIRECTORY_TYPE,

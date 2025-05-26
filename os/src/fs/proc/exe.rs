@@ -120,6 +120,9 @@ impl InodeOp for ExeInode {
     fn set_ctime(&self, ctime: TimeSpec) {
         self.inner.write().inode_on_disk.set_ctime(ctime);
     }
+    fn set_mode(&self, mode: u16) {
+        self.inner.write().inode_on_disk.set_mode(mode);
+    }
 }
 
 pub struct ExeFile {
@@ -135,6 +138,9 @@ impl ExeFile {
 }
 
 impl FileOp for ExeFile {
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
     fn get_inode(&self) -> Arc<dyn InodeOp> {
         self.inode.clone()
     }

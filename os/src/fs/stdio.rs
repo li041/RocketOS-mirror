@@ -52,6 +52,9 @@ impl FileOp for Stdin {
     fn writable(&self) -> bool {
         false
     }
+    fn get_flags(&self) -> super::file::OpenFlags {
+        super::file::OpenFlags::empty()
+    }
 }
 
 impl FileOp for Stdout {
@@ -81,6 +84,9 @@ impl FileOp for Stdout {
     }
     fn writable(&self) -> bool {
         true
+    }
+    fn get_flags(&self) -> super::file::OpenFlags {
+        super::file::OpenFlags::empty()
     }
 }
 

@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-02 12:09:33
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-05-25 16:54:22
+ * @LastEditTime: 2025-05-28 20:11:20
  * @FilePath: /RocketOS_netperfright/os/src/net/udp.rs
  * @Description: udp socket
  * 
@@ -17,6 +17,7 @@ use core::net::SocketAddr;
 use core::panic;
 use core::ptr::copy_nonoverlapping;
 use core::sync::atomic::AtomicBool;
+use core::sync::atomic::Ordering;
 use core::time;
 use alloc::vec;
 use smoltcp::iface::SocketHandle;
@@ -29,12 +30,14 @@ use spin::RwLock;
 use smoltcp::wire::IpEndpoint;
 use crate::arch::config::SysResult;
 use crate::arch::timer::get_time;
+use crate::futex::flags;
 use crate::net::addr::is_unspecified;
 use crate::net::addr::LOOP_BACK_ENDPOINT;
 use crate::net::addr::LOOP_BACK_IP;
 use crate::net::addr::UNSPECIFIED_IP;
 use crate::syscall::errno::Errno;
 use crate::syscall::errno::SyscallRet;
+use crate::task;
 use crate::task::current_task;
 use crate::task::yield_current_task;
 
@@ -94,10 +97,10 @@ use super::SOCKET_SET;
         }
     }
     pub fn is_nonblocking(&self)->bool {
-        false
+        self.nonblock.load(Ordering::Acquire)
     }
     pub fn set_nonblocking(&self,block:bool) {
-        self.nonblock.store(false, core::sync::atomic::Ordering::Release);
+        self.nonblock.store(block, core::sync::atomic::Ordering::Release);
     }
     pub fn set_socket_ttl(&self,ttl:u8) {
         let handle=unsafe { self.handle.get().read().unwrap() };
@@ -111,6 +114,9 @@ use super::SOCKET_SET;
     }
     pub fn set_reuse_addr(&self,reuse:bool) {
         self.reuse_addr.store(reuse,core::sync::atomic::Ordering::Release);
+    }
+    pub fn is_block(&self)->bool {
+        false
     }
 
     //绑定addr到local_addr
@@ -182,7 +188,15 @@ use super::SOCKET_SET;
             Err(e) => {
                 log::error!("[udp_recv_from] recv error {:?}",e);
                 match e {
-                    udp::RecvError::Exhausted => Err(Errno::EINTR),
+                    udp::RecvError::Exhausted => {
+                        let task = current_task();
+                        if task.exe_path().contains("iperf") {
+                            Err(Errno::EAGAIN)
+                        }
+                        else {
+                            Err(Errno::EINTR)
+                        }
+                    },
                     udp::RecvError::Truncated => Err(Errno::EAGAIN)
                 }
             }
@@ -197,7 +211,7 @@ use super::SOCKET_SET;
             Err(e) => {
                 log::error!("[recv_from_timeout]:recv error {:?}",e);
                 if get_time() > expire_at {
-                    Err(Errno::ETIMEDOUT)
+                    Err(Errno::EAGAIN)
                 } else {
                     Err(Errno::EAGAIN)
                 }
@@ -338,7 +352,7 @@ use super::SOCKET_SET;
      fn block_on<F,T>(&self,mut f: F)->Result<T, Errno>
      where F:FnMut()->Result<T,Errno>
      {
-        if self.is_nonblocking() {
+        if self.is_block(){
            f() 
         }
         else {

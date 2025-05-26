@@ -126,7 +126,7 @@ impl Device for LoopbackDev {
     fn receive(&mut self, _timestamp: Instant) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
         //TODO,需要保证listen的socket不会重复在这里取数据
         self.queue.pop_front().map(move |buffer| {
-            log::error!("[LoopbackDev]:recv buffer len{:?}",buffer.len());
+            log::error!("[LoopbackDev]:recv buffer {:?}",buffer);
             let rx = Self::RxToken { buffer };
             let tx = Self::TxToken {
                 queue: &mut self.queue,
@@ -142,4 +142,3 @@ impl Device for LoopbackDev {
         })
     }
 }
-

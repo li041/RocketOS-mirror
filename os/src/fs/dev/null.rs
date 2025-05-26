@@ -99,6 +99,9 @@ impl InodeOp for NullInode {
     fn set_ctime(&self, ctime: TimeSpec) {
         self.inner.write().inode_on_disk.set_ctime(ctime);
     }
+    fn set_mode(&self, mode: u16) {
+        self.inner.write().inode_on_disk.set_mode(mode);
+    }
 }
 
 pub struct NullFile {
@@ -124,6 +127,9 @@ impl NullFile {
 }
 
 impl FileOp for NullFile {
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
     fn read(&self, _buf: &mut [u8]) -> SyscallRet {
         // 从/dev/null读取数据, 总是会立刻返回EOF, 表示没有数据可读
         Ok(0)

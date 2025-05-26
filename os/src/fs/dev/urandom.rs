@@ -100,6 +100,9 @@ impl InodeOp for UrandomInode {
     fn set_ctime(&self, ctime: TimeSpec) {
         self.inner.write().inode_on_disk.set_ctime(ctime);
     }
+    fn set_mode(&self, mode: u16) {
+        self.inner.write().inode_on_disk.set_mode(mode);
+    }
 }
 
 pub struct RandomDev(Mutex<SmallRng>);
@@ -127,6 +130,9 @@ impl UrandomFile {
     }
 }
 impl FileOp for UrandomFile {
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
     fn readable(&self) -> bool {
         true
     }

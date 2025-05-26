@@ -3,6 +3,8 @@ use core::{
     ops::{Add, Sub},
 };
 
+use crate::syscall::errno::SyscallRet;
+
 pub const TICKS_PER_SEC: usize = 100;
 pub const MSEC_PER_SEC: usize = 1000;
 
@@ -70,6 +72,23 @@ impl Sub for TimeSpec {
 impl TimeSpec {
     pub fn is_zero(&self) -> bool {
         self.sec == 0 && self.nsec == 0
+    }
+    //检查timespec是否符合 UTC/TAI/合理范围约束
+ pub fn timespec_valid_settod(&self) -> bool {
+        // 纳秒每秒
+        const NSEC_PER_SEC: usize = 1_000_000_000;
+        // signed 64 位能表示的最大秒数
+        const MAX_SEC: usize = (i64::MAX as usize) / NSEC_PER_SEC;
+
+        // 1) nsec 必须小于 1 秒
+        if self.nsec >= NSEC_PER_SEC {
+            return false;
+        }
+        // 2) sec 不能超过 i64 能表示的最大秒数
+        if self.sec > MAX_SEC {
+            return false;
+        }
+        true
     }
 }
 

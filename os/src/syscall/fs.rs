@@ -157,6 +157,7 @@ pub fn sys_readv(fd: usize, iov_ptr: *const IoVec, iovcnt: usize) -> SyscallRet 
     let mut total_read = 0;
     let mut iov: Vec<IoVec> = vec![IoVec::default(); iovcnt];
     copy_from_user(iov_ptr, iov.as_mut_ptr(), iovcnt)?;
+    log::info!("sys_readv: iov: {:?}", iov);
     for iovec in iov.iter() {
         if iovec.len == 0 {
             continue;
@@ -164,8 +165,16 @@ pub fn sys_readv(fd: usize, iov_ptr: *const IoVec, iovcnt: usize) -> SyscallRet 
         // let buf = copy_from_user_mut(iovec.base as *mut u8, iovec.len).unwrap();
         let mut ker_buf = vec![0u8; iovec.len];
         let read = file.read(&mut ker_buf)?;
+                log::info!(
+            "[sys_readv] read: {}, iovec.base: {:#x}, iovec.len: {}",
+            read,
+            iovec.base,
+            iovec.len
+        );
+        log::error!("[copy_to_user]iovec.base {:#x},ker_buf: {:?}", iovec.base, ker_buf.as_ptr());
         copy_to_user(iovec.base as *mut u8, ker_buf.as_ptr(), read).unwrap();
         // 如果读取失败, 则返回已经读取的字节数, 或错误码
+
         if read == 0 {
             return if total_read > 0 {
                 Ok(total_read)
@@ -175,6 +184,7 @@ pub fn sys_readv(fd: usize, iov_ptr: *const IoVec, iovcnt: usize) -> SyscallRet 
         }
         total_read += read;
     }
+    log::info!("[sys_readv] total_read: {}", total_read);
     Ok(total_read)
 }
 
@@ -817,8 +827,8 @@ pub fn sys_pselect6(
     timeout: *const TimeSpec,
     sigmask: usize,
 ) -> SyscallRet {
-    //log::error!("[sys_pselecct6] nfds: {}, readfds: {:?}, writefds: {:?}, exceptfds: {:?}, timeout: {:?}, mask: {}",nfds,readfds,writefds,exceptfds,timeout,mask);
-    // log::error!("[sys_pselect6]:begin pselect6");
+    // log::error!("[sys_pselecct6] nfds: {}, readfds: {:?}, writefds: {:?}, exceptfds: {:?}, timeout: {:?}, mask: {}",nfds,readfds,writefds,exceptfds,timeout,mask);
+    log::error!("[sys_pselect6]:begin pselect6");
     let timeout = if timeout.is_null() {
         // timeout为负数对于poll来说是无限等待
         -1
@@ -918,11 +928,12 @@ pub fn sys_pselect6(
         }
         if timeout == 0 {
             // timeout为0表示立即返回, 即使没有fd准备好
+            log::error!("[sys_pselect] timeout is 0");
             break;
         } else if timeout > 0 {
             if get_time_ms() > timeout as usize {
                 // 超时了, 返回
-                // log::error!("[sys_pselect]:timeout");
+                log::error!("[sys_pselect]:timeout");
                 break;
             }
         }
@@ -932,14 +943,6 @@ pub fn sys_pselect6(
         }
         drop(task);
         yield_current_task();
-    }
-    if readfds != 0 {
-        // log::error!("[sys_pselect6] readfds fdset addr is {:?}",readfditer.fdset.get_addr());
-        copy_to_user(
-            readfds as *mut usize,
-            readfditer.fdset.get_addr() as *const usize,
-            readfditer.fdset.get_len(),
-        )?;
     }
     if readfds != 0 {
         // log::error!("[sys_pselect6] readfds fdset addr is {:?}",readfditer.fdset.get_addr());
