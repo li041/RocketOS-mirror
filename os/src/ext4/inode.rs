@@ -10,7 +10,7 @@ use crate::arch::config::EXT4_MAX_INLINE_DATA;
 use crate::fat32::inode;
 use crate::fs::inode::InodeOp;
 use crate::fs::kstat::Kstat;
-use crate::syscall::errno::SyscallRet;
+use crate::syscall::errno::{Errno, SyscallRet};
 use crate::timer::TimeSpec;
 // use crate::fs::inode::InodeMeta;
 use crate::{
@@ -713,7 +713,7 @@ impl Ext4Inode {
     // 所有的读/写都是基于Ext4Inode::read/write, 通过页缓存和extent tree来读写
     // 先读取页缓存, 若未命中, 看是否是inline_data, 若不是根据extent tree从磁盘中读取
     // 注意:
-    pub fn read(&self, offset: usize, buf: &mut [u8]) -> Result<usize, &'static str> {
+    pub fn read(&self, offset: usize, buf: &mut [u8]) -> Result<usize, Errno> {
         // 需要读取的总长度
         let rbuf_len = buf.len();
         let inode_size = self.inner.read().inode_on_disk.size_lo as usize;
@@ -874,7 +874,7 @@ impl Ext4Inode {
     /// 由上层调用者保证
     ///     1. 确定是inline_data才调用
     ///     2. 对于fast link, 实际inode->i_flags的EXT4_INLINE_DATA_FL位没有设置
-    pub fn read_inline_data(&self, offset: usize, buf: &mut [u8]) -> usize {
+    pub fn read_inline_data_dio(&self, offset: usize, buf: &mut [u8]) -> usize {
         let inline_data_len = self.inner.read().inode_on_disk.size_lo as usize;
         assert!(inline_data_len <= 60, "inline data too large");
         let copy_len = (buf.len()).min(inline_data_len - offset);
@@ -882,8 +882,24 @@ impl Ext4Inode {
             .copy_from_slice(&self.inner.read().inode_on_disk.block[offset..offset + copy_len]);
         copy_len
     }
+    pub fn write_inline_data_dio(&self, offset: usize, buf: &[u8]) -> usize {
+        let inline_data_len = self.inner.read().inode_on_disk.size_lo as usize;
+        assert!(inline_data_len <= 60, "inline data too large");
+        let copy_len = (buf.len()).min(inline_data_len - offset);
+        self.inner.write().inode_on_disk.block[offset..offset + copy_len]
+            .copy_from_slice(&buf[..copy_len]);
+        // 更新inode的size
+        let inode_size = self.inner.read().inode_on_disk.size_lo as usize;
+        if offset + copy_len > inode_size {
+            self.inner
+                .write()
+                .inode_on_disk
+                .set_size((offset + copy_len) as u64);
+        }
+        copy_len
+    }
     // 注意Fast link, 当文件名可以直接放在inode.block字段中时就不用再申请数据块, 没有设置has_inline_data flag
-    pub fn read_link(&self) -> Result<String, &'static str> {
+    pub fn read_link(&self) -> Result<String, Errno> {
         if self.inner.read().inode_on_disk.is_symlink() {
             if let Some(link) = &*self.link.read() {
                 return Ok(link.clone());
@@ -893,14 +909,14 @@ impl Ext4Inode {
             let mut buf = vec![0u8; inode_size];
             // self.read(0, &mut buf)?;
             if inode_size <= EXT4_MAX_INLINE_DATA {
-                self.read_inline_data(0, &mut buf);
-                log::error!(
-                    "[Ext4Inode::read_link]: inline data: {:?}",
-                    String::from_utf8_lossy(&buf)
-                );
+                self.read_inline_data_dio(0, &mut buf);
             } else {
                 self.read(0, &mut buf)?;
             }
+            log::error!(
+                "[Ext4Inode::read_link]: {:?}",
+                String::from_utf8_lossy(&buf)
+            );
             for &c in buf.iter() {
                 if c == 0 {
                     break;
@@ -910,7 +926,8 @@ impl Ext4Inode {
             self.link.write().replace(link.clone());
             Ok(link)
         } else {
-            Err("not a symlink")
+            // Err("not a symlink")
+            Err(Errno::EINVAL)
         }
     }
     pub fn write_extent_tree(&self, offset: usize, buf: &[u8]) -> usize {
@@ -1356,7 +1373,7 @@ impl Ext4Inode {
         // Todo: 没有处理目录多页的情况
         self.write(0, &buf);
     }
-    pub fn delete_entry(&self, name: &str, inode_num: u32) {
+    pub fn delete_entry(&self, name: &str, inode_num: u32) -> Result<(), Errno> {
         assert!(self.inner.read().inode_on_disk.is_dir(), "not a directory");
         log::error!("[Ext4Inode::delete_entry] name: {}", name);
         let dir_size = self.inner.read().inode_on_disk.get_size();
@@ -1369,12 +1386,11 @@ impl Ext4Inode {
         self.read(0, &mut buf).expect("read failed");
         let mut dir_content = Ext4DirContentWE::new(&mut buf);
         // 更新目录内容, 以及可能目录会扩容, inode_on_disk的size会更新
-        dir_content
-            .delete_entry(name, inode_num)
-            .expect("Ext4Inode::delete_entry failed");
+        dir_content.delete_entry(name, inode_num)?;
         // 写回page cache
         // Todo: 没有处理目录多页的情况
         self.write(0, &buf);
+        return Ok(());
     }
     pub fn insert_extent(
         &self,

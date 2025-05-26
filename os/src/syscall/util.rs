@@ -265,12 +265,6 @@ pub fn sys_setitimer(
     match which {
         ITIMER_REAL => {
             let task = current_task();
-            if new.it_value.is_zero() {
-                // 禁用定时器
-                log::info!("[sys_setitimer] disable timer");
-                remove_timer(task.tid(), ITIMER_REAL);
-                return Ok(0);
-            }
             // 启用定时器
             let (should_update, old) = task.op_itimerval_mut(|itimerval| {
                 let real_itimeval = &mut itimerval[which as usize];
@@ -281,27 +275,34 @@ pub fn sys_setitimer(
                 let old_it_value = if real_itimeval.it_value < current_time {
                     TimeVal { sec: 0, usec: 0 }
                 } else {
-                    new.it_value - current_time
+                    real_itimeval.it_value - current_time
                 };
                 let old = ITimerVal {
                     it_value: old_it_value,
                     it_interval: real_itimeval.it_interval,
                 };
+                log::warn!("old_value: {:?}", old);
                 // 设定新的定时器值
-                real_itimeval.it_value = new.it_value;
+                real_itimeval.it_value = current_time + new.it_value;
                 real_itimeval.it_interval = new.it_interval;
                 (should_update, old)
             });
+            // 将旧的定时器值写入ovalue_ptr
+            if !ovalue_ptr.is_null() {
+                copy_to_user(ovalue_ptr, &old as *const ITimerVal, 1)
+                    .expect("[sys_setitimer] copy_to_user failed");
+            }
+            // 禁用定时器
+            if new.it_value.is_zero() {
+                log::info!("[sys_setitimer] disable timer");
+                remove_timer(task.tid(), ITIMER_REAL);
+                return Ok(0);
+            }
             // 设置或更新已有定时器
             if should_update {
                 update_real_timer(task.tid(), new.it_value.into());
             } else {
                 add_real_timer(task.tid(), new.it_value.into());
-            }
-            // 将旧的定时器值写入ovalue_ptr
-            if !ovalue_ptr.is_null() {
-                copy_to_user(ovalue_ptr, &old as *const ITimerVal, 1)
-                    .expect("[sys_setitimer] copy_to_user failed");
             }
             return Ok(0);
         }

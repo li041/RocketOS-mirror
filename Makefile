@@ -27,7 +27,7 @@ custom:
 	@cd ./img && make custom
 	make run
 
-run: clean
+run: 
 	@cd ./user && make build ARCH=$(ARCH) MODE=$(MODE)
 	@cd ./os && make run ARCH=$(ARCH) MODE=$(MODE)
 

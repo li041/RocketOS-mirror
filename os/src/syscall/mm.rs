@@ -226,8 +226,14 @@ pub fn sys_mmap(
             } else {
                 memory_set.get_unmapped_area(len)
             };
-            let mmap_area = MapArea::new(vpn_range, MapType::Framed, map_perm, None, 0);
-            memory_set.insert_map_area_lazily(mmap_area);
+            if map_perm.contains(MapPermission::S) {
+                // 共享映射, 直接分配物理页
+                memory_set.insert_framed_area(vpn_range, map_perm);
+            } else {
+                // 匿名私有映射懒分配
+                let mmap_area = MapArea::new(vpn_range, MapType::Framed, map_perm, None, 0);
+                memory_set.insert_map_area_lazily(mmap_area);
+            }
             return Ok(vpn_range.get_start().0 << PAGE_SIZE_BITS);
         })
     } else {

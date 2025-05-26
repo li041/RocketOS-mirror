@@ -2,16 +2,27 @@ use core::fmt::Debug;
 
 use alloc::{string::String, vec::Vec};
 
-use crate::{arch::config::PAGE_SIZE, timer::TimeSpec};
+use crate::syscall::errno::Errno;
+use crate::{
+    arch::config::{PAGE_SIZE, USER_MAX_VA},
+    timer::TimeSpec,
+};
 
 #[cfg(target_arch = "riscv64")]
-/// 由caller保证ptr的合法性
 /// Convert C-style string(end with '\0') to rust string
-pub fn c_str_to_string(ptr: *const u8) -> String {
-    assert!(
-        !ptr.is_null(),
-        "c_str_to_string: null pointer passed in, please check!"
-    );
+pub fn c_str_to_string(ptr: *const u8) -> Result<String, Errno> {
+    use crate::{mm::VirtAddr, task::current_task};
+    if ptr as usize >= USER_MAX_VA || ptr as usize == 0 {
+        return Err(Errno::EFAULT);
+    }
+    let start_vpn = VirtAddr::from(ptr as usize).floor();
+    let end_vpn = VirtAddr::from(ptr as usize + 1).ceil();
+    let vpn_range = crate::mm::VPNRange::new(start_vpn, end_vpn);
+    // 检查 ptr 是否在用户空间
+    current_task().op_memory_set_mut(|memory_set| {
+        memory_set.check_valid_user_vpn_range(vpn_range, crate::mm::MapPermission::R)
+    })?;
+
     let mut ptr = ptr as usize;
     let mut ret = String::new();
     // trace!("[c_str_to_string] convert ptr at {:#x} to string", ptr);
@@ -23,27 +34,25 @@ pub fn c_str_to_string(ptr: *const u8) -> String {
         ret.push(ch as char);
         ptr += 1;
     }
-    ret
+    Ok(ret)
 }
 
 #[cfg(target_arch = "loongarch64")]
 /// 由caller保证ptr的合法性
 /// Convert C-style string(end with '\0') to rust string
-pub fn c_str_to_string(ptr: *const u8) -> String {
-    use core::iter::Map;
+pub fn c_str_to_string(ptr: *const u8) -> Result<String, Errno> {
+    use core::{iter::Map, ptr};
 
     use crate::{
         mm::{MapPermission, VPNRange, VirtAddr},
         syscall::errno::Errno,
         task::current_task,
     };
-
-    assert!(
-        !ptr.is_null(),
-        "c_str_to_string: null pointer passed in, please check!"
-    );
+    if ptr as usize >= USER_MAX_VA || ptr as usize == 0 {
+        return Err(Errno::EFAULT);
+    }
     let start_vpn = VirtAddr::from(ptr as usize).floor();
-    let end_vpn = VirtAddr::from(ptr as usize).ceil();
+    let end_vpn = VirtAddr::from(ptr as usize + 1).ceil();
     let vpn_range = VPNRange::new(start_vpn, end_vpn);
     let mut ptr = current_task().op_memory_set_mut(|memory_set| {
         match memory_set.translate_va_to_pa(VirtAddr::from(ptr as usize)) {
@@ -59,7 +68,7 @@ pub fn c_str_to_string(ptr: *const u8) -> String {
             Some(pa) => return Ok(pa),
             None => return Err(Errno::EFAULT),
         };
-    }).unwrap();
+    })?;
     let mut ret = String::new();
     // trace!("[c_str_to_string] convert ptr at {:#x} to string", ptr);
     loop {
@@ -70,14 +79,14 @@ pub fn c_str_to_string(ptr: *const u8) -> String {
         ret.push(ch as char);
         ptr += 1;
     }
-    ret
+    Ok(ret)
 }
 
 /// 由caller保证ptr的合法性
 /// Convert C-style strings(end with '\0') to rust strings
 /// used by sys_exec: 提取args和envs
 #[cfg(target_arch = "riscv64")]
-pub fn extract_cstrings(ptr: *const usize) -> Vec<String> {
+pub fn extract_cstrings(ptr: *const usize) -> Result<Vec<String>, Errno> {
     let mut vec: Vec<String> = Vec::new();
     let mut current = ptr;
 
@@ -87,19 +96,19 @@ pub fn extract_cstrings(ptr: *const usize) -> Vec<String> {
                 if *current == 0 {
                     break;
                 }
-                vec.push(c_str_to_string((*current) as *const u8));
+                vec.push(c_str_to_string((*current) as *const u8)?);
                 current = current.add(1);
             }
         }
     }
-    vec
+    Ok(vec)
 }
 
 #[cfg(target_arch = "loongarch64")]
 /// 由caller保证ptr的合法性
 /// Convert C-style strings(end with '\0') to rust strings
 /// used by sys_exec: 提取args和envs
-pub fn extract_cstrings(ptr: *const usize) -> Vec<String> {
+pub fn extract_cstrings(ptr: *const usize) -> Result<Vec<String>, Errno> {
     use crate::{mm::VirtAddr, task::current_task};
 
     let mut vec: Vec<String> = Vec::new();
@@ -115,12 +124,12 @@ pub fn extract_cstrings(ptr: *const usize) -> Vec<String> {
                 if *current == 0 {
                     break;
                 }
-                vec.push(c_str_to_string((*current) as *const u8));
+                vec.push(c_str_to_string((*current) as *const u8)?);
                 current = current.add(1);
             }
         }
     }
-    vec
+    Ok(vec)
 }
 
 // 对于对齐的地址, 不变

@@ -2,7 +2,7 @@
 use crate::ext4::inode::Ext4Inode;
 use crate::mm::Page;
 use crate::mutex::SpinNoIrqLock;
-use crate::syscall::errno::SyscallRet;
+use crate::syscall::errno::{Errno, SyscallRet};
 use crate::timer::TimeSpec;
 use log::SetLoggerError;
 use spin::RwLock;
@@ -73,10 +73,14 @@ pub trait InodeOp: Any + Send + Sync {
     fn link<'a>(&'a self, old_dentry: Arc<Dentry>, new_dentry: Arc<Dentry>) {
         unimplemented!();
     }
+    // self是目录inode, dentry是符号链接的目录项, target是符号链接的目标
+    fn symlink<'a>(&'a self, dentry: Arc<Dentry>, target: String) {
+        unimplemented!();
+    }
     // 上层调用者保证:
     //     1. 在unlink调用后, inode的dentry cache中中对应的dentry无效化(变为负目录项)
     //     2. 仅有已有`File`可以访问inode
-    fn unlink<'a>(&'a self, dentry: Arc<Dentry>) {
+    fn unlink<'a>(&'a self, dentry: Arc<Dentry>) -> Result<(), Errno> {
         unimplemented!();
     }
     // 创建临时文件, 用于临时文件系统, inode没有对应的路径, 不会分配目录项

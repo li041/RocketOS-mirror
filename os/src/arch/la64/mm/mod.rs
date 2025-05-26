@@ -47,7 +47,7 @@ pub fn copy_to_user<T: Copy>(to: *mut T, from: *const T, n: usize) -> SyscallRet
     current_task().op_memory_set_mut(|memory_set| {
         // memory_set.check_valid_user_vpn_range(vpn_range, MapPermission::W)?;
         memory_set.check_writable_vpn_range(vpn_range)?;
-        memory_set.pre_handle_cow(vpn_range)
+        memory_set.pre_handle_cow_and_lazy_alloc(vpn_range)
     })?;
 
     let total_bytes = n * core::mem::size_of::<T>();
