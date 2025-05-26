@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-03 16:40:04
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-05-25 16:58:35
+ * @LastEditTime: 2025-05-26 10:35:06
  * @FilePath: /RocketOS_netperfright/os/src/net/socket.rs
  * @Description: socket file
  * 
@@ -136,7 +136,7 @@ impl Socket {
     }
     pub fn new(domain:Domain,socket_type:SocketType)->Self {
         let inner=match socket_type {
-            SocketType::SOCK_STREAM | SocketType::SOCK_SEQPACKET | SocketType::SOCK_RAW => {
+            SocketType::SOCK_STREAM | SocketType::SOCK_SEQPACKET| SocketType::SOCK_RAW => {
                 SocketInner::Tcp(TcpSocket::new())
             }
             SocketType::SOCK_DGRAM => SocketInner::Udp(UdpSocket::new()),
@@ -529,15 +529,37 @@ impl FileOp for Socket {
         self
     }
 
-    fn read<'a>(&'a self, buf: &'a mut [u8]) -> SyscallRet {
+     fn read<'a>(&'a self, buf: &'a mut [u8]) -> SyscallRet {
         log::error!("[socket_read]:begin recv socket");
-        //log::error!("[socket_read]:buf is {:?}",buf);
-        match &self.inner {
+        if !self.r_ready() {
+            log::error!("[scoket_read] is_nonblocking {:?},is_connected is {:?}",self.is_nonblocking(),self.is_connected());
+            if !self.is_nonblocking() && self.is_connected()  {
+                loop {
+                    if self.r_ready() {
+                        match &self.inner {
+                            SocketInner::Tcp(tcp_socket) =>{
+                                return tcp_socket.recv(buf);
+                            },
+                            SocketInner::Udp(udp_socket) => {
+                                match udp_socket.recv_from(buf) {
+                                    Ok(res) =>{
+                                        log::error!("[socket_read]udp recv len is {:?},addr is {:?}",res.0,res.1);
+                                        return Ok(res.0);
+                                    }
+                                    Err(e) => {return Err(e);},
+                                }
+                            },
+                        }
+                    }
+                    yield_current_task();
+                }
+            }
+            else {
+                return Err(Errno::EBADF);
+            }
+        }
+            match &self.inner {
             SocketInner::Tcp(tcp_socket) =>{
-                // match tcp_socket.recv(buf) {
-                //     Ok(size) =>size,
-                //     Err(e) =>0,
-                // }
                 tcp_socket.recv(buf)
             },
             SocketInner::Udp(udp_socket) => {
@@ -550,26 +572,38 @@ impl FileOp for Socket {
                 }
             },
         }
+        
     }
 
     fn write<'a>(&'a self, buf: &'a [u8]) -> SyscallRet {
         log::error!("[socket_write]:begin send socket");
         //log::error!("[socket_write]:buf is {:?}",buf);
+        if !self.w_ready() {
+            if !self.is_nonblocking() && self.is_connected() {
+                loop {
+                        if self.w_ready() {
+                             match &self.inner {
+                                    SocketInner::Tcp(tcp_socket) =>{
+                                        return tcp_socket.send(buf);
+                                    },
+                                    SocketInner::Udp(udp_socket) =>{
+                                        return udp_socket.send(buf);
+                                    },
+                            }
+                        }
+                        yield_current_task();
+                }
+            }
+            else {
+                    
+                return Err(Errno::EAGAIN);
+            }
+        }
         match &self.inner {
             SocketInner::Tcp(tcp_socket) =>{
-                // match tcp_socket.send(buf) {
-                //     Ok(len) => len,
-                //     Err(e) => 0,
-                // }
                 tcp_socket.send(buf)
             },
             SocketInner::Udp(udp_socket) =>{
-                // match udp_socket.send(buf) {
-                //     Ok(len) => {
-                //         log::error!("[udp_write] len is{:?}",buf.len());
-                //         len},
-                //     Err(e) => 0,
-                // }
                 udp_socket.send(buf)
             },
         }
@@ -580,41 +614,20 @@ impl FileOp for Socket {
         panic!("can not get offset socket");
     }
     fn r_ready(&self) -> bool {
-        self.readable()
-    }
-    fn w_ready(&self) -> bool {
-        self.writable()
-    }
-
-    fn readable(&self) -> bool {
         log::error!("[sokcet_readable]:poll readable");
         // yield_current_task();
         poll_interfaces();
         match &self.inner {
             SocketInner::Tcp(tcp_socket) => {
                 log::error!("[socket_readable]:tcp socket readable");
-                // tcp_socket.with_socket_mut(|socket|{
-                //     match socket {
-                //         Some(s) => {
-                //             log::error!("[socket_readable]:tcp state is {:?}",s.state());
-                //             if s.state()==(State::FinWait2){
-                //                 s.close();
-                //                 return 
-                //             }
-                //         },
-                //         None => {},
-                //     };
-                // });
                 tcp_socket.poll(true).readable
             },
             SocketInner::Udp(udp_socket) => {
                 udp_socket.poll().readable
             },
         }
-
     }
-
-    fn writable(&self) -> bool {
+    fn w_ready(&self) -> bool {
         poll_interfaces();
         log::error!("[sokcet_writedable]:poll writeable");
         match &self.inner {
@@ -625,6 +638,14 @@ impl FileOp for Socket {
                 udp_socket.poll().writeable
             },
         }
+    }
+
+    fn readable(&self) -> bool {
+        true
+    }
+
+    fn writable(&self) -> bool {
+        true
     }
     
     fn ioctl(&self, op: usize, arg_ptr: usize) -> SyscallRet {

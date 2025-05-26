@@ -183,25 +183,30 @@ pub fn yield_current_task() {
         // 5.3 如果没有下一个任务, 先检查计时器超时
         if !handle_timeout().is_empty() {
             // 超时任务已唤醒
-            let next_task = fetch_task().unwrap();
-            let next_task_kernel_stack = next_task.kstack();
-            {
-                log::debug!(
-                    "**********************************  task {} end **********************************",
-                    current_task().tid()
-                );
-                log::debug!(
-                    "**********************************  task {} start **********************************",
-                    next_task.tid()
-                );
-                // check_task_context_in_kernel_stack(next_task_kernel_stack);
-                // 切换Processor的current
-                crate::task::processor::PROCESSOR
-                    .write()
-                    .switch_to(next_task);
-            }
-            unsafe {
-                switch::__switch(next_task_kernel_stack);
+            if let Some(next_task) = fetch_task() {
+                let next_task_kernel_stack = next_task.kstack();
+                {
+                    log::debug!(
+                        "**********************************  task {} end **********************************",
+                        current_task().tid()
+                    );
+                    log::debug!(
+                        "**********************************  task {} start **********************************",
+                        next_task.tid()
+                    );
+                    if current_task().tid() == next_task.tid() {
+                        // 不能从自己切换到自己
+                        return;
+                    }
+                    // check_task_context_in_kernel_stack(next_task_kernel_stack);
+                    // 切换Processor的current
+                    crate::task::processor::PROCESSOR
+                        .write()
+                        .switch_to(next_task);
+                }
+                unsafe {
+                    switch::__switch(next_task_kernel_stack);
+                }
             }
         }
     }

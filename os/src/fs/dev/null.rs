@@ -146,4 +146,7 @@ impl FileOp for NullFile {
         }
         Ok(inner.offset)
     }
+    fn get_inode(&self) -> Arc<dyn InodeOp> {
+        self.inode.clone()
+    }
 }

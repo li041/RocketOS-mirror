@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-02 23:04:54
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-05-25 16:47:50
+ * @LastEditTime: 2025-05-26 11:27:34
  * @FilePath: /RocketOS_netperfright/os/src/syscall/net.rs
  * @Description: net syscall
  * 
@@ -106,7 +106,6 @@ pub fn syscall_accept(socketfd:usize,socketaddr:usize,socketlen:usize)->SyscallR
 pub fn syscall_connect(socketfd:usize,socketaddr:usize,socketlen:usize)->SyscallRet {
     // yield_current_task();
     let task=current_task();
-    // println!("[syscall_connect]:the current task is {}",task.tid());
     let file=match task.fd_table().get_file(socketfd) {
         Some(f) => f,
         None => return Err(Errno::EBADF),

@@ -227,6 +227,14 @@ pub fn sys_clock_gettime(clock_id: usize, timespec: *mut TimeSpec) -> SyscallRet
             // log::info!("[sys_clock_gettime] CLOCK_MONOTONIC: {:?}", time);
             copy_to_user(timespec, &time as *const TimeSpec, 1)?;
         }
+        CLOCK_PROCESS_CPUTIME_ID => {
+            // let time = TimeSpec::new_process_time();
+            let task = current_task();
+            let (utime, stime) = task.process_us_time();
+            let time = TimeSpec::from(utime + stime);
+            // log::info!("[sys_clock_gettime] CLOCK_PROCESS_CPUTIME_ID: {:?}", time);
+            copy_to_user(timespec, &time as *const TimeSpec, 1)?;
+        }
         _ => {
             panic!("[sys_clock_gettime] invalid clock_id: {}", clock_id);
             return Err(Errno::EINVAL);

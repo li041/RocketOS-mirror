@@ -157,4 +157,7 @@ impl FileOp for UrandomFile {
     fn writable(&self) -> bool {
         true
     }
+    fn get_inode(&self) -> Arc<dyn InodeOp> {
+        self.inode.clone()
+    }
 }
