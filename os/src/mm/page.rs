@@ -116,6 +116,7 @@ impl Page {
             let ppn = frame_alloc_ppn();
             let vaddr = (ppn.0 << PAGE_SIZE_BITS) + KERNEL_BASE;
             let buf = core::slice::from_raw_parts_mut(vaddr as *mut u8, PAGE_SIZE);
+            buf.fill(0); // 清空页
             let len_to_copy = inline_data.len();
             buf[..len_to_copy].copy_from_slice(inline_data);
             return Self {

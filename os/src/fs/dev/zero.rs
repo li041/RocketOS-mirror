@@ -11,6 +11,7 @@ use crate::{
         path::Path,
         uapi::DevT,
     },
+    mm::Page,
     syscall::errno::{Errno, SyscallRet},
     timer::TimeSpec,
     utils::DateTime,
@@ -121,7 +122,17 @@ impl FileOp for ZeroFile {
     fn write(&self, buf: &[u8]) -> SyscallRet {
         Ok(buf.len())
     }
+    fn get_page<'a>(&'a self, page_offset: usize) -> Option<Arc<Page>> {
+        let page = Page::new_framed(None);
+        Some(Arc::new(page))
+    }
     fn readable(&self) -> bool {
         true
+    }
+    fn writable(&self) -> bool {
+        true
+    }
+    fn get_flags(&self) -> OpenFlags {
+        self.flags
     }
 }

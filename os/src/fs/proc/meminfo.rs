@@ -13,7 +13,7 @@ use crate::{
         uapi::Whence,
         FileOld,
     },
-    syscall::errno::SyscallRet,
+    syscall::errno::{Errno, SyscallRet},
     timer::TimeSpec,
 };
 
@@ -142,7 +142,7 @@ impl FileOp for MemInfoFile {
         match whence {
             crate::fs::uapi::Whence::SeekSet => {
                 if offset < 0 {
-                    panic!("SeekSet offset < 0");
+                    return Err(Errno::EINVAL);
                 }
                 inner_guard.offset = offset as usize;
             }
@@ -162,6 +162,9 @@ impl FileOp for MemInfoFile {
     }
     fn get_inode(&self) -> Arc<dyn InodeOp> {
         self.inode.clone()
+    }
+    fn get_flags(&self) -> OpenFlags {
+        self.flags
     }
 }
 

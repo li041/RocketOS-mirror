@@ -53,7 +53,8 @@ bitflags! {
 impl From<MapPermission> for PTEFlags {
     fn from(perm: MapPermission) -> Self {
         let mut flags = PTEFlags::V | PTEFlags::MAT_CC | PTEFlags::P;
-        if !perm.contains(MapPermission::R) {
+        // 只有可执行权限的maparea, 在页表映射时需要添加读权限
+        if !perm.contains(MapPermission::R) && !perm.contains(MapPermission::X) {
             flags |= PTEFlags::NR;
         }
         if perm.contains(MapPermission::W) {

@@ -50,6 +50,7 @@ impl From<&ShmAtFlags> for MapPermission {
 pub enum MapType {
     Linear,
     Framed,
+    Stack,
     Filebe,
     FilebeRO,
 }
@@ -173,6 +174,10 @@ impl MapArea {
             MapType::FilebeRO => {
                 // 只读文件映射直接使用页缓存, 在from_elf中已经处理
                 panic!("MapType::RO never use this function");
+            }
+            MapType::Stack => {
+                // 栈映射, 懒分配
+                panic!("MapType::Stack never use this function");
             }
         }
     }

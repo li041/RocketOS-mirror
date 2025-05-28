@@ -58,7 +58,7 @@ pub const S_IFCHR: u16 = 0x2000; // Character device
 pub const S_IFDIR: u16 = 0x4000; // Directory
 pub const S_IFREG: u16 = 0x8000; // Regular file
 pub const S_IFLNK: u16 = 0xA000; // Symbolic link
-pub const S_IALLUGO: u16 = 0x1FF; // All permissions
+pub const S_IALLUGO: u16 = 0xFFF; // All permissions
 
 // inode flags
 // const EXT4_SECRM_FL: u32 = 0x00000001; // Secure deletion
@@ -252,7 +252,7 @@ impl Ext4InodeDisk {
         (self.size_hi as u64) << 32 | self.size_lo as u64
     }
     pub fn set_size(&mut self, size: u64) {
-        log::error!("[Ext4InodeDisk::set_size] size: {}", size);
+        // log::error!("[Ext4InodeDisk::set_size] size: {}", size);
         self.size_lo = size as u32;
         self.size_hi = (size >> 32) as u32;
     }
@@ -300,7 +300,8 @@ impl Ext4InodeDisk {
         self.change_inode_time_extra = (ctime.nsec as u32) << 2 | ((ctime.sec >> 32) as u32 & 0x3);
     }
     pub fn set_mode(&mut self, mode: u16) {
-        self.mode = mode;
+        // 只设置低12位的权限, 高4位的文件类型不变
+        self.mode = (self.mode & !S_IALLUGO) | (mode & S_IALLUGO);
     }
     pub fn get_mode(&self) -> u16 {
         self.mode
@@ -826,42 +827,44 @@ impl Ext4Inode {
         Ok(current_read)
     }
     // Todo: 处理inline_data
-    pub fn get_page_cache(&self, offset: usize) -> Option<Arc<Page>> {
+    pub fn get_page_cache(&self, page_index: usize) -> Option<Arc<Page>> {
         let inode_size = self.inner.read().inode_on_disk.size_lo as usize;
 
         // offset超出文件大小, 直接返回0(EOF)
-        if offset > inode_size {
-            panic!("offset out of range");
+        // 5.28 todo, page_index是以页为单位的, 应该判断paeg index * PAGE_SIZE是否超出文件大小
+        if page_index > (inode_size >> PAGE_SIZE_BITS) {
+            return None;
         }
 
         // 未命中页缓存, 从磁盘中读取
-        self.address_space.get_page_cache(offset).or_else(|| {
+        self.address_space.get_page_cache(page_index).or_else(|| {
             // 先判断是否有inline data
             // 第一次读, 且有inline data
-            if offset == 0 && self.inner.read().inode_on_disk.has_inline_data() {
+            if page_index == 0 && self.inner.read().inode_on_disk.has_inline_data() {
                 // 页缓存未命中, 先查看是否是inline_data, 再看是否在查到的PhysicalBlockRange中
                 log::warn!("[Ext4Inode::read] has inline data",);
                 let inline_data_len = self.inner.read().inode_on_disk.size_lo as usize;
                 // 创建inline page cache
                 let page = self.address_space.new_inline_page_cache(
-                    offset,
+                    page_index,
                     self.self_weak.clone(),
-                    &self.inner.write().inode_on_disk.block[offset..offset + inline_data_len],
+                    &self.inner.write().inode_on_disk.block
+                        [page_index..page_index + inline_data_len],
                 );
                 return Some(page);
             }
             // 不是inline data page
             // 从inode中读取extent
             let extent = self.inner.write().inode_on_disk.lookup_extent(
-                offset as u32,
+                page_index as u32,
                 self.block_device.clone(),
                 self.ext4_fs.upgrade().unwrap().block_size(),
             );
             if let Some(extent) = extent {
                 let fs_block_id =
-                    extent.physical_start_block() + offset - extent.logical_block as usize;
+                    extent.physical_start_block() + page_index - extent.logical_block as usize;
                 Some(self.address_space.new_page_cache(
-                    offset,
+                    page_index,
                     fs_block_id,
                     self.block_device.clone(),
                     self.self_weak.clone(),
@@ -1264,7 +1267,7 @@ impl Ext4Inode {
             }
         }
         // 更新extent tree
-        self.inner.write().inode_on_disk.truncate_extents(
+        inner.inode_on_disk.truncate_extents(
             new_block_count,
             self.block_device.clone(),
             block_size as usize,

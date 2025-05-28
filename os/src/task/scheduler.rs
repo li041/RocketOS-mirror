@@ -8,7 +8,7 @@ use crate::{
 };
 use alloc::{collections::vec_deque::VecDeque, sync::Arc};
 use bitflags::bitflags;
-use core::{fmt::Debug, sync::atomic::compiler_fence};
+use core::{fmt::Debug, panic, sync::atomic::compiler_fence};
 use lazy_static::lazy_static;
 use spin::Mutex;
 
@@ -90,7 +90,6 @@ pub fn schedule() {
             switch::__switch(next_task_kernel_stack);
         }
     } else {
-        // panic!("No task in scheduler");
         // 如果没有下一个任务, 则busyloop等待计时器超时
         loop {
             if let Some(next_task) = fetch_task() {

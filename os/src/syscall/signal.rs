@@ -14,7 +14,8 @@ use crate::{
     },
     syscall::errno::Errno,
     task::{
-        current_task, dump_scheduler, dump_wait_queue, for_each_task, get_stack_top_by_sp, get_task, yield_current_task, INITPROC, INIT_PROC_PID
+        current_task, dump_scheduler, dump_wait_queue, for_each_task, get_stack_top_by_sp,
+        get_task, yield_current_task, INITPROC, INIT_PROC_PID,
     },
     timer::TimeSpec,
 };
@@ -203,11 +204,11 @@ pub fn sys_rt_sigaction(signum: i32, act: usize, oldact: usize) -> SyscallRet {
     if oldact != 0 {
         let old_action = task.op_sig_handler(|handler| handler.get(sig));
         copy_to_user(oldact_ptr, &old_action as *const SigAction, 1)?;
-        log::error!(
-            "[sys_rt_sigaction] {:?} origin action saved to {:#x}",
-            sig,
-            oldact
-        );
+        // log::error!(
+        //     // "[sys_rt_sigaction] {:?} origin action saved to {:#x}",
+        //     sig,
+        //     oldact
+        // );
     }
     // 将新action写入
     if act != 0 {
@@ -217,7 +218,7 @@ pub fn sys_rt_sigaction(signum: i32, act: usize, oldact: usize) -> SyscallRet {
         task.op_sig_handler_mut(|handler| {
             handler.update(sig, new_action);
         });
-        log::error!("[sys_rt_sigaction] {:?} action changed to {:#x}", sig, act);
+        // log::error!("[sys_rt_sigaction] {:?} action changed to {:#x}", sig, act);
     }
     Ok(0)
 }

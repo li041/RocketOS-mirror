@@ -10,8 +10,10 @@ use super::{
     pipe::Pipe,
     proc::{
         exe::EXE,
+        maps::MAPS,
         meminfo::{self, MEMINFO},
         mounts::{MountsFile, MOUNTS},
+        pagemap::PAGEMAP,
     },
     FileOld, Stdin, FS_BLOCK_SIZE,
 };
@@ -66,7 +68,7 @@ impl Nameidata {
     /// 如果是绝对路径, 则dfd不会被使用
     /// 绝对路径dentry初始化为root, 相对路径则是cwd
     /// 相当于linux中的`path_init`
-    pub fn new(filename: &str, dfd: i32) -> Self {
+    pub fn new(filename: &str, dfd: i32) -> Result<Self, Errno> {
         let path_segments: Vec<String> = parse_path(filename);
         let path: Arc<Path>;
         let cur_task = current_task();
@@ -86,19 +88,25 @@ impl Nameidata {
                     if let Some(file) = file.as_any().downcast_ref::<File>() {
                         path = file.inner_handler(|inner| inner.path.clone());
                     } else {
-                        panic!("[Nameidata::new] file descriptor {} is not valid", dfd);
+                        // panic!("[Nameidata::new] file descriptor {} is not valid", dfd);
+                        log::error!(
+                            "[Nameidata::new] file descriptor {} is not a valid File type",
+                            dfd
+                        );
+                        return Err(Errno::EBADF);
                     }
                 } else {
-                    panic!("[Nameidata::new] file descriptor {} is not valid", dfd);
+                    log::error!("[Nameidata::new] file descriptor {} is not valid", dfd);
+                    return Err(Errno::EBADF);
                 }
             }
         }
-        Nameidata {
+        Ok(Nameidata {
             path_segments,
             dentry: path.dentry.clone(),
             mnt: path.mnt.clone(),
             depth: 0,
-        }
+        })
     }
     pub fn resolve_symlink(&mut self, symlink_target: &str) {
         if symlink_target.starts_with("/") {
@@ -227,6 +235,16 @@ fn create_file_from_dentry(
         if dentry.absolute_path == "/proc/self/exe" {
             return Ok(EXE.get().unwrap().clone());
         }
+        if dentry.absolute_path == "/proc/self/maps" {
+            let maps: Arc<dyn FileOp> = MAPS.get().unwrap().clone();
+            maps.seek(0, super::uapi::Whence::SeekSet).unwrap();
+            return Ok(maps);
+        }
+        if dentry.absolute_path == "/proc/self/pagemap" {
+            let pagemap: Arc<dyn FileOp> = PAGEMAP.get().unwrap().clone();
+            pagemap.seek(0, super::uapi::Whence::SeekSet).unwrap();
+            return Ok(pagemap);
+        }
     }
 
     let file: Arc<dyn FileOp> = match file_type {
@@ -295,7 +313,7 @@ pub fn path_openat(
 ) -> Result<Arc<dyn FileOp>, Errno> {
     // 解析路径的目录部分，遇到最后一个组件时停止
     // Todo: 正常有符号链接的情况下, 这里应该是一个循环
-    let mut nd = Nameidata::new(path, dfd);
+    let mut nd = Nameidata::new(path, dfd)?;
     loop {
         link_path_walk(&mut nd)?;
         // let symlink_target = link_path_walk(&mut nd)?;
@@ -324,6 +342,10 @@ pub fn path_openat(
 pub fn lookup_dentry(nd: &mut Nameidata) -> Arc<Dentry> {
     let mut absolute_current_dir = nd.dentry.absolute_path.clone();
     absolute_current_dir = absolute_current_dir + "/" + &nd.path_segments[nd.depth];
+    log::info!(
+        "[lookup_dentry] absolute_current_dir: {}",
+        absolute_current_dir,
+    );
     let mut dentry = lookup_dcache_with_absolute_path(&absolute_current_dir);
     if dentry.is_none() {
         let current_dir_inode = nd.dentry.get_inode();
@@ -493,6 +515,9 @@ pub fn link_path_walk(nd: &mut Nameidata) -> Result<String, Errno> {
     if nd.path_segments.is_empty() {
         // 空路径
         return Err(Errno::ENOENT);
+    }
+    if !nd.dentry.is_dir() {
+        return Err(Errno::ENOTDIR);
     }
     let mut len = nd.path_segments.len() - 1;
     let mut symlink_count = 0;

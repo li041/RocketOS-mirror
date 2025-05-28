@@ -62,9 +62,6 @@ pub fn sys_lseek(fd: usize, offset: isize, whence: usize) -> SyscallRet {
 
 // #[cfg(target_arch = "riscv64")]
 pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> SyscallRet {
-    if fd >= 3 {
-        log::info!("sys_read: fd: {}, len: {}", fd, len);
-    }
     let task = current_task();
     let file = task.fd_table().get_file(fd);
     if let Some(file) = file {
@@ -76,6 +73,9 @@ pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> SyscallRet {
         // let ret = file.read(unsafe { core::slice::from_raw_parts_mut(buf, len) });
         let mut ker_buf = vec![0u8; len];
         let read_len = file.read(&mut ker_buf)?;
+        if fd >= 3 {
+            log::info!("sys_read: fd: {}, len: {}", fd, len);
+        }
         let ker_buf_ptr = ker_buf.as_ptr();
         // assert!(ker_buf_ptr != core::ptr::null());
         // 写回用户空间
@@ -128,6 +128,10 @@ pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> SyscallRet {
         let file = file.clone();
         let mut ker_buf = vec![0u8; len];
         copy_from_user(buf, ker_buf.as_mut_ptr(), len)?;
+        if fd >= 3 {
+            // log::info!("sys_write: fd: {}, len: {}, buf: {:?}", fd, len, ker_buf);
+            log::info!("sys_write: fd: {}, len: {}", fd, len);
+        }
         let ret = file.write(&ker_buf)?;
         Ok(ret)
     } else {
@@ -294,7 +298,7 @@ pub fn sys_unlinkat(dirfd: i32, pathname: *const u8, flag: i32) -> SyscallRet {
         path,
         flag
     );
-    let mut nd = Nameidata::new(&path, dirfd);
+    let mut nd = Nameidata::new(&path, dirfd)?;
     match filename_lookup(&mut nd, AT_SYMLINK_NOFOLLOW) {
         Ok(dentry) => {
             assert!(!dentry.is_negative());
@@ -328,11 +332,11 @@ pub fn sys_linkat(
         newpath,
         flags
     );
-    let mut old_nd = Nameidata::new(&oldpath, olddirfd);
+    let mut old_nd = Nameidata::new(&oldpath, olddirfd)?;
     let old_fake_lookup_flags = 0;
     match filename_lookup(&mut old_nd, old_fake_lookup_flags) {
         Ok(old_dentry) => {
-            let mut new_nd = Nameidata::new(&newpath, newdirfd);
+            let mut new_nd = Nameidata::new(&newpath, newdirfd)?;
             let new_fake_lookup_flags = 0;
             match filename_create(&mut new_nd, new_fake_lookup_flags) {
                 Ok(new_dentry) => {
@@ -368,7 +372,7 @@ pub fn sys_symlinkat(target: *const u8, newdirfd: i32, linkpath: *const u8) -> S
         newdirfd,
         linkpath
     );
-    let mut nd = Nameidata::new(&linkpath, newdirfd);
+    let mut nd = Nameidata::new(&linkpath, newdirfd)?;
     let fake_lookup_flags = 0;
     match filename_create(&mut nd, fake_lookup_flags) {
         Ok(dentry) => {
@@ -419,7 +423,7 @@ pub fn sys_mknodat(dirfd: i32, pathname: *const u8, mode: usize, dev: u64) -> Sy
         mode,
         dev
     );
-    let mut nd = Nameidata::new(&path, dirfd);
+    let mut nd = Nameidata::new(&path, dirfd)?;
     let fake_lookup_flags = 0;
     match filename_create(&mut nd, fake_lookup_flags) {
         Ok(dentry) => {
@@ -435,14 +439,14 @@ pub fn sys_mknodat(dirfd: i32, pathname: *const u8, mode: usize, dev: u64) -> Sy
 }
 
 pub fn sys_mkdirat(dirfd: isize, pathname: *const u8, mode: usize) -> SyscallRet {
+    let path = c_str_to_string(pathname)?;
     log::info!(
         "[sys_mkdirat] dirfd: {}, pathname: {:?}, mode: {}",
         dirfd,
-        pathname,
+        path,
         mode
     );
-    let path = c_str_to_string(pathname)?;
-    let mut nd = Nameidata::new(&path, dirfd as i32);
+    let mut nd = Nameidata::new(&path, dirfd as i32)?;
     let fake_lookup_flags = 0;
     match filename_create(&mut nd, fake_lookup_flags) {
         Ok(dentry) => {
@@ -517,7 +521,7 @@ pub fn sys_fstatat(dirfd: i32, pathname: *const u8, statbuf: *mut Stat, flags: i
         path,
         flags
     );
-    let mut nd = Nameidata::new(&path, dirfd);
+    let mut nd = Nameidata::new(&path, dirfd)?;
     match filename_lookup(&mut nd, flags) {
         Ok(dentry) => {
             let inode = dentry.get_inode();
@@ -553,7 +557,8 @@ pub fn sys_getdents64(fd: usize, dirp: usize, count: usize) -> SyscallRet {
 
 pub fn sys_chdir(pathname: *const u8) -> SyscallRet {
     let path = c_str_to_string(pathname)?;
-    let mut nd = Nameidata::new(&path, AT_FDCWD);
+    log::info!("[sys_chdir] pathname: {:?}", path);
+    let mut nd = Nameidata::new(&path, AT_FDCWD)?;
     let fake_lookup_flags = 0;
     match filename_lookup(&mut nd, fake_lookup_flags) {
         Ok(dentry) => {
@@ -629,11 +634,11 @@ pub fn sys_renameat2(
     if flags.contains(RenameFlags::WHITEOUT) {
         unimplemented!();
     }
-    let mut old_nd = Nameidata::new(&oldpath, olddirfd);
+    let mut old_nd = Nameidata::new(&oldpath, olddirfd)?;
     let fake_lookup_flags = 0;
     match filename_lookup(&mut old_nd, fake_lookup_flags) {
         Ok(old_dentry) => {
-            let mut new_nd = Nameidata::new(&newpath, newdirfd);
+            let mut new_nd = Nameidata::new(&newpath, newdirfd)?;
             // 检查newpath是否存在, 并进行相关的类型检查
             let new_dentry = lookup_dentry(&mut new_nd);
             if new_dentry.is_negative() {
@@ -1042,7 +1047,7 @@ pub fn sys_ppoll(
 
 pub fn sys_readlinkat(dirfd: i32, pathname: *const u8, buf: *mut u8, bufsiz: usize) -> SyscallRet {
     let path = c_str_to_string(pathname)?;
-    let mut nd = Nameidata::new(&path, dirfd);
+    let mut nd = Nameidata::new(&path, dirfd)?;
     let fake_lookup_flags = 0;
     match filename_lookup(&mut nd, fake_lookup_flags) {
         Ok(dentry) => {
@@ -1221,7 +1226,7 @@ pub fn sys_utimensat(
         Some(&time_spec2_buf)
     };
     let inode = if let Some(path) = path {
-        let mut nd = Nameidata::new(&path, dirfd);
+        let mut nd = Nameidata::new(&path, dirfd)?;
         let fake_lookup_flags = 0;
         match filename_lookup(&mut nd, fake_lookup_flags) {
             Ok(dentry) => dentry.get_inode(),
@@ -1375,7 +1380,7 @@ pub fn sys_statx(
         log::error!("[sys_statx] pathname is empty");
         return Err(Errno::EINVAL);
     }
-    let mut nd = Nameidata::new(&path, dirfd);
+    let mut nd = Nameidata::new(&path, dirfd)?;
     let fake_lookup_flags = 0;
     match filename_lookup(&mut nd, fake_lookup_flags) {
         Ok(dentry) => {
@@ -1501,11 +1506,7 @@ pub fn sys_faccessat(fd: usize, pathname: *const u8, mode: i32, flags: i32) -> S
         mode,
         flags
     );
-    // 5.22
-    if path == "/dev/shm" {
-        log::info!("Breakpoint: [sys_faccessat] dev");
-    }
-    let mut nd = Nameidata::new(&path, fd as i32);
+    let mut nd = Nameidata::new(&path, fd as i32)?;
     match filename_lookup(&mut nd, flags) {
         Ok(_) => {
             // let inode = dentry.get_inode();
@@ -1538,34 +1539,53 @@ pub fn sys_msync(addr: usize, len: usize, flags: i32) -> SyscallRet {
     Ok(0)
 }
 
-/// 将path参数指向的文件权限位修改为mode
-/// 5.26 Todo
-pub fn sys_fchmodat(fd: usize, path: *const u8, mode: usize) -> SyscallRet {
-    //     let path = c_str_to_string(path)?;
-    //     log::info!(
-    //         "[sys_fchmodat] fd: {}, path: {:?}, mode: {:o}",
-    //         fd,
-    //         path,
-    //         mode
-    //     );
-    //     let mut nd = Nameidata::new(&path, fd as i32);
-    //     match filename_lookup(&mut nd, 0) {
-    //         Ok(dentry) => {
-    //             let inode = dentry.get_inode();
-    //             // 检查权限
-    //             if !current_task().can_write(inode) {
-    //                 log::error!("[sys_fchmodat] permission denied");
-    //                 return Err(Errno::EACCES);
-    //             }
-    //             // 修改权限
-    //             inode.set_mode(mode as u16);
-    //             return Ok(0);
-    //         }
-    //         Err(e) => {
-    //             log::info!("[sys_fchmodat] fail to fchmodat: {}, {:?}", path, e);
-    //         }
-    //     }
-    Ok(0)
+pub fn sys_fchmod(fd: usize, mode: usize) -> SyscallRet {
+    log::info!("[sys_fchmod] fd: {}, mode: {:o}", fd, mode);
+    let task = current_task();
+    if let Some(file) = task.fd_table().get_file(fd) {
+        // Todo: 检查权限
+        // 修改权限
+        file.get_inode().set_mode(mode as u16);
+        return Ok(0);
+    }
+    Err(Errno::EBADF)
+}
+
+pub const NAME_MAX: usize = 255;
+
+/// 将 path 参数指向的文件权限位修改为mode
+/// root 可任意修改任何文件的权限,无需检查其他条件
+/// 普通用户的euid需要与文件的Owner相同才能修改文件权限
+pub fn sys_fchmodat(fd: usize, path: *const u8, mode: usize, flag: i32) -> SyscallRet {
+    let path = c_str_to_string(path)?;
+    if path.len() > NAME_MAX {
+        log::error!("[sys_fchmodat] path is too long: {}", path.len());
+        return Err(Errno::ENAMETOOLONG);
+    }
+    log::info!(
+        "[sys_fchmodat] fd: {}, path: {:?}, mode: {:o}",
+        fd,
+        path,
+        mode
+    );
+    let mut nd = Nameidata::new(&path, fd as i32)?;
+    match filename_lookup(&mut nd, 0) {
+        Ok(dentry) => {
+            let inode = dentry.get_inode();
+            // Todo: 检查权限
+            // if !current_task().can_write(&inode) {
+            //     log::error!("[sys_fchmodat] permission denied");
+            //     return Err(Errno::EACCES);
+            // }
+            // 修改权限
+            inode.set_mode(mode as u16);
+            return Ok(0);
+        }
+        Err(e) => {
+            log::info!("[sys_fchmodat] fail to fchmodat: {}, {:?}", path, e);
+            return Err(e);
+        }
+    }
 }
 
 pub fn sys_fchownat(fd: usize, path: *const u8, owner: usize, group: usize) -> SyscallRet {

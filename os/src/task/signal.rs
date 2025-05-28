@@ -39,7 +39,7 @@ impl Task {
                             pending.add_signal(siginfo);
                         });
                         if task.check_interrupt() {
-                            self.op_sig_pending_mut(|pending| {
+                            task.op_sig_pending_mut(|pending| {
                                 pending.set_interrupted();
                             });
                             delete_wait(task.tid());

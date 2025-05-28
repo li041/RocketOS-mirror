@@ -105,8 +105,6 @@ pub fn init_frame_allocator() {
     // 在entry.asm中设置了映射: 0xffff_ffc0_8000_0000 -> 0x8000_0000, 分配了1G的内存(超出实际)
     FRAME_ALLOCATOR.lock().init(
         PhysAddr::from((ekernel as usize - KERNEL_BASE) as usize).ceil(),
-        // PhysAddr::from(MEMORY_END).floor(),
-        // 5.21 Debug
         PhysAddr::from(MEMORY_END).floor(),
     );
     log::info!(

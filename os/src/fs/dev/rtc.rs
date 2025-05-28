@@ -195,6 +195,9 @@ impl FileOp for RtcFile {
             }
         }
     }
+    fn get_flags(&self) -> OpenFlags {
+        self.flags
+    }
 }
 
 /// RTC IOCTL 命令定义，参考 Linux 内核 <linux/rtc.h>

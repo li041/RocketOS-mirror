@@ -23,6 +23,11 @@ lazy_static! {
     static ref TASK_MANAGER: TaskManager = TaskManager::new();
 }
 
+// 进程组管理器
+lazy_static! {
+    static ref PROCESS_GROUP_MANAGER: ProcessGroupManager = ProcessGroupManager::new();
+}
+
 // 阻塞管理器
 lazy_static! {
     static ref WAIT_MANAGER: WaitManager = WaitManager::init();
@@ -81,6 +86,75 @@ impl TaskManager {
         for task in self.0.lock().values() {
             f(&task.upgrade().unwrap())
         }
+    }
+}
+
+/************************************** 进程组管理器 **************************************/
+
+/// 向进程组管理器中添加新进程组
+/// 注：该函数会将该任务的pgid设置为其tid
+pub fn new_group(task: &Arc<Task>) {
+    PROCESS_GROUP_MANAGER.new_group(task);
+}
+
+/// 向指定进程组中添加新任务
+/// 注：当指定进程组不存在时会依照参数pgid创建一个新的进程组
+pub fn add_group(pgid: usize, task: &Arc<Task>) {
+    PROCESS_GROUP_MANAGER.add_group(pgid, task);
+}
+
+/// 获取指定进程组的任务列表
+pub fn get_group(pgid: usize) -> Option<Vec<Weak<Task>>> {
+    PROCESS_GROUP_MANAGER.get_group(pgid)
+}
+
+/// 将当前任务从所在的进程组中移除
+pub fn remove_group(task: &Arc<Task>) {
+    PROCESS_GROUP_MANAGER.remove(task);
+}
+
+
+pub struct ProcessGroupManager(Mutex<BTreeMap<usize, Vec<Weak<Task>>>>);
+
+impl ProcessGroupManager {
+    pub const fn new() -> Self {
+        Self(Mutex::new(BTreeMap::new()))
+    }
+
+    pub fn new_group(&self, group_leader: &Arc<Task>) {
+        let pgid = group_leader.pgid();
+        let mut group = Vec::new();
+        group.push(Arc::downgrade(group_leader));
+        self.0.lock().insert(pgid, group);
+    }
+
+    pub fn add_group(&self, pgid: usize, process: &Arc<Task>) {
+        // Todo: 对于线程更改进程组需要更严格的限制
+        if !process.is_process() {
+            log::warn!("[ProcessGroupManager::add_process] try adding task that is not a process");
+            return;
+        }
+        process.set_pgid(pgid);
+        let mut inner = self.0.lock();
+        if let Some(process_group) = inner.get_mut(&pgid){
+            process_group.push(Arc::downgrade(process));
+        } else {
+            let mut group = Vec::new();
+            group.push(Arc::downgrade(process));
+            inner.insert(pgid, group);
+        }
+    }
+
+    pub fn get_group(&self, pgid: usize) -> Option<Vec<Weak<Task>>> {
+        self.0.lock().get(&pgid).cloned()
+    }
+
+    pub fn remove(&self, process: &Arc<Task>) {
+        self.0
+            .lock()
+            .get_mut(&process.pgid())
+            .unwrap()
+            .retain(|task| task.upgrade().map_or(false, |t| !Arc::ptr_eq(process, &t)))
     }
 }
 

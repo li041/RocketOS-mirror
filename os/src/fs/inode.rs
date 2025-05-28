@@ -28,7 +28,7 @@ pub trait InodeOp: Any + Send + Sync {
         unimplemented!();
     }
     // 先查找页缓存, 如果没有则从块设备中读取
-    fn get_page(self: Arc<Self>, page_index: usize) -> Result<Arc<Page>, &'static str> {
+    fn get_page(self: Arc<Self>, page_index: usize) -> Option<Arc<Page>> {
         unimplemented!();
     }
     fn write<'a>(&'a self, page_offset: usize, buf: &'a [u8]) -> usize {
@@ -122,6 +122,9 @@ pub trait InodeOp: Any + Send + Sync {
         unimplemented!();
     }
     fn get_mode(&self) -> u16 {
+        unimplemented!();
+    }
+    fn set_mode(&self, mode: u16) {
         unimplemented!();
     }
     // (主设备号, 次设备号)

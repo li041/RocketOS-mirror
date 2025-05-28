@@ -3,6 +3,7 @@ use core::{arch::asm, iter::Map, mem, ops::Range, usize};
 
 use super::{address::StepByOne, area::MapArea, shm::ShmSegment, VPNRange};
 use crate::drivers::get_dev_tree_size;
+use crate::signal::Sig;
 use crate::{
     arch::mm::{sfence_vma_vaddr, PTEFlags, PageTable, PageTableEntry},
     fs::{fdtable::FdFlags, file::OpenFlags},
@@ -1178,7 +1179,8 @@ impl MemorySet {
         &mut self,
         va: VirtAddr,
         cause: PageFaultCause,
-    ) -> Result<(), Errno> {
+    ) -> Result<(), Sig> {
+        const STACK_GUARD_GAP_PAGES: usize = 256; // 栈保护页的间距, 例如256页
         log::trace!("[handle_lazy_allocation_area]");
         let vpn = va.floor();
         if let Some((_, area)) = self.areas.range_mut(..=vpn).next_back() {
@@ -1197,25 +1199,26 @@ impl MemorySet {
                         let offset = area.offset
                             + (vpn.0 - area.vpn_range.get_start().0) * PAGE_SIZE as usize;
                         log::error!(
-                            "[handle_lazy_allocation_area] lazy alloc file_offset {:#x}",
-                            offset
+                            "[handle_lazy_allocation_area] lazy alloc file_offset {:#x}, vpn: {:#x}",
+                            offset,
+                            vpn.0
                         );
-                        let page = area
-                            .backend_file
-                            .as_ref()
-                            .unwrap()
-                            .clone()
-                            .get_page(offset)
-                            .map_err(|_| Errno::EFAULT)?;
-                        // 增加页表映射
-                        // 注意这里也可以是写时复制(私有映射)
-                        let pte_flags = PTEFlags::from(area.map_perm);
-                        let ppn = page.ppn();
-                        self.page_table.map(vpn, ppn, pte_flags);
-                        // 增加页的引用计数
-                        area.pages.insert(va.floor(), page);
-                        // 刷新tlb
-                        return Ok(());
+                        if let Some(page) =
+                            area.backend_file.as_ref().unwrap().clone().get_page(offset)
+                        {
+                            // 增加页表映射
+                            // 注意这里也可以是写时复制(私有映射)
+                            let pte_flags = PTEFlags::from(area.map_perm);
+                            let ppn = page.ppn();
+                            self.page_table.map(vpn, ppn, pte_flags);
+                            // 增加页的引用计数
+                            area.pages.insert(va.floor(), page);
+                            // 刷新tlb
+                            return Ok(());
+                        } else {
+                            // 如果没有找到对应的页, 则说明文件映射的偏移不合法
+                            return Err(Sig::SIGBUS);
+                        }
                     } else {
                         // 私有文件映射, 写时复制
                         let offset = area.offset
@@ -1224,25 +1227,25 @@ impl MemorySet {
                             "[handle_lazy_allocation_area] COW file_offset {:#x}",
                             offset
                         );
-                        let page = area
-                            .backend_file
-                            .as_ref()
-                            .unwrap()
-                            .clone()
-                            .get_page(offset)
-                            .map_err(|_| Errno::EFAULT)?;
-                        let new_page = Page::new_framed(Some(page.get_ref(0)));
-                        // 增加页表映射
-                        let mut map_perm = area.map_perm;
-                        map_perm.remove(MapPermission::COW);
-                        map_perm.insert(MapPermission::W);
-                        let pte_flags = PTEFlags::from(map_perm);
-                        let ppn = new_page.ppn();
-                        log::error!("vpn: {:#x}, ppn: {:#x}", vpn.0, ppn.0);
-                        self.page_table.map(vpn, ppn, pte_flags);
-                        // 增加页的引用计数
-                        area.pages.insert(va.floor(), Arc::new(new_page));
-                        return Ok(());
+                        if let Some(page) =
+                            area.backend_file.as_ref().unwrap().clone().get_page(offset)
+                        {
+                            let new_page = Page::new_framed(Some(page.get_ref(0)));
+                            // 增加页表映射
+                            let mut map_perm = area.map_perm;
+                            map_perm.remove(MapPermission::COW);
+                            map_perm.insert(MapPermission::W);
+                            let pte_flags = PTEFlags::from(map_perm);
+                            let ppn = new_page.ppn();
+                            log::error!("vpn: {:#x}, ppn: {:#x}", vpn.0, ppn.0);
+                            self.page_table.map(vpn, ppn, pte_flags);
+                            // 增加页的引用计数
+                            area.pages.insert(va.floor(), Arc::new(new_page));
+                            return Ok(());
+                        } else {
+                            // 如果没有找到对应的页, 则说明文件映射的偏移不合法
+                            return Err(Sig::SIGBUS);
+                        }
                     }
                 } else {
                     if area.is_shared() {
@@ -1259,6 +1262,40 @@ impl MemorySet {
                         let ppn = page.ppn();
                         self.page_table.map(vpn, ppn, pte_flags);
                         area.pages.insert(vpn, Arc::new(page));
+                        if area.map_type == MapType::Stack {
+                            // 栈区域的懒分配, 如果是vpn_range的第一个vpn, 则需要向下增长
+                            if area.vpn_range.get_start() == vpn {
+                                // 找到前一个区域
+                                let old_start_vpn = area.vpn_range.get_start();
+                                if let Some((_, prev_area)) =
+                                    self.areas.range(..old_start_vpn).next_back()
+                                {
+                                    let prev_end = prev_area.vpn_range.get_end();
+                                    log::warn!(
+                                        "[handle_lazy_allocation_area] stack lazy alloc, prev_end: {:#x}, old_start_vpn: {:#x}",
+                                        prev_end.0,
+                                        old_start_vpn.0
+                                    );
+
+                                    // 检查是否满足间距要求 (e.g., stack_guard_gap 页)
+                                    if old_start_vpn.0 - prev_end.0 < STACK_GUARD_GAP_PAGES {
+                                        log::warn!("[handle_lazy_allocation_area] stack cannot grow: guard gap too small");
+                                        return Err(Sig::SIGSEGV);
+                                    }
+                                }
+
+                                // 向下增长一页
+                                let mut area = self.areas.remove(&old_start_vpn).unwrap();
+                                let new_start_vpn = VirtPageNum(old_start_vpn.0 - 1);
+                                log::warn!(
+                                    "[handle_lazy_allocation_area] stack lazy alloc, vpn: {:#x}, ppn: {:#x}",
+                                    new_start_vpn.0,
+                                    ppn.0
+                                );
+                                area.vpn_range.set_start(new_start_vpn);
+                                self.areas.insert(new_start_vpn, area);
+                            }
+                        }
                         log::error!(
                             "[handle_lazy_allocation_area] lazy alloc area, vpn: {:#x}, ppn: {:#x}",
                             vpn.0,
@@ -1272,7 +1309,7 @@ impl MemorySet {
                 "[handle_lazy_allocation_area] can't find area with vpn {:#x}",
                 vpn.0
             );
-            return Err(Errno::EFAULT);
+            return Err(Sig::SIGSEGV);
         }
         self.areas.iter().for_each(|(vpn, area)| {
             log::error!("[handle_lazy_allocation_area] area: {:#x?}", area.vpn_range,);
@@ -1282,7 +1319,7 @@ impl MemorySet {
             vpn.0
         );
         log::error!("empty areas");
-        return Err(Errno::EFAULT);
+        return Err(Sig::SIGSEGV);
     }
 }
 
@@ -1425,15 +1462,15 @@ impl MemorySet {
                             area.vpn_range
                         );
                         // 处理lazy allocation区域
-                        if let Err(e) = self.handle_lazy_allocation_area(
+                        if let Err(sig) = self.handle_lazy_allocation_area(
                             VirtAddr::from(vpn.0 << PAGE_SIZE_BITS),
                             PageFaultCause::STORE,
                         ) {
                             log::error!(
                                 "[pre_handle_cow_and_lazy_alloc] handle lazy allocation area failed: {:?}",
-                                e
+                                sig
                             );
-                            return Err(e);
+                            return Err(Errno::EFAULT);
                         }
                     }
                 }
@@ -1451,7 +1488,7 @@ impl MemorySet {
         &mut self,
         va: VirtAddr,
         cause: PageFaultCause,
-    ) -> Result<(), Errno> {
+    ) -> Result<(), Sig> {
         log::trace!("[handle_recoverable_page_fault]");
         let vpn = va.floor();
         let page_table = &mut self.page_table;
@@ -1510,11 +1547,16 @@ impl MemorySet {
                 }
                 log::info!("cow page fault recover failed");
                 // EFAULT
-                return Err(Errno::EFAULT);
+                return Err(Sig::SIGSEGV);
                 // COW_handle_END
             }
+            log::error!(
+                "[handle_recoverable_page_fault] page fault find pte, but not COW, va: {:#x}, pte: {:#x?}",
+                va.0,
+                pte
+            );
             // 页表中有对应的页表项, 但不是COW
-            return Err(Errno::EFAULT);
+            return Err(Sig::SIGSEGV);
         }
         self.handle_lazy_allocation_area(va, cause)
         // 页表中没有对应的页表项, 也不是lazy allocation, 返回错误

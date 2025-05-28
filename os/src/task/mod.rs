@@ -32,7 +32,7 @@ pub use id::IdAllocator;
 pub use kstack::get_stack_top_by_sp;
 pub use manager::{
     add_real_timer, dump_wait_queue, for_each_task, get_task, handle_timeout, remove_timer,
-    update_real_timer, wait, wait_timeout, wakeup,
+    update_real_timer, wait, wait_timeout, wakeup, add_group, new_group
 };
 pub use processor::{current_task, run_tasks};
 pub use scheduler::{
@@ -41,7 +41,7 @@ pub use scheduler::{
 };
 pub use task::kernel_exit;
 pub use task::CloneFlags;
-pub use task::{Task, INIT_PROC_PID, CpuMask};
+pub use task::{CpuMask, Task, INIT_PROC_PID};
 
 pub type Tid = usize;
 

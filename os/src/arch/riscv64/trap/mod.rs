@@ -125,7 +125,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
             log::error!("page fault cause {:?}", scause.cause());
             let task = current_task();
             task.op_memory_set_mut(|memory_set| {
-                if let Err(_e) = memory_set.handle_recoverable_page_fault(va, casue) {
+                if let Err(sig) = memory_set.handle_recoverable_page_fault(va, casue) {
                     // memory_set.page_table.dump_all_user_mapping();
                     // dump_trap_context(&current_task());
                     log::error!(
@@ -135,7 +135,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
                         sepc::read()
                     );
                     task.receive_siginfo(
-                        SigInfo::new(Sig::SIGSEGV.raw(), SigInfo::KERNEL, SiField::None),
+                        SigInfo::new(sig.raw(), SigInfo::KERNEL, SiField::None),
                         false,
                     );
                 }
