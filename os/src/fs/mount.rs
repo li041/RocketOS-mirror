@@ -19,6 +19,7 @@ use crate::{
 use super::{
     dentry::{insert_dentry, Dentry, DentryFlags},
     dev::init_devfs,
+    etc::init_etcfs,
     inode::InodeOp,
     manager::{Fake_FS, FileSystemOp},
     namei::{filename_create, parse_path, Nameidata},

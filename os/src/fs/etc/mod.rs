@@ -1,13 +1,14 @@
 use alloc::sync::Arc;
 
-use crate::ext4::inode::{S_IFCHR, S_IFDIR};
+use crate::ext4::inode::{S_IFDIR, S_IFREG};
 
 use super::{
-    dentry::{self, Dentry},
+    dentry::{self, insert_core_dentry, Dentry},
     file::OpenFlags,
     mount::VfsMount,
     namei::{filename_create, parse_path, path_openat, Nameidata},
     path::Path,
+    proc::meminfo::MemInfoFile,
     uapi::DevT,
     AT_FDCWD,
 };

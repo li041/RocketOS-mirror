@@ -17,7 +17,9 @@
     csrw satp, t0
     sfence.vma
 
-    jal fake_main
+    la t0, fake_main      # 加载虚拟地址符号
+    jr t0                 # 间接跳转，跳到 fake_main
+
 
     .section .bss.stack
 

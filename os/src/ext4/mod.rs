@@ -48,9 +48,8 @@ impl InodeOp for Ext4Inode {
         self.read(offset, buf).expect("Ext4Inode::read failed")
     }
     // 共享文件映射和私有文件映射只读时调用
-    fn get_page(self: Arc<Self>, page_index: usize) -> Result<Arc<Page>, &'static str> {
+    fn get_page(self: Arc<Self>, page_index: usize) -> Option<Arc<Page>> {
         self.get_page_cache(page_index)
-            .ok_or("Ext4Inode::get_page failed")
     }
 
     fn write<'a>(&'a self, page_offset: usize, buf: &'a [u8]) -> usize {
@@ -551,6 +550,9 @@ impl InodeOp for Ext4Inode {
     }
     fn get_mode(&self) -> u16 {
         self.inner.read().inode_on_disk.get_mode()
+    }
+    fn set_mode(&self, mode: u16) {
+        self.inner.write().inode_on_disk.set_mode(mode);
     }
     fn get_devt(&self) -> (u32, u32) {
         self.inner.read().inode_on_disk.get_devt()

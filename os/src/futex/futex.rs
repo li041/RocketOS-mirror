@@ -194,7 +194,9 @@ pub fn futex_wait(
         if deadline.is_none() {
             if wait() == -1 {
                 let mut hash_bucket = FUTEXQUEUES.buckets[futex_hash(&key)].lock();
-                hash_bucket.retain(|futex_q| futex_q.task.upgrade().unwrap().tid() != current_task().tid());
+                hash_bucket.retain(|futex_q| {
+                    futex_q.task.upgrade().unwrap().tid() != current_task().tid()
+                });
                 return Err(Errno::EINTR);
             }
         }

@@ -149,4 +149,7 @@ impl FileOp for NullFile {
     fn get_inode(&self) -> Arc<dyn InodeOp> {
         self.inode.clone()
     }
+    fn get_flags(&self) -> OpenFlags {
+        self.flags
+    }
 }

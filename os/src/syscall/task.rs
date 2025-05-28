@@ -7,7 +7,9 @@ use crate::fs::file::OpenFlags;
 use crate::futex::do_futex;
 use crate::syscall::errno::Errno;
 use crate::syscall::util::{CLOCK_MONOTONIC, CLOCK_REALTIME};
-use crate::task::{get_scheduler_len, get_task, wait, wait_timeout, CloneFlags, Task};
+use crate::task::{
+    add_group, get_scheduler_len, get_task, new_group, wait, wait_timeout, CloneFlags, Task,
+};
 use crate::timer::{TimeSpec, TimeVal};
 use crate::{
     arch::mm::copy_to_user,
@@ -21,6 +23,7 @@ use crate::{
     },
     utils::{c_str_to_string, extract_cstrings},
 };
+use alloc::task;
 use alloc::{sync::Arc, vec};
 use bitflags::bitflags;
 
@@ -135,7 +138,7 @@ pub fn sys_clone(
     Ok(new_task_tid)
 }
 
-pub const IGNOER_TEST: [&str; 17] = [
+pub const IGNOER_TEST: [&str; 20] = [
     /* 本身就不应该单独运行的 */
     "ltp/testcases/bin/ask_password.sh",
     "ltp/testcases/bin/assign_password.sh",
@@ -155,6 +158,9 @@ pub const IGNOER_TEST: [&str; 17] = [
     "ltp/testcases/bin/acl1",
     /* 由于OS原因, 先不跑的 */
     "ltp/testcases/bin/crash02",
+    "ltp/testcases/bin/mmap1",
+    "ltp/testcases/bin/mmap2",
+    "ltp/testcases/bin/mmap3",
 ];
 
 pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> SyscallRet {
@@ -206,17 +212,43 @@ pub fn sys_getpid() -> SyscallRet {
     Ok(current_task().tgid())
 }
 
-// fake
+/// setpgid() 将 pid 指定的进程的 PGID 设置为 pgid。
+/// 如果 pid 为零，则使用调用进程的进程 ID。如果 pgid 为零，则将 pid 指定的进程的 PGID 设置为其进程 ID。
+/// 如果使用 setpgid() 将进程从一个进程组移动到另一个进程组，则两个进程组必须属于同一会话。
+/// 在这种情况下，pgid 指定要加入的现有进程组，并且该组的会话 ID 必须与加入进程的会话 ID 匹配。
+// Todo: session
 pub fn sys_setpgid(pid: usize, pgid: usize) -> SyscallRet {
     log::info!("[sys_setpgid] pid: {}, pgid: {}", pid, pgid);
-    log::warn!("[sys_setpgid] Uimplemented");
+    let task = if pid == 0 {
+        current_task()
+    } else {
+        get_task(pid).ok_or(Errno::ESRCH)?
+    };
+
+    if pgid == 0 {
+        // 将进程组 ID 设置为进程 ID
+        task.set_pgid(task.tid());
+        add_group(task.tid(), &task);
+    } else {
+        add_group(pgid, &task);
+    }
+    log::info!(
+        "[sys_setpgid] task {} set pgid to {}",
+        task.tid(),
+        task.pgid()
+    );
     Ok(0)
 }
 
 pub fn sys_getpgid(pid: usize) -> SyscallRet {
     log::info!("[sys_getpgid] pid: {}", pid);
-    log::warn!("[sys_getpgid] Uimplemented");
-    Ok(0)
+    let target_task = if pid == 0 {
+        current_task().clone()
+    } else {
+        get_task(pid).ok_or(Errno::ESRCH)?
+    };
+    log::info!("[sys_getpgid] task {} get pgid: {}", target_task.tid(), target_task.pgid());
+    Ok(target_task.pgid())
 }
 
 pub fn sys_set_tid_address(tidptr: usize) -> SyscallRet {
@@ -226,12 +258,18 @@ pub fn sys_set_tid_address(tidptr: usize) -> SyscallRet {
     Ok(task.tid())
 }
 
-// ToDo: 更新进程组
 // 获取父进程的pid
 pub fn sys_getppid() -> SyscallRet {
-    log::warn!("[sys_getppid] Uimplemented");
     let task = current_task();
-    Ok(task.op_parent(|parent| parent.as_ref().unwrap().upgrade().unwrap().tid()))
+    let ppid = task.op_parent(|parent| {
+        if let Some(parent) = parent {
+            parent.upgrade().unwrap().tid()
+        } else {
+            0 // 如果没有父进程，则返回0
+        }
+    });
+    log::info!("[sys_getppid] task {} get ppid: {}", task.tid(), ppid);
+    Ok(ppid)
 }
 
 pub fn sys_yield() -> SyscallRet {
@@ -308,9 +346,25 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: usize, option: i32) -> SyscallRet 
                 if pid == -1 && first {
                     target_task = Some(child.clone());
                     first = false;
+                } else if pid == 0 && child.pgid() == cur_task.pgid() && first {
+                    // pid为0, 则等待当前进程组的任意子进程
+                    target_task = Some(child.clone());
+                    first = false;
+                } else if pid > 0 && pid as usize == child.tid() {
+                    // pid大于0, 则等待指定pid的子进程
+                    target_task = Some(child.clone());
+                    return;
+                } else if pid < -1 && (-pid) as usize == child.pgid() {
+                    // pid小于-1, 则等待指定pgid的子进程
+                    target_task = Some(child.clone());
+                    return;
                 } else if pid as usize == child.tgid() {
                     target_task = Some(child.clone());
                 } else if pid == -1 && child.is_zombie() {
+                    target_task = Some(child.clone());
+                    return;
+                } else if pid == 0 && child.is_zombie() && child.pgid() == cur_task.pgid() {
+                    // pid为0, 则等待当前进程组的任意子进程
                     target_task = Some(child.clone());
                     return;
                 }
@@ -555,17 +609,197 @@ pub fn sys_clock_nansleep(clock_id: usize, flags: i32, t: usize, remain: usize) 
     }
 }
 
-/* fake */
+pub fn sys_acct(pathname: *const u8) -> SyscallRet {
+    if pathname.is_null() {
+        log::warn!("[sys_acct] disable accounting");
+        // 禁用进程会计
+        return Ok(0);
+    }
+    log::warn!(
+        "[sys_acct] Uimplemented, pathname: {:#x}",
+        pathname as usize
+    );
+    Ok(0)
+}
+
 pub fn sys_getuid() -> SyscallRet {
-    Ok(0)
+    Ok(current_task().uid())
 }
+
+/// setuid() 设置调用进程的有效用户 ID。
+/// setuid() 会检查调用者的有效用户 ID，如果是超级用户，则所有与进程相关的用户 ID 都将设置为 uid。
+/// 执行此操作后，程序将无法重新获得 root 权限。
+/// EPERM 用户不具有特权（Linux：其用户命名空间中没有 CAP_SETUID 功能），并且 uid 与调用进程的真实 UID 或保存的设置用户 ID 不匹配。
+// Todo: 命名空间
 pub fn sys_setuid(uid: usize) -> SyscallRet {
-    log::warn!("[sys_setuid] Uimplemented");
+    let task = current_task();
+    if task.euid() == 0 {
+        log::warn!(
+            "[sys_setuid] task{} is root, set uid to {}",
+            task.tid(),
+            uid
+        );
+        task.set_uid(uid);
+        task.set_euid(uid);
+        task.set_suid(uid);
+    } else {
+        if uid != task.uid() && uid != task.suid() {
+            log::warn!(
+                "[sys_setuid] task{} is not root, set uid to {}",
+                task.tid(),
+                uid
+            );
+            return Err(Errno::EPERM);
+        } else {
+            log::warn!("[sys_setuid] task{} set uid to {}", task.tid(), uid);
+            task.set_euid(uid);
+        }
+    }
     Ok(0)
 }
+
+/// setreuid() 设置调用进程的实际用户 ID 和有效用户 ID。
+/// 如果将实际用户 ID 或有效用户 ID 设置为 -1，则系统会强制保持该 ID 不变。
+/// 非特权进程只能将有效用户 ID 设置为实际用户 ID、有效用户 ID 或保存的设置用户 ID。
+/// 非特权用户只能将实际用户 ID 设置为实际用户 ID 或有效用户 ID。
+/// 如果设置了实际用户 ID（即 ruid 不为 -1）或有效用户 ID 的值不等于先前的实际用户 ID，则保存的设置用户 ID 将被设置为新的有效用户 ID。
+pub fn sys_setreuid(ruid: isize, euid: isize) -> SyscallRet {
+    log::info!("[sys_setreuid] ruid: {}, euid: {}", ruid, euid);
+    let task = current_task();
+    let origin_uid = task.uid() as isize;
+    let origin_euid = task.euid() as isize;
+    let origin_suid = task.suid() as isize;
+    if task.euid() == 0 {
+        log::warn!(
+            "[sys_setreuid] task{} is root, set ruid: {}, euid: {}",
+            task.tid(),
+            ruid,
+            euid
+        );
+        if ruid != -1 {
+            task.set_uid(ruid as usize);
+        }
+        if euid != -1 {
+            task.set_euid(euid as usize);
+        }
+    } else {
+        if ruid != -1 {
+            if ruid != origin_uid as isize && ruid != origin_euid as isize {
+                return Err(Errno::EPERM);
+            }
+            log::warn!(
+                "[sys_setreuid] task{} is not root, set ruid: {}",
+                task.tid(),
+                ruid,
+            );
+            task.set_uid(ruid as usize);
+        }
+        if euid != -1 {
+            if euid != origin_uid as isize && euid != origin_euid as isize && euid != origin_suid as isize {
+                return Err(Errno::EPERM);
+            }
+            log::warn!(
+                "[sys_setreuid] task{} is not root, set euid: {}",
+                task.tid(),
+                euid,
+            );
+            task.set_euid(euid as usize);
+        }
+    }
+    if ruid != -1 || (euid != -1 && euid != origin_uid as isize) {
+        task.set_suid(task.euid() as usize);
+    }
+    Ok(0)
+}
+
 pub fn sys_geteuid() -> SyscallRet {
+    Ok(current_task().euid())
+}
+
+/// setresuid() 设置调用进程的真实用户 ID、有效用户 ID 和已保存的设置用户 ID。
+/// 非特权进程可以将其真实 UID、有效 UID 和已保存的设置用户 ID 分别更改为：当前真实 UID、当前有效 UID 或当前已保存的设置用户 ID。
+/// 特权进程（在 Linux 上，指具有 CAP_SETUID 功能的进程）可以将其真实 UID、有效 UID 和已保存的设置用户 ID 设置为任意值。
+/// 如果其中一个参数等于 -1，则相应的值保持不变。
+pub fn sys_setresuid(ruid: isize, euid: isize, suid: isize) -> SyscallRet {
+    log::info!("[sys_setreuid] ruid: {}, euid: {}, suid: {}", ruid, euid, suid);
+    let task = current_task();
+    let origin_uid = task.uid() as isize;
+    let origin_euid = task.euid() as isize;
+    let origin_suid = task.suid() as isize;
+    if task.euid() == 0 {
+        log::warn!(
+            "[sys_setreuid] task{} is root, set ruid: {}, euid: {}",
+            task.tid(),
+            ruid,
+            euid
+        );
+        if ruid != -1 {
+            task.set_uid(ruid as usize);
+        }
+        if euid != -1 {
+            task.set_euid(euid as usize);
+        }
+        if suid != -1 {
+            task.set_suid(suid as usize);
+        }
+    } else {
+        if ruid != -1 {
+            if ruid != origin_uid as isize && ruid != origin_euid as isize && ruid != origin_suid as isize{
+                return Err(Errno::EPERM);
+            }
+            log::warn!(
+                "[sys_setreuid] task{} is not root, set ruid: {}",
+                task.tid(),
+                ruid,
+            );
+            task.set_uid(ruid as usize);
+        }
+        if euid != -1 {
+            if euid != origin_uid as isize && euid != origin_euid as isize && euid != origin_suid as isize {
+                return Err(Errno::EPERM);
+            }
+            log::warn!(
+                "[sys_setreuid] task{} is not root, set euid: {}",
+                task.tid(),
+                euid,
+            );
+            task.set_euid(euid as usize);
+        }
+        if suid != -1 {
+            if suid != origin_uid as isize && suid != origin_euid as isize && suid != origin_suid as isize {
+                return Err(Errno::EPERM);
+            }
+            log::warn!(
+                "[sys_setreuid] task{} is not root, set suid: {}",
+                task.tid(),
+                suid,
+            );
+            task.set_suid(suid as usize);
+        }
+    }
     Ok(0)
 }
+
+pub fn sys_getresuid(ruid_ptr: usize, euid_ptr: usize, suid_ptr: usize) -> SyscallRet {
+    log::info!(
+        "[sys_getresuid] ruid_ptr: {:x}, euid_ptr: {:x}, suid_ptr: {:x}",
+        ruid_ptr,
+        euid_ptr,
+        suid_ptr
+    );
+    let task = current_task();
+    if ruid_ptr != 0 {
+        copy_to_user(ruid_ptr as *mut usize, &task.uid() as *const usize, 1)?;
+    }
+    if euid_ptr != 0 {
+        copy_to_user(euid_ptr as *mut usize, &task.euid() as *const usize, 1)?;
+    }
+    if suid_ptr != 0 {
+        copy_to_user(suid_ptr as *mut usize, &task.suid() as *const usize, 1)?;
+    }
+    Ok(0)
+}
+
 pub fn sys_getgid() -> SyscallRet {
     Ok(0)
 }

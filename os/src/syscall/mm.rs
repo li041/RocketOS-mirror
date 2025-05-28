@@ -1,12 +1,12 @@
-use core::fmt::Debug;
+use core::{fmt::Debug, iter::Map};
 
 use crate::{
     arch::{
-        config::{MMAP_MIN_ADDR, PAGE_SIZE, PAGE_SIZE_BITS},
+        config::{MMAP_MIN_ADDR, PAGE_SIZE, PAGE_SIZE_BITS, USER_MAX_VA},
         mm::copy_to_user,
         trap::context::dump_trap_context,
     },
-    fs::file::File,
+    fs::file::{File, OpenFlags},
     index_list::{IndexList, ListIndex},
     mm::{
         shm::{
@@ -115,6 +115,8 @@ bitflags! {
         const MAP_SHARED = 0x01;
         /// MAP_PRIVATE
         const MAP_PRIVATE = 0x02;
+        /// MAP_SHARED_VALIDATE
+        const MAP_SHARED_VALIDATE = 0x3;
         /// 以上两种只能选一
         /// MAP_FIXED, 一定要映射到addr, 不是作为hint, 要取消原来位置的映射
         const MAP_FIXED = 0x10;
@@ -122,9 +124,14 @@ bitflags! {
         const MAP_ANONYMOUS = 0x20;
         /// Todo: 未实现
         const MAP_DENYWRITE = 0x800;
+        // MAP_GROWSDOWN, 用于栈的映射, 允许向下增长
+        const MAP_GROWSDOWN = 0x100;
         const MAP_NORESERVE = 0x4000;
+        // MAP_POPULATE, 预先填充页表, 提高访问速度
         const MAP_POPULATE = 0x8000;
         const MAP_STACK = 0x20000;
+        // 一定要映射到hint指向的地址, 如果指定地址范围已经有映射, 则会返回EEXIST, 而不是取消原来的映射
+        const MAP_FIXED_NOREPLACE = 0x100000;
     }
 }
 impl Debug for MmapFlags {
@@ -173,14 +180,24 @@ pub fn sys_mmap(
     );
     //处理参数
     let prot = MmapProt::from_bits(prot as u32).unwrap();
-    let flags = MmapFlags::from_bits(flags as u32).unwrap();
+    let flags = match MmapFlags::from_bits(flags as u32) {
+        Some(flags) => flags,
+        None => {
+            const MAP_SHARED_VALIDATE: usize = 0x3;
+            if flags & MAP_SHARED_VALIDATE != 0 {
+                return Err(Errno::EOPNOTSUPP);
+            } else {
+                return Err(Errno::EINVAL);
+            }
+        }
+    };
     let task = current_task();
     // 判断参数合法性, 包括
-    // 1. 映射长度不为0 2. MAP_FIXED时指定地址不能为0 3.文件映射时offset页对齐(非文件映射时offset应该为0) 4.同时指定MAP_SHARED和MAP_PRIVATE
+    // 1. 映射长度不为0 2. MAP_FIXED时指定地址不能为0 3.文件映射时offset页对齐(非文件映射时offset应该为0) 4.既没有指定MAP_SHARED, 也没有MAP_PRIVATE
     if len == 0
         || (hint == 0 && flags.contains(MmapFlags::MAP_FIXED))
         || offset % PAGE_SIZE != 0
-        || (flags.contains(MmapFlags::MAP_SHARED) && flags.contains(MmapFlags::MAP_PRIVATE))
+        || (!flags.contains(MmapFlags::MAP_SHARED) && !flags.contains(MmapFlags::MAP_PRIVATE))
     {
         return Err(Errno::EINVAL);
     }
@@ -197,6 +214,15 @@ pub fn sys_mmap(
 
     // 强制映射到指定地址, 如果该地址范围已经有映射, 则会取消原来的映射, 如果不能在指定地址成功映射, mmap将会失败, 而不会选择其他地址
     if flags.contains(MmapFlags::MAP_FIXED) {
+        if hint > USER_MAX_VA {
+            // 如果hint大于用户最大虚拟地址, 则不允许映射
+            log::error!(
+                "[sys_mmap] hint {:#x} > USER_MAX_VA {:#x}",
+                hint,
+                USER_MAX_VA
+            );
+            return Err(Errno::EINVAL);
+        }
         // 取消原有映射
         log::error!("[sys_mmap] MAP_FIXED: {:#x}", hint);
         task.op_memory_set_mut(|memory_set| {
@@ -210,6 +236,22 @@ pub fn sys_mmap(
         });
     }
 
+    if flags.contains(MmapFlags::MAP_FIXED_NOREPLACE) {
+        // MAP_FIXED_NOREPLACE, 如果指定地址范围已经有映射, 则会失败
+        log::error!("[sys_mmap] MAP_FIXED_NOREPLACE: {:#x}", hint);
+        task.op_memory_set_mut(|memory_set| {
+            let start_vpn = VirtPageNum::from(hint >> PAGE_SIZE_BITS);
+            let end_vpn = VirtPageNum::from(ceil_to_page_size(hint + len) >> PAGE_SIZE_BITS);
+            let vpn_range = VPNRange::new(start_vpn, end_vpn);
+            if let Some((_vpn, area)) = memory_set.areas.range_mut(..end_vpn).next_back() {
+                if area.vpn_range.is_intersect_with(&vpn_range) {
+                    return Err(Errno::EEXIST);
+                }
+            }
+            Ok(())
+        })?;
+    }
+
     if flags.contains(MmapFlags::MAP_ANONYMOUS) {
         // 匿名映射
         // 需要offset为0
@@ -218,7 +260,7 @@ pub fn sys_mmap(
             return Err(Errno::EINVAL);
         }
         task.op_memory_set_mut(|memory_set| {
-            let vpn_range = if flags.contains(MmapFlags::MAP_FIXED) {
+            let mut vpn_range = if flags.contains(MmapFlags::MAP_FIXED) {
                 VPNRange::new(
                     VirtAddr::from(hint).floor(),
                     VirtAddr::from(hint + len).ceil(),
@@ -231,17 +273,67 @@ pub fn sys_mmap(
                 memory_set.insert_framed_area(vpn_range, map_perm);
             } else {
                 // 匿名私有映射懒分配
-                let mmap_area = MapArea::new(vpn_range, MapType::Framed, map_perm, None, 0);
-                memory_set.insert_map_area_lazily(mmap_area);
+                if flags.contains(MmapFlags::MAP_GROWSDOWN) {
+                    // 如果是栈的映射, 则需要将起始虚拟页号减1(保护页包含在vpn_range中, 以便于在访问保护页时, 通过懒分配向下增长)
+                    vpn_range.set_start(VirtPageNum(vpn_range.get_start().0 - 1));
+                    let mmap_area = MapArea::new(vpn_range, MapType::Stack, map_perm, None, 0);
+                    memory_set.insert_map_area_lazily(mmap_area);
+                } else {
+                    // 懒分配
+                    log::info!("[sys_mmap] lazy allocation for anonymous mapping");
+                    let mmap_area = MapArea::new(vpn_range, MapType::Framed, map_perm, None, 0);
+                    memory_set.insert_map_area_lazily(mmap_area);
+                };
             }
             return Ok(vpn_range.get_start().0 << PAGE_SIZE_BITS);
         })
     } else {
         // 文件私有映射, 写时复制, 不会影响页缓存, 共享映射会影响页缓存, 并且可能会写回磁盘(`msync`)
         // 注意文件私有映射在发生写时复制前内容都是与页缓存一致的
-        let file = task.fd_table().get_file(fd as usize).unwrap();
+        let file = match task.fd_table().get_file(fd as usize) {
+            Some(f) => f,
+            None => return Err(Errno::EBADF),
+        };
+        let open_flags = file.get_flags();
+        if open_flags.contains(OpenFlags::O_WRONLY) {
+            // 如果文件是只写打开的, 则不能进行映射
+            return Err(Errno::EACCES);
+        }
+        // 权限检查
+        // if !file.readable() && map_perm.contains(MapPermission::R)
+        //     || (map_perm.contains(MapPermission::S)
+        //         && map_perm.contains(MapPermission::W)
+        //         && !open_flags.contains(OpenFlags::O_RDWR))
+        //     || (map_perm.contains(MapPermission::W)
+        //         && (!file.writable() || open_flags.contains(OpenFlags::O_APPEND)))
+        // {
+        //     log::error!()
+        //     return Err(Errno::EACCES);
+        // }
+        if map_perm.contains(MapPermission::R) {
+            if !file.readable() {
+                log::error!("[sys_mmap] file not readable");
+                return Err(Errno::EACCES);
+            }
+        }
+        if map_perm.contains(MapPermission::W) {
+            if open_flags.contains(OpenFlags::O_APPEND) {
+                log::error!("[sys_mmap] file not writable");
+                return Err(Errno::EACCES);
+            }
+        }
+        if map_perm.contains(MapPermission::S)
+            && map_perm.contains(MapPermission::W)
+            && !open_flags.contains(OpenFlags::O_RDWR)
+        {
+            log::error!("[sys_mmap] file not opened with O_RDWR");
+            return Err(Errno::EACCES);
+        }
+
         task.op_memory_set_mut(|memory_set| {
-            let vpn_range = if flags.contains(MmapFlags::MAP_FIXED) {
+            let vpn_range = if flags.contains(MmapFlags::MAP_FIXED)
+                || flags.contains(MmapFlags::MAP_FIXED_NOREPLACE)
+            {
                 VPNRange::new(
                     VirtAddr::from(hint).floor(),
                     VirtAddr::from(hint + len).ceil(),
@@ -254,8 +346,13 @@ pub fn sys_mmap(
                 map_perm.remove(MapPermission::W);
                 map_perm.insert(MapPermission::COW);
             }
-            let mmap_area = MapArea::new(vpn_range, MapType::Filebe, map_perm, Some(file), offset);
-            memory_set.insert_map_area_lazily(mmap_area);
+            if flags.contains(MmapFlags::MAP_POPULATE) {
+                memory_set.insert_framed_area(vpn_range, map_perm);
+            } else {
+                let mmap_area =
+                    MapArea::new(vpn_range, MapType::Filebe, map_perm, Some(file), offset);
+                memory_set.insert_map_area_lazily(mmap_area);
+            }
             // memory_set.insert_framed_area(vpn_range, map_perm);
             log::error!(
                 "[sys_mmap] file return {:#x}",

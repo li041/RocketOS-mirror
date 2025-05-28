@@ -15,8 +15,10 @@ use meminfo::{MemInfoFile, MEMINFO};
 use mounts::{MountsFile, MOUNTS};
 
 pub mod exe;
+pub mod maps;
 pub mod meminfo;
 pub mod mounts;
+pub mod pagemap;
 
 pub fn init_procfs(root_path: Arc<Path>) {
     let proc_path = "/proc";
@@ -136,6 +138,58 @@ pub fn init_procfs(root_path: Arc<Path>) {
         }
         Err(e) => {
             panic!("create {} failed: {:?}", exe_path, e);
+        }
+    }
+    // /proc/self/maps
+    let maps_path = "/proc/self/maps";
+    let maps_mode = S_IFREG as u16 | 0o444;
+    nd = Nameidata {
+        path_segments: parse_path(maps_path),
+        dentry: root_path.dentry.clone(),
+        mnt: root_path.mnt.clone(),
+        depth: 0,
+    };
+    match filename_create(&mut nd, 0) {
+        Ok(dentry) => {
+            let parent_inode = nd.dentry.get_inode();
+            parent_inode.create(dentry.clone(), maps_mode);
+            // 现在dentry的inode指向/proc/self/maps
+            let maps_file = maps::MapsFile::new(
+                Path::new(root_path.mnt.clone(), dentry.clone()),
+                dentry.get_inode().clone(),
+                OpenFlags::empty(),
+            );
+            maps::MAPS.call_once(|| maps_file.clone());
+            insert_core_dentry(dentry.clone());
+        }
+        Err(e) => {
+            panic!("create {} failed: {:?}", maps_path, e);
+        }
+    }
+    // /proc/self/pagemap
+    let pagemap_path = "/proc/self/pagemap";
+    let pagemap_mode = S_IFREG as u16 | 0o444;
+    nd = Nameidata {
+        path_segments: parse_path(pagemap_path),
+        dentry: root_path.dentry.clone(),
+        mnt: root_path.mnt.clone(),
+        depth: 0,
+    };
+    match filename_create(&mut nd, 0) {
+        Ok(dentry) => {
+            let parent_inode = nd.dentry.get_inode();
+            parent_inode.create(dentry.clone(), pagemap_mode);
+            // 现在dentry的inode指向/proc/self/pagemap
+            let pagemap_file = pagemap::PageMapFile::new(
+                Path::new(root_path.mnt.clone(), dentry.clone()),
+                dentry.get_inode().clone(),
+                OpenFlags::empty(),
+            );
+            pagemap::PAGEMAP.call_once(|| pagemap_file.clone());
+            insert_core_dentry(dentry.clone());
+        }
+        Err(e) => {
+            panic!("create {} failed: {:?}", pagemap_path, e);
         }
     }
 }
