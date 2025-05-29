@@ -858,9 +858,10 @@ impl MemorySet {
         let page_table = PageTable::from_existed_user(&user_memory_set.page_table);
         user_memory_set.areas.iter().for_each(|(_, area)| {
             log::error!(
-                "[MemorySet::from_existed_user_lazily] area: {:#x} {:#x}",
+                "[MemorySet::from_existed_user_lazily] area: {:#x} {:#x}, permission:{:?}",
                 area.vpn_range.get_start().0,
-                area.vpn_range.get_end().0
+                area.vpn_range.get_end().0,
+                area.map_perm
             );
         });
         let memory_set = MemorySet {
@@ -977,6 +978,7 @@ impl MemorySet {
                     split_new_areas.push(new_area);
                 } else if remap_end >= old_vpn_end {
                     // `remap_vpn_range` 覆盖了后部分，调整 `vpn_end`
+                    log::error!("{:?}", area);
                     let mut new_area = area.split2(remap_start);
                     new_area.map_perm.update_rwx(new_perm);
                     new_area.remap(&mut self.page_table);
@@ -1373,13 +1375,15 @@ impl MemorySet {
         log::trace!("[check_valid_user_vpn_range]");
         let mut current_vpn = vpn_range.get_start();
         let end_vpn = vpn_range.get_end();
-
+        
         while current_vpn < end_vpn {
             let mut found = false;
 
             for (_, area) in self.areas.iter() {
                 if area.vpn_range.contains_vpn(current_vpn) {
                     if !area.map_perm.contains(wanted_map_perm) {
+                        log::error!("[check_valid_user_vpn_range] vpn {:#x} has wrong map permission: {:?}, wanted: {:?}",
+                                    current_vpn.0, area.map_perm, wanted_map_perm);
                         return Err(Errno::EFAULT);
                     }
                     current_vpn = core::cmp::min(area.vpn_range.get_end(), end_vpn);

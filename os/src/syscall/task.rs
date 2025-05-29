@@ -1,3 +1,4 @@
+use core::cmp::min;
 use core::sync::atomic::{compiler_fence, Ordering};
 use core::time;
 
@@ -35,10 +36,10 @@ pub fn sys_clone(
     stack_ptr: usize,
     parent_tid_ptr: usize,
     tls_ptr: usize,
-    chilren_tid_ptr: usize,
+    children_tid_ptr: usize,
 ) -> SyscallRet {
     // ToDo: 更新错误检验
-    log::error!("[sys_clone] flags: {:b}, stack_ptr: {:x}, parent_tid_ptr: {:x}, tls_ptr: {:x}, chilren_tid_ptr: {:x}", flags, stack_ptr, parent_tid_ptr, tls_ptr, chilren_tid_ptr);
+    log::error!("[sys_clone] flags: {:b}, stack_ptr: {:x}, parent_tid_ptr: {:x}, tls_ptr: {:x}, chilren_tid_ptr: {:x}", flags, stack_ptr, parent_tid_ptr, tls_ptr, children_tid_ptr);
     let flags = match CloneFlags::from_bits(flags as u32) {
         None => {
             log::error!("clone flags is None: {}", flags);
@@ -57,16 +58,17 @@ pub fn sys_clone(
         log::error!("parent_tid_ptr: {:x}", parent_tid_ptr);
         copy_to_user(parent_tid_ptr as *mut u8, &content as *const u8, 8)?;
     }
+    // Todo: 这里的CLONE_CHILD_SETTID应该要写到子进程空间
     if flags.contains(CloneFlags::CLONE_CHILD_SETTID) {
         log::warn!("[sys_clone] handle CLONE_CHILD_SETTID");
         let content = (new_task_tid as u64).to_le_bytes();
         log::error!("chilren_tid_ptr: {:x}", parent_tid_ptr);
-        copy_to_user(chilren_tid_ptr as *mut u8, &content as *const u8, 8)?;
+        copy_to_user(children_tid_ptr as *mut u8, &content as *const u8, 8)?;
         new_task.set_TAS(new_task.tid());
     }
     if flags.contains(CloneFlags::CLONE_CHILD_CLEARTID) {
         log::warn!("[sys_clone] handle CLONE_CHILD_CLEARTID");
-        new_task.set_TAC(chilren_tid_ptr);
+        new_task.set_TAC(children_tid_ptr);
     }
     if flags.contains(CloneFlags::CLONE_SETTLS) {
         log::warn!("[sys_clone] handle CLONE_SETTLS");
@@ -204,7 +206,7 @@ pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> Sy
 }
 
 pub fn sys_gettid() -> SyscallRet {
-    log::info!("[sys_getuid] uid: {}", current_task().tid());
+    log::info!("[sys_gettid] tid: {}", current_task().tid());
     Ok(current_task().tid())
 }
 
@@ -613,6 +615,7 @@ pub fn sys_clock_nansleep(clock_id: usize, flags: i32, t: usize, remain: usize) 
     }
 }
 
+// fake
 pub fn sys_acct(pathname: *const u8) -> SyscallRet {
     if pathname.is_null() {
         log::warn!("[sys_acct] disable accounting");
@@ -624,10 +627,6 @@ pub fn sys_acct(pathname: *const u8) -> SyscallRet {
         pathname as usize
     );
     Ok(0)
-}
-
-pub fn sys_getuid() -> SyscallRet {
-    Ok(current_task().uid())
 }
 
 /// setuid() 设置调用进程的有效用户 ID。
@@ -657,6 +656,35 @@ pub fn sys_setuid(uid: usize) -> SyscallRet {
         } else {
             log::warn!("[sys_setuid] task{} set uid to {}", task.tid(), uid);
             task.set_euid(uid);
+        }
+    }
+    Ok(0)
+}
+
+/// setgid() 设置调用进程的有效组 ID。
+/// 如果调用进程拥有特权则还会设置实际 GID 和保存的设置组 ID。
+pub fn sys_setgid(gid: usize) -> SyscallRet {
+    let task = current_task();
+    if task.euid() == 0 {
+        log::warn!(
+            "[sys_setgid] task{} is root, set gid to {}",
+            task.gid(),
+            gid
+        );
+        task.set_gid(gid);
+        task.set_egid(gid);
+        task.set_sgid(gid);
+    } else {
+        if gid != task.gid() && gid != task.sgid() {
+            log::warn!(
+                "[sys_setgid] task{} is not root, set gid to {}",
+                task.tid(),
+                gid
+            );
+            return Err(Errno::EPERM);
+        } else {
+            log::warn!("[sys_setgid] task{} set gid to {}", task.tid(), gid);
+            task.set_egid(gid);
         }
     }
     Ok(0)
@@ -719,8 +747,65 @@ pub fn sys_setreuid(ruid: isize, euid: isize) -> SyscallRet {
     Ok(0)
 }
 
-pub fn sys_geteuid() -> SyscallRet {
-    Ok(current_task().euid())
+/// setregid() 函数应设置调用进程的实际组 ID 和有效组 ID。
+/// 如果 rgid 为 -1，则实际组 ID 不应更改；如果 egid 为 -1，则有效组 ID 不应更改。
+/// 非特权进程可以将实际组 ID 设置为 exec 系列函数中保存的sgid，或者将有效组 ID 设置为保存的sigd 或实际组 ID。
+/// 如果正在设置实际组 ID（rgid 不为 -1），或者正在将有效组 ID 设置为不等于实际组 ID 的值，则当前进程保存的 set-group-ID 应设置为新的有效组 ID。
+/// 调用进程的任何补充组 ID 均保持不变。
+/// 将实际组 ID 更改为保存的 sgid，
+/// 或将有效组 ID 更改为实际组 ID 或保存的设置组 ID 之外的更改。
+pub fn sys_setregid(rgid: isize, egid: isize) -> SyscallRet {
+    log::info!("[sys_setregid] rgid: {}, egid: {}", rgid, egid);
+    let task = current_task();
+    let origin_gid = task.gid() as isize;
+    let origin_sgid = task.sgid() as isize;
+    log::error!(
+        "[sys_setregid] task {} origin_gid: {}, origin_sgid: {}",
+        task.tid(),
+        origin_gid,
+        origin_sgid
+    );
+    if task.euid() == 0 {
+        log::warn!(
+            "[sys_setregid] task{} is root, set rgid: {}, egid: {}",
+            task.tid(),
+            rgid,
+            egid
+        );
+        if rgid != -1 {
+            task.set_gid(rgid as usize);
+        }
+        if egid != -1 {
+            task.set_egid(egid as usize);
+        }
+    } else {
+        if rgid != -1 {
+            if rgid != origin_sgid as isize && rgid != origin_gid as isize {
+                return Err(Errno::EPERM);
+            }
+            log::warn!(
+                "[sys_setregid] task{} is not root, set rgid: {}",
+                task.tid(),
+                rgid,
+            );
+            task.set_gid(rgid as usize);
+        }
+        if egid != -1 {
+            if egid != origin_gid as isize && egid != origin_sgid as isize {
+                return Err(Errno::EPERM);
+            }
+            log::warn!(
+                "[sys_setregid] task{} is not root, set egid: {}",
+                task.tid(),
+                egid,
+            );
+            task.set_egid(egid as usize);
+        }
+    }
+    if rgid != -1 || (egid != -1 && egid != origin_gid as isize) {
+        task.set_sgid(task.egid() as usize);
+    }
+    Ok(0)
 }
 
 /// setresuid() 设置调用进程的真实用户 ID、有效用户 ID 和已保存的设置用户 ID。
@@ -801,6 +886,81 @@ pub fn sys_setresuid(ruid: isize, euid: isize, suid: isize) -> SyscallRet {
     Ok(0)
 }
 
+/// 类似 setresuid
+pub fn sys_setresgid(rgid: isize, egid: isize, sgid: isize) -> SyscallRet {
+    log::info!(
+        "[sys_setregid] rgid: {}, egid: {}, sgid: {}",
+        rgid,
+        egid,
+        sgid
+    );
+    let task = current_task();
+    let origin_gid = task.gid() as isize;
+    let origin_egid = task.egid() as isize;
+    let origin_sgid = task.sgid() as isize;
+    if task.euid() == 0 {
+        log::warn!(
+            "[sys_setregid] task{} is root, set rgid: {}, egid: {}",
+            task.tid(),
+            rgid,
+            egid
+        );
+        if rgid != -1 {
+            task.set_gid(rgid as usize);
+        }
+        if egid != -1 {
+            task.set_egid(egid as usize);
+        }
+        if sgid != -1 {
+            task.set_sgid(sgid as usize);
+        }
+    } else {
+        if rgid != -1 {
+            if rgid != origin_gid as isize
+                && rgid != origin_egid as isize
+                && rgid != origin_sgid as isize
+            {
+                return Err(Errno::EPERM);
+            }
+            log::warn!(
+                "[sys_setregid] task{} is not root, set rgid: {}",
+                task.tid(),
+                rgid,
+            );
+            task.set_gid(rgid as usize);
+        }
+        if egid != -1 {
+            if egid != origin_gid as isize
+                && egid != origin_egid as isize
+                && egid != origin_sgid as isize
+            {
+                return Err(Errno::EPERM);
+            }
+            log::warn!(
+                "[sys_setregid] task{} is not root, set egid: {}",
+                task.tid(),
+                egid,
+            );
+            task.set_egid(egid as usize);
+        }
+        if sgid != -1 {
+            if sgid != origin_gid as isize
+                && sgid != origin_egid as isize
+                && sgid != origin_sgid as isize
+            {
+                return Err(Errno::EPERM);
+            }
+            log::warn!(
+                "[sys_setregid] task{} is not root, set sgid: {}",
+                task.tid(),
+                sgid,
+            );
+            task.set_sgid(sgid as usize);
+        }
+    }
+    Ok(0)
+}
+
 pub fn sys_getresuid(ruid_ptr: usize, euid_ptr: usize, suid_ptr: usize) -> SyscallRet {
     log::info!(
         "[sys_getresuid] ruid_ptr: {:x}, euid_ptr: {:x}, suid_ptr: {:x}",
@@ -821,10 +981,90 @@ pub fn sys_getresuid(ruid_ptr: usize, euid_ptr: usize, suid_ptr: usize) -> Sysca
     Ok(0)
 }
 
-pub fn sys_getgid() -> SyscallRet {
+pub fn sys_getresgid(rgid_ptr: usize, egid_ptr: usize, sgid_ptr: usize) -> SyscallRet {
+    log::info!(
+        "[sys_getresgid] rgid_ptr: {:x}, egid_ptr: {:x}, sgid_ptr: {:x}",
+        rgid_ptr,
+        egid_ptr,
+        sgid_ptr
+    );
+    let task = current_task();
+    if rgid_ptr != 0 {
+        copy_to_user(rgid_ptr as *mut usize, &task.gid() as *const usize, 1)?;
+    }
+    if egid_ptr != 0 {
+        copy_to_user(egid_ptr as *mut usize, &task.egid() as *const usize, 1)?;
+    }
+    if sgid_ptr != 0 {
+        copy_to_user(sgid_ptr as *mut usize, &task.sgid() as *const usize, 1)?;
+    }
     Ok(0)
 }
 
+pub fn sys_getuid() -> SyscallRet {
+    Ok(current_task().uid())
+}
+
+pub fn sys_geteuid() -> SyscallRet {
+    Ok(current_task().euid())
+}
+
+pub fn sys_getgid() -> SyscallRet {
+    Ok(current_task().gid())
+}
+
 pub fn sys_getegid() -> SyscallRet {
+    Ok(current_task().egid())
+}
+
+pub fn sys_setgroups(size: usize, list: usize) -> SyscallRet {
+    log::info!("[sys_setgroups] size: {}, list: {:x}", size, list);
+    let task = current_task();
+    const NGROUPS_MAX: usize = 32; // 最大补充组数(为了过ltp，目前已经应是65536)
+    if size > NGROUPS_MAX {
+        return Err(Errno::EINVAL);
+    }
+    if task.euid() != 0 {
+        // 只有root用户可以设置补充组
+        return Err(Errno::EPERM);
+    }
+    let mut groups = vec![0u32; size as usize];
+    copy_from_user(list as *const u32, groups.as_mut_ptr(), size)?;
+    if size == 0 {
+        // 清空补充组
+        task.op_sup_groups_mut(|groups| {
+            groups.clear();
+        });
+        return Ok(0);
+    }
+    task.op_sup_groups_mut(|sup_groups| {
+        sup_groups.clear();
+        for group in groups {
+            sup_groups.push(group);
+        }
+    });
     Ok(0)
+}
+
+/// getgroups() 返回调用进程在列表中的补充组 ID。
+pub fn sys_getgroups(size: usize, list: usize) -> SyscallRet {
+    log::info!("[sys_getgroups] size: {}, list: {:x}", size, list);
+    let task = current_task();
+    const NGROUPS_MAX: usize = 32; // 最大补充组数(为了过ltp，目前已经应是65536)
+    if size > NGROUPS_MAX {
+        // NGROUPS_MAX = 32
+        return Err(Errno::EINVAL);
+    }
+    if size == 0 {
+        // 如果size为0, 则只返回补充组的数量
+        return Ok(task.op_sup_groups_mut(|groups| groups.len()));
+    }
+    let groups = task.op_sup_groups_mut(|groups| Ok(groups.clone()))?;
+    if size < groups.len() {
+        return Err(Errno::EINVAL);
+    }
+    if list != 0 {
+        copy_to_user(list as *mut u32, groups.as_ptr(), groups.len())?;
+    }
+    Ok(groups.len())
 }

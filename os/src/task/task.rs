@@ -106,12 +106,17 @@ pub struct Task {
     itimerval: Arc<RwLock<[ITimerVal; 3]>>,      // 定时器
     rlimit: Arc<RwLock<[RLimit; 16]>>,           // 资源限制
     cpu_mask: SpinNoIrqLock<CpuMask>,            // CPU掩码
-    pgid: AtomicUsize,                           // 进程组id
-    uid: AtomicUsize,                            // 用户id
-    euid: AtomicUsize,                           // 有效用户id
-    suid: AtomicUsize,                           // 保存用户id
-                                                 // ToDo：运行时间(调度相关)
-                                                 // ToDo: 多核启动
+    // 权限设置
+    pgid: AtomicUsize, // 进程组id
+    uid: AtomicUsize,  // 用户id
+    euid: AtomicUsize, // 有效用户id
+    suid: AtomicUsize, // 保存用户id
+    gid: AtomicUsize,  // 组id
+    egid: AtomicUsize, // 有效组id
+    sgid: AtomicUsize, // 保存组id
+    sup_groups: SpinNoIrqLock<Vec<u32>>, // 附加组列表
+                       // ToDo：运行时间(调度相关)
+                       // ToDo: 多核启动
 }
 
 impl core::fmt::Debug for Task {
@@ -159,6 +164,10 @@ impl Task {
             uid: AtomicUsize::new(0),
             euid: AtomicUsize::new(0),
             suid: AtomicUsize::new(0),
+            gid: AtomicUsize::new(0),
+            egid: AtomicUsize::new(0),
+            sgid: AtomicUsize::new(0),
+            sup_groups: SpinNoIrqLock::new(Vec::new()),
         }
     }
 
@@ -170,8 +179,12 @@ impl Task {
         let tgid = AtomicUsize::new(tid.0);
         let pgid = AtomicUsize::new(1);
         let uid = AtomicUsize::new(0); // 默认为root(0)用户
-        let euid = AtomicUsize::new(0); 
+        let euid = AtomicUsize::new(0);
         let suid = AtomicUsize::new(0);
+        let gid = AtomicUsize::new(0); // 默认为root(0)组
+        let egid = AtomicUsize::new(0);
+        let sgid = AtomicUsize::new(0);
+        let sup_groups = SpinNoIrqLock::new(Vec::new());
         // 申请内核栈
         let mut kstack = kstack_alloc();
         // Trap_context
@@ -209,7 +222,11 @@ impl Task {
             pgid,
             uid,
             euid,
-            suid
+            suid,
+            gid,
+            egid,
+            sgid,
+            sup_groups,
         });
         // 向线程组中添加该进程
         task.thread_group
@@ -217,6 +234,8 @@ impl Task {
             .add(task.tid(), Arc::downgrade(&task));
         add_task(task.clone());
         register_task(&task);
+        // 新建进程组
+        new_group(&task);
         // 新建进程组
         new_group(&task);
         // 令tp与kernel_tp指向主线程内核栈顶
@@ -262,6 +281,10 @@ impl Task {
         let uid;
         let euid;
         let suid;
+        let gid;
+        let egid;
+        let sgid;
+        let sup_groups;
         log::info!("[kernel_clone] task{} ready to clone ...", self.tid());
 
         // 是否与父进程共享信号处理器
@@ -279,6 +302,10 @@ impl Task {
         uid = AtomicUsize::new(self.uid());
         euid = AtomicUsize::new(self.euid());
         suid = AtomicUsize::new(self.suid());
+        gid = AtomicUsize::new(self.gid());
+        egid = AtomicUsize::new(self.egid());
+        sgid = AtomicUsize::new(self.sgid());
+        sup_groups = SpinNoIrqLock::new(self.op_sup_groups_mut(|groups| groups.clone()));
 
         // 创建线程
         if flags.contains(CloneFlags::CLONE_THREAD) {
@@ -381,6 +408,10 @@ impl Task {
             uid,
             euid,
             suid,
+            gid,
+            egid,
+            sgid,
+            sup_groups,
         });
         log::trace!("[kernel_clone] child task{} created", task.tid());
 
@@ -440,6 +471,7 @@ impl Task {
         task
     }
 
+    // Todo: sgid 与文件权限检查
     pub fn kernel_execve(
         self: &Arc<Self>,
         elf_data: &[u8],
@@ -559,7 +591,7 @@ impl Task {
         // 更新页表
         memory_set.activate();
         // 更新exe_path
-        *self.exe_path.write() = exe_path;
+        *self.exe_path.write() = exe_path.clone();
 
         #[cfg(target_arch = "loongarch64")]
         memory_set.push_with_offset(
@@ -579,6 +611,9 @@ impl Task {
 
         // 初始化用户栈, 压入args和envs
         let argc = args_vec.len();
+        if args_vec.is_empty() {
+            args_vec.push(String::from(exe_path));
+        }
         let (argv_base, envp_base, auxv_base, ustack_top) =
             init_user_stack(&memory_set, &args_vec, &envs_vec, aux_vec, ustack_top);
         log::info!(
@@ -871,6 +906,18 @@ impl Task {
         self.suid.load(core::sync::atomic::Ordering::SeqCst)
     }
 
+    pub fn gid(&self) -> usize {
+        self.gid.load(core::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn egid(&self) -> usize {
+        self.egid.load(core::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn sgid(&self) -> usize {
+        self.sgid.load(core::sync::atomic::Ordering::SeqCst)
+    }
+
     /*********************************** setter *************************************/
     pub fn set_root(&self, root: Arc<Path>) {
         *self.root.lock() = root;
@@ -912,6 +959,15 @@ impl Task {
     pub fn set_suid(&self, suid: usize) {
         self.suid.store(suid, core::sync::atomic::Ordering::SeqCst);
     }
+    pub fn set_gid(&self, gid: usize) {
+        self.gid.store(gid, core::sync::atomic::Ordering::SeqCst);
+    }
+    pub fn set_egid(&self, egid: usize) {
+        self.egid.store(egid, core::sync::atomic::Ordering::SeqCst);
+    }
+    pub fn set_sgid(&self, sgid: usize) {
+        self.sgid.store(sgid, core::sync::atomic::Ordering::SeqCst);
+    }
 
     /*********************************** operator *************************************/
     pub fn op_parent<T>(&self, f: impl FnOnce(&Option<Weak<Task>>) -> T) -> T {
@@ -952,6 +1008,9 @@ impl Task {
     }
     pub fn op_rlimit_mut<T>(&self, f: impl FnOnce(&mut [RLimit; RLIM_NLIMITS]) -> T) -> T {
         f(&mut self.rlimit.write())
+    }
+    pub fn op_sup_groups_mut<T>(&self, f: impl FnOnce(&mut Vec<u32>) -> T) -> T {
+        f(&mut self.sup_groups.lock())
     }
     /******************************** 任务状态判断 **************************************/
     pub fn is_ready(&self) -> bool {
