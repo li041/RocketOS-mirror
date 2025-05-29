@@ -12,7 +12,10 @@ extern crate alloc;
 use super::{flags::*, queue::FUTEXQUEUES};
 use crate::{
     arch::{config::PAGE_SIZE_BITS, mm::copy_from_user},
-    futex::{self, queue::futex_hash},
+    futex::{
+        self,
+        queue::{display_futexqueues, futex_hash},
+    },
     syscall::errno::{Errno, SyscallRet},
     task::{current_task, dump_scheduler, dump_wait_queue, wait, wakeup, yield_current_task, Task},
     timer::TimeSpec,
@@ -179,15 +182,32 @@ pub fn futex_wait(
             };
             is_timeout = deadline < now;
             if !is_timeout {
-                yield_current_task();   // 返回时状态会变成running
+                dump_scheduler();
+                yield_current_task(); // 返回时状态会变成running
                 current_task().set_interruptable();
             }
             if current_task().check_interrupt() {
-                log::error!(
-                    "[futex_wait] task{} wakeup by signal",
-                    current_task().tid()
-                );
+                log::error!("[futex_wait] task{} wakeup by signal", current_task().tid());
                 return Err(Errno::EINTR);
+            }
+
+            let mut hash_bucket = FUTEXQUEUES.buckets[futex_hash(&key)].lock();
+            // 神奇小咒语
+            log::trace!("[futex_wait] hash_bucket len: {:?}", hash_bucket.len());
+            let cur_id = current_task().tid();
+            // 查看自己是否在队列中
+             hash_bucket.retain(|futex_q| futex_q.task.upgrade().is_some());
+            if let Some(idx) = hash_bucket
+                .iter()
+                .position(|futex_q| futex_q.task.upgrade().unwrap().tid() == cur_id)
+            {
+                if is_timeout {
+                    hash_bucket.remove(idx);
+                    return Err(Errno::ETIMEDOUT);
+                }
+            } else {
+                // the task is woken up anyway, and finds itself unqueued
+                return Ok(0);
             }
         }
         // 无计时情况
@@ -199,31 +219,6 @@ pub fn futex_wait(
                 });
                 return Err(Errno::EINTR);
             }
-        }
-
-        // If we were woken (and unqueued), we succeeded, whatever.
-        // We doesn't care about the reason of wakeup if we were unqueued.
-        let mut hash_bucket = FUTEXQUEUES.buckets[futex_hash(&key)].lock();
-        // 神奇小咒语
-        log::trace!("[futex_wait] hash_bucket len: {:?}", hash_bucket.len());
-        let cur_id = current_task().tid();
-        // 查看自己是否在队列中
-        hash_bucket.retain(|futex_q| futex_q.task.upgrade().is_some());
-        if let Some(idx) = hash_bucket
-            .iter()
-            .position(|futex_q| futex_q.task.upgrade().unwrap().tid() == cur_id)
-        {
-            hash_bucket.remove(idx);
-            if is_timeout {
-                return Err(Errno::ETIMEDOUT);
-            }
-            // Todo: 信号中断
-            // if current_task().have_signals() {
-            //     // we were interrupted by a signal
-            //     return Err(EINTR);
-            // }
-        } else {
-            // the task is woken up anyway, and finds itself unqueued
             return Ok(0);
         }
     }
@@ -253,7 +248,10 @@ pub fn futex_wake(uaddr: usize, flags: i32, nr_waken: u32) -> SyscallRet {
                 }
                 if ret < nr_waken && futex_q.key == key {
                     wakeup(futex_q.task.upgrade().unwrap().tid());
-                    log::error!("[futex_wake] wake up task {:?}", futex_q.task.upgrade().unwrap().tid());
+                    log::error!(
+                        "[futex_wake] wake up task {:?}",
+                        futex_q.task.upgrade().unwrap().tid()
+                    );
                     ret += 1;
                     return false;
                 }
