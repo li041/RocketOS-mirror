@@ -1344,7 +1344,8 @@ impl MemorySet {
                         "[check_writable_vpn_range] vpn {:#x} not writable nor COW",
                         vpn.0
                     );
-                    return Err(Errno::EACCES);
+                    self.page_table.dump_all_user_mapping();
+                    return Err(Errno::EFAULT);
                 }
             }
 

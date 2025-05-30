@@ -1,4 +1,4 @@
-use crate::ext4::inode::{S_IFCHR, S_IFDIR};
+use crate::ext4::inode::{S_IFBLK, S_IFCHR, S_IFDIR};
 
 use super::{
     dentry::{self, insert_core_dentry, Dentry},
@@ -10,12 +10,15 @@ use super::{
     AT_FDCWD,
 };
 use alloc::sync::Arc;
+use loop_device::{insert_loop_device, LoopControlFile, LoopDevice, LoopInode, LOOP_CONTROL};
 use null::{NullFile, NULL};
 use rtc::{RtcFile, RTC};
+use spin::Mutex;
 use tty::{TtyFile, TTY};
 use urandom::{UrandomFile, URANDOM};
 use zero::{ZeroFile, ZERO};
 
+pub mod loop_device;
 pub mod null;
 pub mod rtc;
 pub mod tty;
@@ -237,6 +240,60 @@ pub fn init_devfs(root_path: Arc<Path>) {
         }
         Err(e) => {
             panic!("create {} failed: {:?}", urandom_path, e);
+        }
+    }
+    // /dev/loop-control
+    let loop_control_path = "/dev/loop-control";
+    let loop_control_mode = S_IFCHR as u16 | 0o666;
+    let loop_control_devt = DevT::loop_control_devt();
+    nd = Nameidata {
+        path_segments: parse_path(loop_control_path),
+        dentry: root_path.dentry.clone(),
+        mnt: root_path.mnt.clone(),
+        depth: 0,
+    };
+    match filename_create(&mut nd, 0) {
+        Ok(dentry) => {
+            let parent_inode = nd.dentry.get_inode();
+            parent_inode.mknod(dentry.clone(), loop_control_mode, loop_control_devt);
+            // 现在dentry的inode指向/dev/loop-control
+            let loop_control_file = LoopControlFile::new(
+                Path::new(root_path.mnt.clone(), dentry.clone()),
+                dentry.get_inode().clone(),
+                OpenFlags::O_RDWR,
+            );
+            LOOP_CONTROL.call_once(|| loop_control_file.clone());
+            insert_core_dentry(dentry.clone());
+        }
+        Err(e) => {
+            panic!("create {} failed: {:?}", loop_control_path, e);
+        }
+    }
+    // /dev/loop0
+    let loop0_path = "/dev/loop0";
+    let loop0_mode = S_IFBLK as u16 | 0o666;
+    let loop_devt = DevT::loopx_devt(0);
+    nd = Nameidata {
+        path_segments: parse_path(loop0_path),
+        dentry: root_path.dentry.clone(),
+        mnt: root_path.mnt.clone(),
+        depth: 0,
+    };
+    match filename_create(&mut nd, 0) {
+        Ok(dentry) => {
+            let parent_inode = nd.dentry.get_inode();
+            parent_inode.mknod(dentry.clone(), loop0_mode, loop_devt);
+            let loop0_file = LoopDevice::new(
+                Path::new(root_path.mnt.clone(), dentry.clone()),
+                dentry.get_inode().clone(),
+                OpenFlags::O_RDWR,
+                0,
+            );
+            insert_loop_device(loop0_file, 0);
+            insert_core_dentry(dentry.clone());
+        }
+        Err(e) => {
+            panic!("create {} failed: {:?}", loop0_path, e);
         }
     }
 }

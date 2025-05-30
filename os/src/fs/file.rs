@@ -62,6 +62,9 @@ pub trait FileOp: Any + Send + Sync {
     fn write<'a>(&'a self, buf: &'a [u8]) -> SyscallRet {
         unimplemented!();
     }
+    fn write_dio<'a>(&'a self, buf: &'a [u8]) -> SyscallRet {
+        unimplemented!();
+    }
     // move the file offset
     fn seek(&self, offset: isize, whence: Whence) -> SyscallRet {
         unimplemented!();
@@ -204,6 +207,17 @@ impl FileOp for File {
                 inner.offset = inner.inode.get_size();
             }
             inner.inode.write(inner.offset, buf)
+        });
+        self.add_offset(write_size);
+        Ok(write_size)
+    }
+    fn write_dio<'a>(&'a self, buf: &'a [u8]) -> SyscallRet {
+        let write_size = self.inner_handler(|inner| {
+            if inner.flags.contains(OpenFlags::O_APPEND) {
+                inner.offset = inner.inode.get_size();
+            }
+            // 注意需要直接写入磁盘, 不使用页缓存, 否则会爆
+            inner.inode.write_dio(inner.offset, buf)
         });
         self.add_offset(write_size);
         Ok(write_size)

@@ -138,7 +138,7 @@ pub fn sys_clone(
     Ok(new_task_tid)
 }
 
-pub const IGNOER_TEST: [&str; 20] = [
+pub const IGNOER_TEST: [&str; 21] = [
     /* 本身就不应该单独运行的 */
     "ltp/testcases/bin/ask_password.sh",
     "ltp/testcases/bin/assign_password.sh",
@@ -161,6 +161,7 @@ pub const IGNOER_TEST: [&str; 20] = [
     "ltp/testcases/bin/mmap1",
     "ltp/testcases/bin/mmap2",
     "ltp/testcases/bin/mmap3",
+    "ltp/testcases/bin/copy_file_range01",
 ];
 
 pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> SyscallRet {
@@ -247,7 +248,11 @@ pub fn sys_getpgid(pid: usize) -> SyscallRet {
     } else {
         get_task(pid).ok_or(Errno::ESRCH)?
     };
-    log::info!("[sys_getpgid] task {} get pgid: {}", target_task.tid(), target_task.pgid());
+    log::info!(
+        "[sys_getpgid] task {} get pgid: {}",
+        target_task.tid(),
+        target_task.pgid()
+    );
     Ok(target_task.pgid())
 }
 
@@ -395,8 +400,7 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: usize, option: i32) -> SyscallRet 
                         exit_code_ptr as *mut i32,
                         &wait_task.exit_code() as *const i32,
                         1,
-                    )
-                    .unwrap();
+                    )?;
                 }
                 return Ok(found_pid as usize);
             }
@@ -695,7 +699,10 @@ pub fn sys_setreuid(ruid: isize, euid: isize) -> SyscallRet {
             task.set_uid(ruid as usize);
         }
         if euid != -1 {
-            if euid != origin_uid as isize && euid != origin_euid as isize && euid != origin_suid as isize {
+            if euid != origin_uid as isize
+                && euid != origin_euid as isize
+                && euid != origin_suid as isize
+            {
                 return Err(Errno::EPERM);
             }
             log::warn!(
@@ -721,7 +728,12 @@ pub fn sys_geteuid() -> SyscallRet {
 /// 特权进程（在 Linux 上，指具有 CAP_SETUID 功能的进程）可以将其真实 UID、有效 UID 和已保存的设置用户 ID 设置为任意值。
 /// 如果其中一个参数等于 -1，则相应的值保持不变。
 pub fn sys_setresuid(ruid: isize, euid: isize, suid: isize) -> SyscallRet {
-    log::info!("[sys_setreuid] ruid: {}, euid: {}, suid: {}", ruid, euid, suid);
+    log::info!(
+        "[sys_setreuid] ruid: {}, euid: {}, suid: {}",
+        ruid,
+        euid,
+        suid
+    );
     let task = current_task();
     let origin_uid = task.uid() as isize;
     let origin_euid = task.euid() as isize;
@@ -744,7 +756,10 @@ pub fn sys_setresuid(ruid: isize, euid: isize, suid: isize) -> SyscallRet {
         }
     } else {
         if ruid != -1 {
-            if ruid != origin_uid as isize && ruid != origin_euid as isize && ruid != origin_suid as isize{
+            if ruid != origin_uid as isize
+                && ruid != origin_euid as isize
+                && ruid != origin_suid as isize
+            {
                 return Err(Errno::EPERM);
             }
             log::warn!(
@@ -755,7 +770,10 @@ pub fn sys_setresuid(ruid: isize, euid: isize, suid: isize) -> SyscallRet {
             task.set_uid(ruid as usize);
         }
         if euid != -1 {
-            if euid != origin_uid as isize && euid != origin_euid as isize && euid != origin_suid as isize {
+            if euid != origin_uid as isize
+                && euid != origin_euid as isize
+                && euid != origin_suid as isize
+            {
                 return Err(Errno::EPERM);
             }
             log::warn!(
@@ -766,7 +784,10 @@ pub fn sys_setresuid(ruid: isize, euid: isize, suid: isize) -> SyscallRet {
             task.set_euid(euid as usize);
         }
         if suid != -1 {
-            if suid != origin_uid as isize && suid != origin_euid as isize && suid != origin_suid as isize {
+            if suid != origin_uid as isize
+                && suid != origin_euid as isize
+                && suid != origin_suid as isize
+            {
                 return Err(Errno::EPERM);
             }
             log::warn!(

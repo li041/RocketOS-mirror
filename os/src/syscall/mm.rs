@@ -300,16 +300,6 @@ pub fn sys_mmap(
             return Err(Errno::EACCES);
         }
         // 权限检查
-        // if !file.readable() && map_perm.contains(MapPermission::R)
-        //     || (map_perm.contains(MapPermission::S)
-        //         && map_perm.contains(MapPermission::W)
-        //         && !open_flags.contains(OpenFlags::O_RDWR))
-        //     || (map_perm.contains(MapPermission::W)
-        //         && (!file.writable() || open_flags.contains(OpenFlags::O_APPEND)))
-        // {
-        //     log::error!()
-        //     return Err(Errno::EACCES);
-        // }
         if map_perm.contains(MapPermission::R) {
             if !file.readable() {
                 log::error!("[sys_mmap] file not readable");

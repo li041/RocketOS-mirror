@@ -34,6 +34,9 @@ pub trait InodeOp: Any + Send + Sync {
     fn write<'a>(&'a self, page_offset: usize, buf: &'a [u8]) -> usize {
         unimplemented!();
     }
+    fn write_dio<'a>(&'a self, page_offset: usize, buf: &'a [u8]) -> usize {
+        unimplemented!();
+    }
     fn truncate<'a>(&'a self, size: usize) {
         unimplemented!();
     }

@@ -86,10 +86,14 @@ impl<'a> Ext4DirContentRO<'a> {
                 self.content[rec_len_total + 4],
                 self.content[rec_len_total + 5],
             ]);
+            // 需要判断下rec_len是否超出范围
+            if rec_len_total + rec_len as usize > content_len {
+                break;
+            }
             let dentry = Ext4DirEntry::try_from(
                 &self.content[rec_len_total..rec_len_total + rec_len as usize],
             )
-            .expect("DirEntry::try_from failed");
+            .unwrap();
             let dentry_name = String::from_utf8(dentry.name[..].to_vec()).unwrap();
             if dentry_name == name {
                 return Some(dentry);
@@ -110,112 +114,199 @@ impl<'a> Ext4DirContentWE<'a> {
     /// Todo: 当块内空间不足时, 需要分配新的块, 并将新的目录项写入新的块(需要extents_tree管理)
     /// ToOptimize: 目前这个函数进行了很多不必要的拷贝, 需要优化
     /// 注意目录项的rec_len要保证对齐到4字节
+    ///
     pub fn add_entry(
         &mut self,
         name: &str,
         inode_num: u32,
         file_type: u8,
     ) -> Result<(), &'static str> {
-        // 新的目录项长度为name长度加上8字节
-        let new_entry_name_len = name.len() as u16;
-        // Ext4Dirent rec_len对齐到4字节
-        let needed_len = (new_entry_name_len + 8 + 3) & !(3 as u16);
-        let mut rec_len_total = 0;
-
+        let name_len = name.len();
+        // if name_len > 255 {
+        //     return Err("Name too long");
+        // }
+        // 计算新目录项所需空间（4字节对齐）
+        let needed_len = ((name_len + 8 + 3) & !3) as u16;
+        let mut offset = 0;
         let content_len = self.content.len();
-        assert!(content_len > 0 && content_len % EXT4_BLOCK_SIZE == 0);
-        log::info!(
-            "[Ext4DirContentWE::add_entry] content_len: {}, needed_len: {}",
-            content_len,
-            needed_len
-        );
 
-        let mut dentry: Ext4DirEntry = Ext4DirEntry::default();
-        let mut rec_len = 0;
-        while rec_len_total < content_len {
-            rec_len = u16::from_le_bytes([
-                self.content[rec_len_total + 4],
-                self.content[rec_len_total + 5],
-            ]);
-            dentry = Ext4DirEntry::try_from(
-                &self.content[rec_len_total..rec_len_total + rec_len as usize],
-            )
-            .expect("DirEntry::try_from failed");
-
-            // 情况1: 找到空闲位置, 已删除的目录项且有足够空间(inode_num为0, 表示已被删除)
-            if dentry.inode_num == 0 && rec_len > needed_len {
-                log::info!("Using empty dir entry at offset {}", rec_len_total);
-                // 更新name_len, inode_num, file_type
-                let mut new_dentry = dentry;
-                new_dentry.name_len = new_entry_name_len as u8;
-                new_dentry.inode_num = inode_num;
-                new_dentry.file_type = file_type;
-                // 写回
-                new_dentry.write_to_mem(
-                    &mut self.content[rec_len_total..rec_len_total + needed_len as usize],
-                );
-                return Ok(());
+        // 遍历目录块
+        while offset < content_len {
+            // 检查 rec_len 是否有效
+            if offset + 8 > content_len {
+                return Err("Invalid directory entry");
             }
-            // 情况2: 目录项仍在使用, 但rec_len够大
-            // 检查当前记录是否有足够的空间容纳新的目录项
-            let current_dentry_len = ((dentry.name_len as usize + 8 + 3) & !3) as u16;
-            let surplus_len = rec_len - current_dentry_len;
-            if surplus_len > needed_len {
-                // 有足够的空间容纳新的目录项
-                log::info!(
-                    "Splitting dir entry at offset {}, surplus_len: {}",
-                    rec_len_total,
-                    surplus_len
-                );
-                // 修改原有目录项的rec_len
-                let mut updated_dentry = dentry;
-                updated_dentry.rec_len = current_dentry_len;
-                updated_dentry.write_to_mem(
-                    &mut self.content[rec_len_total..rec_len_total + current_dentry_len as usize],
-                );
-                // 在后续空间写入新的目录项
-                let new_dentry = Ext4DirEntry {
-                    inode_num,
-                    rec_len: surplus_len,
-                    name_len: new_entry_name_len as u8,
-                    file_type,
-                    name: name.as_bytes().to_vec(),
+            let rec_len = u16::from_le_bytes([self.content[offset + 4], self.content[offset + 5]]);
+            if rec_len < 8 || offset + rec_len as usize > content_len {
+                return Err("Invalid rec_len");
+            }
+
+            let dentry =
+                match Ext4DirEntry::try_from(&self.content[offset..offset + rec_len as usize]) {
+                    Ok(d) => d,
+                    Err(_) => return Err("Corrupted directory entry"),
                 };
-                log::info!(
-                    "Writing new dir entry at offset {}, dentry: {:?}",
-                    rec_len_total + current_dentry_len as usize,
-                    new_dentry
-                );
-                new_dentry
-                    .write_to_mem(&mut self.content[rec_len_total + current_dentry_len as usize..]);
-                return Ok(());
+
+            // 情况1: 空闲目录项（inode_num == 0）
+            if dentry.inode_num == 0 {
+                if rec_len >= needed_len {
+                    // 直接复用空闲项
+                    let new_dentry = Ext4DirEntry {
+                        inode_num,
+                        rec_len,
+                        name_len: name_len as u8,
+                        file_type,
+                        name: name.as_bytes().to_vec(),
+                    };
+                    new_dentry.write_to_mem(&mut self.content[offset..]);
+                    return Ok(());
+                }
             }
-            rec_len_total += rec_len as usize;
+            // 情况2: 拆分目录项
+            else {
+                let current_len = ((dentry.name_len as usize + 8 + 3) & !3) as u16;
+                if rec_len >= current_len + needed_len {
+                    // 更新当前目录项的 rec_len
+                    let mut updated_dentry = dentry;
+                    updated_dentry.rec_len = current_len;
+                    updated_dentry.write_to_mem(&mut self.content[offset..]);
+
+                    // 写入新目录项
+                    let new_dentry = Ext4DirEntry {
+                        inode_num,
+                        rec_len: rec_len - current_len,
+                        name_len: name_len as u8,
+                        file_type,
+                        name: name.as_bytes().to_vec(),
+                    };
+                    new_dentry.write_to_mem(&mut self.content[offset + current_len as usize..]);
+                    return Ok(());
+                }
+            }
+
+            offset += rec_len as usize;
         }
-        // 没有找到unused的目录项, 则看是否最后一个目录项的rec_len可以容纳新的目录项
-        // 此时rec_len是最后一个目录项的rec_len, dentry是最后一个目录项
-        dentry.rec_len = dentry.name_len as u16 + 8;
-        let surplus_len = rec_len - dentry.rec_len;
-        assert!(
-            surplus_len >= needed_len,
-            "No enough space for new entry, surplus_len: {}, needed_len: {}",
-            surplus_len,
-            needed_len
-        );
-        dentry.write_to_mem(
-            &mut self.content[content_len - rec_len as usize
-                ..content_len - rec_len as usize + dentry.rec_len as usize],
-        );
-        let new_dentry = Ext4DirEntry {
-            inode_num,
-            rec_len: surplus_len,
-            name_len: new_entry_name_len as u8,
-            file_type,
-            name: name.as_bytes().to_vec(),
-        };
-        new_dentry.write_to_mem(&mut self.content[content_len - surplus_len as usize..content_len]);
-        Ok(())
+
+        // 情况3: 没有足够空间
+        Err("No space left in directory block")
     }
+    // pub fn add_entry(
+    //     &mut self,
+    //     name: &str,
+    //     inode_num: u32,
+    //     file_type: u8,
+    // ) -> Result<(), &'static str> {
+    //     // 新的目录项长度为name长度加上8字节
+    //     let new_entry_name_len = name.len() as u16;
+    //     // Ext4Dirent rec_len对齐到4字节
+    //     let needed_len = (new_entry_name_len + 8 + 3) & !(3 as u16);
+    //     let mut rec_len_total = 0;
+
+    //     let content_len = self.content.len();
+    //     assert!(content_len > 0 && content_len % EXT4_BLOCK_SIZE == 0);
+    //     log::info!(
+    //         "[Ext4DirContentWE::add_entry] content_len: {}, needed_len: {}",
+    //         content_len,
+    //         needed_len
+    //     );
+
+    //     let mut dentry: Ext4DirEntry = Ext4DirEntry::default();
+    //     let mut rec_len = 0;
+    //     while rec_len_total < content_len {
+    //         rec_len = u16::from_le_bytes([
+    //             self.content[rec_len_total + 4],
+    //             self.content[rec_len_total + 5],
+    //         ]);
+    //         // if rec_len + rec_len_total as u16 > content_len as u16 {
+    //         //     log::warn!(
+    //         //         "[Ext4DirContentWE::add_entry] rec_len_total: {}, rec_len: {}, content_len: {}",
+    //         //         rec_len_total,
+    //         //         rec_len,
+    //         //         content_len
+    //         //     );
+    //         //     return Err("Invalid rec_len");
+    //         // }
+    //         dentry = Ext4DirEntry::try_from(
+    //             &self.content[rec_len_total..rec_len_total + rec_len as usize],
+    //         )
+    //         .expect("DirEntry::try_from failed");
+
+    //         // 情况1: 找到空闲位置, 已删除的目录项且有足够空间(inode_num为0, 表示已被删除)
+    //         if dentry.inode_num == 0 && rec_len > needed_len {
+    //             log::info!("Using empty dir entry at offset {}", rec_len_total);
+    //             // 更新name_len, inode_num, file_type
+    //             let mut new_dentry = dentry;
+    //             new_dentry.name_len = new_entry_name_len as u8;
+    //             new_dentry.inode_num = inode_num;
+    //             new_dentry.file_type = file_type;
+    //             // 写回
+    //             new_dentry.write_to_mem(
+    //                 &mut self.content[rec_len_total..rec_len_total + needed_len as usize],
+    //             );
+    //             return Ok(());
+    //         }
+    //         // 情况2: 目录项仍在使用, 但rec_len够大
+    //         // 检查当前记录是否有足够的空间容纳新的目录项
+    //         let current_dentry_len = ((dentry.name_len as usize + 8 + 3) & !3) as u16;
+    //         let surplus_len = rec_len - current_dentry_len;
+    //         if surplus_len > needed_len {
+    //             // 有足够的空间容纳新的目录项
+    //             log::info!(
+    //                 "Splitting dir entry at offset {}, rec_len: {}, current_dentry_len: {}, surplus_len: {}, needed_len: {}",
+    //                 rec_len_total,
+    //                 rec_len,
+    //                 current_dentry_len,
+    //                 surplus_len,
+    //                 needed_len,
+    //             );
+    //             // 修改原有目录项的rec_len
+    //             let mut updated_dentry = dentry;
+    //             updated_dentry.rec_len = current_dentry_len;
+    //             updated_dentry.write_to_mem(
+    //                 &mut self.content[rec_len_total..rec_len_total + current_dentry_len as usize],
+    //             );
+    //             // 在后续空间写入新的目录项
+    //             let new_dentry = Ext4DirEntry {
+    //                 inode_num,
+    //                 rec_len: surplus_len,
+    //                 name_len: new_entry_name_len as u8,
+    //                 file_type,
+    //                 name: name.as_bytes().to_vec(),
+    //             };
+    //             new_dentry
+    //                 .write_to_mem(&mut self.content[rec_len_total + current_dentry_len as usize..]);
+    //             log::info!(
+    //                 "[Ext4DirContentWE::add_entry] new_dentry: offset: {}, rec_len: {}",
+    //                 rec_len_total + current_dentry_len as usize,
+    //                 rec_len
+    //             );
+    //             return Ok(());
+    //         }
+    //         rec_len_total += rec_len as usize;
+    //     }
+    //     // 没有找到unused的目录项, 则看是否最后一个目录项的rec_len可以容纳新的目录项
+    //     // 此时rec_len是最后一个目录项的rec_len, dentry是最后一个目录项
+    //     let dentry_len = dentry.name_len as u16 + 8;
+    //     if rec_len < dentry_len + needed_len {
+    //         log::warn!("No enough space for new entry",);
+    //         return Err("No enough space for new entry");
+    //     }
+    //     dentry.rec_len = dentry_len;
+    //     let surplus_len = rec_len - dentry.rec_len;
+    //     dentry.write_to_mem(
+    //         &mut self.content[content_len - rec_len as usize
+    //             ..content_len - rec_len as usize + dentry.rec_len as usize],
+    //     );
+    //     let new_dentry = Ext4DirEntry {
+    //         inode_num,
+    //         rec_len: surplus_len,
+    //         name_len: new_entry_name_len as u8,
+    //         file_type,
+    //         name: name.as_bytes().to_vec(),
+    //     };
+    //     new_dentry.write_to_mem(&mut self.content[content_len - surplus_len as usize..content_len]);
+    //     Ok(())
+    // }
     /// 基于合并相邻目录项的方式
     ///     1. 如果删除的dentry前面有目录项, 则将`rec_len`合并到前一个目录项
     ///     2. 如果删除的dentry是块中的第一个, 则仅见`inode`设为0

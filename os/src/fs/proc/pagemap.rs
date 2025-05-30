@@ -175,12 +175,6 @@ impl FileOp for PageMapFile {
     // 文件偏移量决定起始虚拟地址(offset / 8 * PAGE_SIZE)，
     fn read(&self, buf: &mut [u8]) -> SyscallRet {
         let offset = self.inner.read().offset;
-        // 5.28
-        log::warn!(
-            "[pagemap] read offset: {:#x}, buf len: {}",
-            offset,
-            buf.len()
-        );
         let start_vpn = VirtPageNum(offset / 8);
         Ok(self.get_pagemap(buf, start_vpn))
     }
