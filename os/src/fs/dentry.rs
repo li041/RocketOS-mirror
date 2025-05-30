@@ -222,16 +222,15 @@ pub fn clean_dentry_cache() {
     for name in lru.iter() {
         if let Some(dentry) = cache_map.get(name) {
             let strong_count = Arc::strong_count(dentry);
-            let count = if let Some(inode) = dentry.inner.lock().inode.as_ref() {
-                inode.get_resident_page_count()
-            } else {
-                0
-            };
             // println!(
             //     "[DentryCache] Key: {}, Path: {:?}, Strong Count: {}, pages: {}",
             //     name, dentry.absolute_path, strong_count, count
             // );
-            if strong_count == 1 && count > 100 {
+            if name.contains("iozone") {
+                // 特例处理, 保留 iozone*
+                continue;
+            }
+            if strong_count == 1 {
                 // 没有其他强引用，可以安全移除
                 cache_map.remove(name);
                 // println!("[DentryCache] Removed {} due to low strong count", name);

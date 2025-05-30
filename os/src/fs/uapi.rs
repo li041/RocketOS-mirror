@@ -66,8 +66,14 @@ impl DevT {
     pub fn zero_devt() -> Self {
         Self::makedev(1, 5)
     }
-    pub fn urandom_devt()->Self {
+    pub fn urandom_devt() -> Self {
         Self::makedev(1, 9)
+    }
+    pub fn loop_control_devt() -> Self {
+        Self::makedev(10, 237)
+    }
+    pub fn loopx_devt(id: usize) -> Self {
+        Self::makedev(7, id as u32)
     }
 }
 

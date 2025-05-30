@@ -3,10 +3,14 @@ use crate::{
     ext4,
     fs::{
         dentry::{Dentry, DentryFlags, LinuxDirent64},
-        dev::{null::NullInode, rtc::RtcInode, tty::TtyInode, urandom::UrandomInode},
+        dev::{
+            loop_device::LoopInode, null::NullInode, rtc::RtcInode, tty::TtyInode,
+            urandom::UrandomInode,
+        },
         inode::InodeOp,
         kstat::Kstat,
         pipe::PipeInode,
+        proc::{exe::EXE, maps::MAPS, meminfo::MEMINFO, mounts::MOUNTS, pagemap::PAGEMAP},
         uapi::{DevT, RenameFlags},
     },
     mm::Page,
@@ -23,14 +27,11 @@ use block_op::{Ext4DirContentRO, Ext4DirContentWE};
 use dentry::{EXT4_DT_CHR, EXT4_DT_DIR, EXT4_DT_FIFO, EXT4_DT_LNK};
 use fs::EXT4_BLOCK_SIZE;
 use inode::{
-    load_inode, write_inode, Ext4Inode, EXT4_EXTENTS_FL, EXT4_INLINE_DATA_FL, S_IALLUGO, S_IFCHR,
-    S_IFDIR, S_IFIFO, S_IFLNK, S_IFMT, S_IFREG,
+    load_inode, write_inode, Ext4Inode, EXT4_EXTENTS_FL, EXT4_INLINE_DATA_FL, S_IALLUGO, S_IFBLK,
+    S_IFCHR, S_IFDIR, S_IFIFO, S_IFLNK, S_IFMT, S_IFREG,
 };
 
-use alloc::vec::Vec;
 use core::any::Any;
-use spin::RwLock;
-use virtio_drivers::PAGE_SIZE;
 
 mod block_group;
 pub mod block_op;
@@ -55,6 +56,9 @@ impl InodeOp for Ext4Inode {
     fn write<'a>(&'a self, page_offset: usize, buf: &'a [u8]) -> usize {
         self.write(page_offset, buf)
     }
+    fn write_dio<'a>(&'a self, page_offset: usize, buf: &'a [u8]) -> usize {
+        self.write_direct(page_offset, buf)
+    }
     fn truncate<'a>(&'a self, size: usize) {
         self.truncate(size as u64)
     }
@@ -75,6 +79,50 @@ impl InodeOp for Ext4Inode {
             assert!(child.absolute_path == format!("{}/{}", parent_entry.absolute_path, name));
             return child.clone();
         } else {
+            // // 处理特殊类型文件
+            // if dentry.absolute_path.starts_with("/proc") {
+            //     // procfs的文件类型
+            //     if dentry.absolute_path == "/proc/mounts" {
+            //         dentry = Dentry::new(
+            //             dentry.absolute_path.clone(),
+            //             Some(parent_entry.clone()),
+            //             DentryFlags::DCACHE_REGULAR_TYPE,
+            //             MOUNTS.get().unwrap().get_inode(),
+            //         );
+            //     }
+            //     if dentry.absolute_path == "/proc/meminfo" {
+            //         dentry = Dentry::new(
+            //             dentry.absolute_path.clone(),
+            //             Some(parent_entry.clone()),
+            //             DentryFlags::DCACHE_REGULAR_TYPE,
+            //             MEMINFO.get().unwrap().get_inode(),
+            //         );
+            //     }
+            //     if dentry.absolute_path == "/proc/self/exe" {
+            //         dentry = Dentry::new(
+            //             dentry.absolute_path.clone(),
+            //             Some(parent_entry.clone()),
+            //             DentryFlags::DCACHE_SYMLINK_TYPE,
+            //             EXE.get().unwrap().get_inode(),
+            //         );
+            //     }
+            //     if dentry.absolute_path == "/proc/self/maps" {
+            //         dentry = Dentry::new(
+            //             dentry.absolute_path.clone(),
+            //             Some(parent_entry.clone()),
+            //             DentryFlags::DCACHE_REGULAR_TYPE,
+            //             MAPS.get().unwrap().get_inode(),
+            //         );
+            //     }
+            //     if dentry.absolute_path == "/proc/self/pagemap" {
+            //         dentry = Dentry::new(
+            //             dentry.absolute_path.clone(),
+            //             Some(parent_entry.clone()),
+            //             DentryFlags::DCACHE_REGULAR_TYPE,
+            //             PAGEMAP.get().unwrap().get_inode(),
+            //         );
+            //     }
+            // }
             // 从目录中查找
             if let Some(ext4_dentry) = self.lookup(name) {
                 log::info!("[InodeOp::lookup] ext4_dentry: {:?}", ext4_dentry);
@@ -96,6 +144,7 @@ impl InodeOp for Ext4Inode {
                     S_IFCHR => dentry_flags = DentryFlags::DCACHE_SPECIAL_TYPE,
                     S_IFLNK => dentry_flags = DentryFlags::DCACHE_SYMLINK_TYPE,
                     S_IFIFO => {
+                        // 处理特殊命名管道
                         dentry_flags = DentryFlags::DCACHE_SPECIAL_TYPE;
                         let pipe_inode = PipeInode::new(inode_num);
                         return Dentry::new(
@@ -248,7 +297,7 @@ impl InodeOp for Ext4Inode {
             (old_dentry.get_last_name(), inode_num as u32)
         };
         // 删除旧目录项
-        self.delete_entry(&old_name, old_inode_num);
+        self.delete_entry(&old_name, old_inode_num)?;
         return Ok(0);
     }
     // 上层调用者保证:
@@ -508,7 +557,42 @@ impl InodeOp for Ext4Inode {
                         self.add_entry(dentry.clone(), new_inode_num as u32, EXT4_DT_CHR);
                         dentry.inner.lock().inode = Some(urandom_inode);
                     }
+                    (10, 237) => {
+                        // /dev/loop-control
+                        assert!(dentry.absolute_path == "/dev/loop-control");
+                        let new_inode_num = self
+                            .ext4_fs
+                            .upgrade()
+                            .unwrap()
+                            .alloc_inode(self.block_device.clone(), true);
+                        // Todo: 这里需要实现LoopControlInode
+                        let loop_control_inode = NullInode::new(new_inode_num, mode, 10, 237);
+                        self.add_entry(dentry.clone(), new_inode_num as u32, EXT4_DT_CHR);
+                        dentry.inner.lock().inode = Some(loop_control_inode);
+                    }
                     _ => panic!("Unsupported device: major: {}, minor: {}", major, minor),
+                }
+            }
+            S_IFBLK => {
+                // 提取主,次设备号
+                let (major, minor) = dev.unpack();
+                match (major, minor) {
+                    (7, id) => {
+                        // /dev/loopX, X是设备号
+                        assert!(dentry.absolute_path.starts_with("/dev/loop"));
+                        let new_inode_num = self
+                            .ext4_fs
+                            .upgrade()
+                            .unwrap()
+                            .alloc_inode(self.block_device.clone(), true);
+                        let loop_inode = LoopInode::new(new_inode_num, mode, 7, id);
+                        self.add_entry(dentry.clone(), new_inode_num as u32, EXT4_DT_CHR);
+                        dentry.inner.lock().inode = Some(loop_inode);
+                    }
+                    _ => panic!(
+                        "Unsupported block device: major: {}, minor: {}",
+                        major, minor
+                    ),
                 }
             }
             _ => panic!("Unsupported file type: {}", file_type),
@@ -534,6 +618,7 @@ impl InodeOp for Ext4Inode {
             return link.clone();
         }
         // 从inode中读取
+        log::warn!("[Ext4Inode::get_link] link not found, reading from inode data");
         self.read_link().unwrap()
     }
     fn can_lookup(&self) -> bool {

@@ -122,7 +122,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
             // 2. lazy allocation
             let va = VirtAddr::from(stval);
             let casue = PageFaultCause::from(scause.cause());
-            log::error!("page fault cause {:?}", scause.cause());
+            // log::error!("page fault cause {:?}", scause.cause());
             let task = current_task();
             task.op_memory_set_mut(|memory_set| {
                 if let Err(sig) = memory_set.handle_recoverable_page_fault(va, casue) {

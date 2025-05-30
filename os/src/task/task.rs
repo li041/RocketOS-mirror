@@ -314,7 +314,7 @@ impl Task {
             rlimit = Arc::new(RwLock::new([RLimit::default(); RLIM_NLIMITS]));
         }
 
-        if flags.contains(CloneFlags::CLONE_VM) {
+        if flags.contains(CloneFlags::CLONE_VM) && !flags.contains(CloneFlags::CLONE_VFORK) {
             log::warn!("[kernel_clone] handle CLONE_VM");
             memory_set = self.memory_set.clone()
         } else {

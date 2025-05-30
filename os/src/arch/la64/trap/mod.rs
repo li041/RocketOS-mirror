@@ -6,7 +6,8 @@ use crate::{
         mm::PageTable,
         tlbrelo::{TLBRELo0, TLBRELo1},
         Interrupt, TLBRBadV, TLBREHi, PGDL, PWCL, TLBRERA,
-    }, mm::VirtAddr, signal::{handle_signal, SiField, Sig, SigInfo}, syscall::{errno::Errno, syscall}, task::{current_task, handle_timeout, yield_current_task}
+    }, mm::VirtAddr, signal::{handle_signal, SiField, Sig, SigInfo}, syscall::{errno::Errno, syscall}, task::{current_task, handle_timeout, yield_current_task},
+    fs::dentry::clean_dentry_cache,
 };
 
 use super::{register, Exception, TIClr, Trap, ERA};
@@ -140,6 +141,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
             TIClr::read().clear_timer().write();
             set_next_trigger();
             handle_timeout();
+            clean_dentry_cache();
             yield_current_task();
         }
         _ => {

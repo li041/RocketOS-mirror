@@ -12,12 +12,13 @@
 
 use errno::{Errno, SyscallRet};
 use fs::{
-    sys_chdir, sys_close, sys_dup, sys_dup3, sys_faccessat, sys_fchmod, sys_fchmodat, sys_fchownat,
-    sys_fcntl, sys_fstat, sys_fstatat, sys_fsync, sys_ftruncate, sys_getcwd, sys_getdents64,
-    sys_ioctl, sys_linkat, sys_lseek, sys_mkdirat, sys_mknodat, sys_mount, sys_msync, sys_openat,
-    sys_pipe2, sys_ppoll, sys_pread, sys_pselect6, sys_pwrite, sys_read, sys_readlinkat, sys_readv,
-    sys_renameat2, sys_sendfile, sys_statfs, sys_statx, sys_symlinkat, sys_sync, sys_umount2,
-    sys_unlinkat, sys_utimensat, sys_write, sys_writev,
+    sys_chdir, sys_close, sys_copy_file_range, sys_dup, sys_dup3, sys_faccessat, sys_fadvise64,
+    sys_fallocate, sys_fchmod, sys_fchmodat, sys_fchownat, sys_fcntl, sys_fstat, sys_fstatat,
+    sys_fsync, sys_ftruncate, sys_getcwd, sys_getdents64, sys_ioctl, sys_linkat, sys_lseek,
+    sys_mkdirat, sys_mknodat, sys_mount, sys_msync, sys_openat, sys_pipe2, sys_ppoll, sys_pread,
+    sys_pselect6, sys_pwrite, sys_read, sys_readlinkat, sys_readv, sys_renameat2, sys_sendfile,
+    sys_statfs, sys_statx, sys_symlinkat, sys_sync, sys_umount2, sys_unlinkat, sys_utimensat,
+    sys_write, sys_writev,
 };
 use mm::{
     sys_brk, sys_get_mempolicy, sys_madvise, sys_membarrier, sys_mlock, sys_mmap, sys_mprotect,
@@ -84,6 +85,7 @@ const SYSCALL_UMOUNT2: usize = 39;
 const SYSCALL_MOUNT: usize = 40;
 const SYSCALL_STATFS: usize = 43;
 const SYSCALL_FTRUNCATE: usize = 46;
+const SYSCALL_FALLOCATE: usize = 47;
 const SYSCALL_FACCESSAT: usize = 48;
 const SYSCALL_CHDIR: usize = 49;
 const SYSCALL_FCHMOD: usize = 52;
@@ -181,6 +183,7 @@ const SYSCALL_MREMAP: usize = 216;
 const SYSCALL_FORK: usize = 220;
 const SYSCALL_EXEC: usize = 221;
 const SYSCALL_MMAP: usize = 222;
+const SYSCALL_FADVISE64: usize = 223;
 const SYSCALL_MPROTECT: usize = 226;
 const SYSCALL_MSYNC: usize = 227;
 const SYSCALL_MLOCK: usize = 228;
@@ -191,6 +194,7 @@ const SYSCALL_PRLIMIT: usize = 261;
 const SYSCALL_RENAMEAT2: usize = 276;
 const SYSCALL_GETRANDOM: usize = 278;
 const SYSCALL_MEMBARRIER: usize = 283;
+const SYSCALL_COPY_FILE_RANGE: usize = 285;
 const SYSCALL_ACCEPT4: usize = 288;
 const SYSCALL_STATX: usize = 291;
 const SYSCALL_STRERROR: usize = 300;
@@ -255,6 +259,7 @@ pub fn syscall(
         SYSCALL_SETSID => sys_setsid(),
         SYSCALL_STATFS => sys_statfs(a0 as *const u8, a1 as *mut StatFs),
         SYSCALL_FTRUNCATE => sys_ftruncate(a0, a1),
+        SYSCALL_FALLOCATE => sys_fallocate(a0, a1 as i32, a2, a3),
         SYSCALL_FACCESSAT => sys_faccessat(a0 as usize, a1 as *const u8, a2 as i32, a3 as i32),
         SYSCALL_CHDIR => sys_chdir(a0 as *const u8),
         SYSCALL_FCHMOD => sys_fchmod(a0, a1),
@@ -347,6 +352,7 @@ pub fn syscall(
         SYSCALL_FORK => sys_clone(a0 as u32, a1, a2, a3, a4),
         SYSCALL_EXEC => sys_execve(a0 as *mut u8, a1 as *const usize, a2 as *const usize),
         SYSCALL_MMAP => sys_mmap(a0, a1, a2, a3, a4 as i32, a5),
+        SYSCALL_FADVISE64 => sys_fadvise64(a0, a1, a2 as usize, a3 as i32),
         SYSCALL_WAIT4 => sys_waitpid(a0 as isize, a1, a2 as i32),
         SYSCALL_SOCKET => syscall_socket(a0, a1, a2),
         SYSCALL_BIND => syscall_bind(a0, a1, a2),
@@ -369,6 +375,7 @@ pub fn syscall(
         ),
         SYSCALL_GETRANDOM => Ok(0),
         SYSCALL_MEMBARRIER => sys_membarrier(a0 as i32, a1 as i32, a2 as u32),
+        SYSCALL_COPY_FILE_RANGE => sys_copy_file_range(a0, a1, a2, a3, a4, a5 as i32),
         SYSCALL_STATX => sys_statx(
             a0 as i32,
             a1 as *const u8,

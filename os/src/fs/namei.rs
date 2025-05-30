@@ -24,7 +24,13 @@ use crate::{
     },
     fs::{
         dentry::DentryFlags,
-        dev::{null::NULL, rtc::RTC, urandom::URANDOM, zero::ZERO},
+        dev::{
+            loop_device::{get_loop_device, LOOP_CONTROL},
+            null::NULL,
+            rtc::RTC,
+            urandom::URANDOM,
+            zero::ZERO,
+        },
         fdtable::{FdEntry, FdFlags},
         AT_FDCWD,
     },
@@ -32,6 +38,7 @@ use crate::{
     task::current_task,
 };
 use alloc::{
+    format,
     string::{String, ToString},
     sync::Arc,
     vec::Vec,
@@ -164,10 +171,12 @@ pub fn open_last_lookups(
         let segment = nd.path_segments[nd.depth].as_str();
 
         let target_dentry = if segment == "." {
+            nd.depth += 1;
             nd.dentry.clone()
         } else if segment == ".." {
             let parent = nd.dentry.get_parent();
-            assert!(!parent.is_symlink());
+            nd.depth += 1;
+            nd.dentry = parent.clone();
             parent
         } else {
             let dentry = lookup_dentry(nd);
@@ -183,11 +192,12 @@ pub fn open_last_lookups(
                         nd.path_segments[nd.depth],
                         symlink_target
                     );
+                    // 根据符号链接目标, 更新nd
                     nd.resolve_symlink(&symlink_target);
                     follow_symlink += 1;
                     continue;
                 }
-
+                nd.dentry = dentry.clone();
                 if nd.depth != nd.path_segments.len() - 1 {
                     nd.depth += 1;
                     continue;
@@ -284,11 +294,27 @@ fn create_file_from_dentry(
                     assert!(dentry.absolute_path == "/dev/urandom");
                     URANDOM.get().unwrap().clone()
                 } // /dev/urandom
+                (10, 237) => {
+                    // /dev/loop-control
+                    assert!(dentry.absolute_path == "/dev/loop-control");
+                    LOOP_CONTROL.get().unwrap().clone()
+                }
                 _ => panic!(
                     "[create_file_from_dentry]Unsupported device, devt: {:?}",
                     inode.get_devt()
                 ),
             }
+        }
+        S_IFBLK => {
+            let (major, id) = inode.get_devt();
+            // /dev/loopX
+            assert!(dentry.absolute_path == format!("/dev/loop{}", id));
+            // 这里的id是从0开始的
+            let loop_device = get_loop_device(id as usize);
+            if loop_device.is_none() {
+                return Err(Errno::ENODEV);
+            }
+            loop_device.unwrap()
         }
         _ => {
             panic!(
@@ -340,27 +366,27 @@ pub fn path_openat(
 // 由上层调用者保证:
 //     1. nd.dentry即为父目录
 pub fn lookup_dentry(nd: &mut Nameidata) -> Arc<Dentry> {
-    let mut absolute_current_dir = nd.dentry.absolute_path.clone();
-    absolute_current_dir = absolute_current_dir + "/" + &nd.path_segments[nd.depth];
-    log::info!(
-        "[lookup_dentry] absolute_current_dir: {}",
-        absolute_current_dir,
-    );
-    let mut dentry = lookup_dcache_with_absolute_path(&absolute_current_dir);
-    if dentry.is_none() {
-        let current_dir_inode = nd.dentry.get_inode();
-        // 在目录中查找目录项
-        dentry = Some(current_dir_inode.lookup(&nd.path_segments[nd.depth], nd.dentry.clone()));
-        // 注意这里插入的dentry可能是负目录项
-        // log::warn!("[lookup_dentry] try to lookup in dir_inode");
+    let segment = &nd.path_segments[nd.depth];
+    let absolute_path = format!("{}/{}", nd.dentry.absolute_path, segment);
+    log::debug!("[lookup_dentry] Looking up path: {}", absolute_path);
+
+    // 尝试从 dcache 查找
+    if let Some(dentry) = lookup_dcache_with_absolute_path(&absolute_path) {
+        return dentry;
     }
-    let dentry = dentry.unwrap();
+
+    log::warn!(
+        "[lookup_dentry] Cache miss, performing inode lookup for: {}",
+        segment
+    );
+
+    // 从 inode 进行实际查找
+    let parent_inode = nd.dentry.get_inode();
+    let dentry = parent_inode.lookup(segment, nd.dentry.clone());
+
+    // 插入 dentry，无论是正的还是负的
     insert_dentry(dentry.clone());
-    // log::info!(
-    //     "[lookup_dentry] dentry: {:?}, is_negative: {}",
-    //     dentry.absolute_path,
-    //     dentry.is_negative()
-    // );
+
     dentry
 }
 
@@ -368,7 +394,7 @@ const EEXIST: isize = 17;
 
 // 创建新文件或目录时用于解析路径, 获得对应的`dentry`
 // 同时检查路径是否存在, 若存在则返回错误
-// 预期的返回值是负目录项(已建立父子关系)
+/// 预期的返回值是负目录项(已建立父子关系), nd的dentry和inode为父目录
 pub fn filename_create(nd: &mut Nameidata, _lookup_flags: usize) -> Result<Arc<Dentry>, Errno> {
     let mut error: i32;
     // 解析路径的目录部分，调用后nd.dentry是最后一个组件的父目录

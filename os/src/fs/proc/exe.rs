@@ -42,7 +42,29 @@ impl ExeInode {
 
 impl InodeOp for ExeInode {
     fn get_link(&self) -> String {
-        current_task().exe_path()
+        let mut exe_path = current_task().exe_path();
+        if !exe_path.starts_with('/') {
+            // 如果是相对路径, 则转换为绝对路径
+            let cwd = current_task().pwd().dentry.absolute_path.clone();
+            // 将"."替换为cwd
+            if exe_path.starts_with(".") {
+                exe_path.replace_range(0..1, &cwd.to_string());
+            } else {
+                exe_path = cwd.to_string() + "/" + &exe_path;
+            }
+            log::warn!(
+                "ExeInode::get_link: exe_path is relative, replaced with cwd, return {}",
+                exe_path
+            );
+            return exe_path;
+        } else {
+            // 否则直接返回
+            log::warn!(
+                "ExeInode::get_link: exe_path is absolute, return {}",
+                exe_path
+            );
+            return exe_path;
+        }
     }
     fn getattr(&self) -> Kstat {
         let mut kstat = Kstat::new();
