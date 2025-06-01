@@ -1,13 +1,7 @@
 use crate::ext4::inode::{Ext4InodeDisk, S_IFCHR, S_IFDIR, S_IFLNK, S_IFREG};
 
 use super::{
-    dentry::{self, insert_core_dentry, Dentry},
-    file::OpenFlags,
-    mount::VfsMount,
-    namei::{filename_create, parse_path, path_openat, Nameidata},
-    path::Path,
-    uapi::DevT,
-    AT_FDCWD,
+    dentry::{self, insert_core_dentry, Dentry}, file::OpenFlags, mount::VfsMount, namei::{filename_create, parse_path, path_openat, Nameidata}, path::Path, pipe::PipeInode, uapi::DevT, AT_FDCWD
 };
 use alloc::sync::Arc;
 use exe::{ExeFile, ExeInode, EXE};

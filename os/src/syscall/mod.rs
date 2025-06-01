@@ -38,11 +38,7 @@ use signal::{
     sys_rt_sigsuspend, sys_rt_sigtimedwait, sys_tgkill, sys_tkill,
 };
 use task::{
-    sys_acct, sys_clock_nansleep, sys_clone, sys_execve, sys_exit_group, sys_futex, sys_get_time,
-    sys_getegid, sys_geteuid, sys_getgid, sys_getgroups, sys_getpgid, sys_getpid, sys_getppid,
-    sys_getresgid, sys_getresuid, sys_gettid, sys_getuid, sys_nanosleep, sys_set_tid_address,
-    sys_setgid, sys_setgroups, sys_setpgid, sys_setregid, sys_setresgid, sys_setresuid,
-    sys_setreuid, sys_setsid, sys_setuid, sys_waitpid, sys_yield,
+    sys_acct, sys_clock_nansleep, sys_clone, sys_execve, sys_exit_group, sys_futex, sys_get_time, sys_getegid, sys_geteuid, sys_getgid, sys_getgroups, sys_getpgid, sys_getpid, sys_getppid, sys_getresgid, sys_getresuid, sys_gettid, sys_getuid, sys_nanosleep, sys_set_tid_address, sys_setfsgid, sys_setfsuid, sys_setgid, sys_setgroups, sys_setpgid, sys_setregid, sys_setresgid, sys_setresuid, sys_setreuid, sys_setsid, sys_setuid, sys_waitpid, sys_yield
 };
 use util::{
     sys_adjtimex, sys_clock_adjtime, sys_clock_getres, sys_clock_gettime, sys_getrusage,
@@ -151,6 +147,8 @@ const SYSCALL_SETRESUID: usize = 147;
 const SYSCALL_GETRESUID: usize = 148;
 const SYSCALL_SETRESGID: usize = 149;
 const SYSCALL_GETRESGID: usize = 150;
+const SYSCALL_SETFSUID: usize = 151;
+const SYSCALL_SETFSGID: usize = 152;
 const SYSCALL_TIMES: usize = 153;
 const SYSCALL_SETPGID: usize = 154;
 const SYSCALL_GETPGID: usize = 155;
@@ -326,14 +324,16 @@ pub fn syscall(
         ),
         //SYSCALL_RT_SIGQUEUEINFO => sys_rt_sigqueueinfo(),
         SYSCALL_RT_SIGRETURN => sys_rt_sigreturn(),
-        SYACALL_SETREGRID => sys_setregid(a0 as isize, a1 as isize),
+        SYACALL_SETREGRID => sys_setregid(a0 as i32, a1 as i32),
         SYSCALL_SETGID => sys_setgid(a0 as u32),
-        SYSCALL_SETREUID => sys_setreuid(a0 as isize, a1 as isize),
+        SYSCALL_SETREUID => sys_setreuid(a0 as i32, a1 as i32),
         SYSCALL_SETUID => sys_setuid(a0 as u32),
-        SYSCALL_SETRESUID => sys_setresuid(a0 as isize, a1 as isize, a2 as isize),
-        SYSCALL_GETRESUID => sys_getresuid(a0, a1, a2),
-        SYSCALL_SETRESGID => sys_setresgid(a0 as isize, a1 as isize, a2 as isize),
-        SYSCALL_GETRESGID => sys_getresgid(a0, a1, a2),
+        SYSCALL_SETRESUID => sys_setresuid(a0 as i32, a1 as i32, a2 as i32),
+        SYSCALL_GETRESUID => sys_getresuid(a0 as u32, a1 as u32, a2 as u32),
+        SYSCALL_SETRESGID => sys_setresgid(a0 as i32, a1 as i32, a2 as i32),
+        SYSCALL_GETRESGID => sys_getresgid(a0 as u32, a1 as u32, a2 as u32),
+        SYSCALL_SETFSUID => sys_setfsuid(a0 as i32),
+        SYSCALL_SETFSGID => sys_setfsgid(a0 as i32),
         SYSCALL_TIMES => sys_times(a0),
         SYSCALL_SETPGID => sys_setpgid(a0, a1),
         SYSCALL_GETPGID => sys_getpgid(a0),

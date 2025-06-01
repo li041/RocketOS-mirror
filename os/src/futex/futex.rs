@@ -9,6 +9,8 @@ use axfutex::{flags::FLAGS_SHARED, futex::{FutexKey, FutexQ}, queues::{futex_has
 
 extern crate alloc;
 
+use core::cmp;
+
 use super::{flags::*, queue::FUTEXQUEUES};
 use crate::{
     arch::{config::PAGE_SIZE_BITS, mm::copy_from_user},
@@ -124,7 +126,22 @@ pub fn get_futex_key(uaddr: usize, flags: i32) -> Result<FutexKey, Errno> {
     if flags & FLAGS_SHARED != 0 {
         let shared_mapping_info = current_task()
             .op_memory_set(|memory_set| memory_set.get_shared_mmaping_info(VirtAddr::from(uaddr)))
-            .map_or(Err(Errno::EINVAL), |info| Ok(info))?;
+            .map_or(
+                // 理应要检查共享权限设置
+                {
+                    log::error!("[get_futex_key] get_shared_mmaping_info failed");
+                    let mm_addr = Arc::as_ptr(&current_task().memory_set()) as u64;
+                    let aligned = uaddr & !((1 << PAGE_SIZE_BITS) - 1);
+                    let offset = (uaddr & ((1 << PAGE_SIZE_BITS) - 1)) as u32;
+                    let info = SharedMappingInfo {
+                        inode_addr: mm_addr,
+                        page_index: aligned as u64,
+                        offset,
+                    };
+                    Ok(info)
+                },
+                |info| Ok(info),
+            )?;
         return Ok(FutexKey::new(
             shared_mapping_info.inode_addr,
             shared_mapping_info.page_index,
@@ -158,7 +175,11 @@ pub fn futex_wait(
 
     // we may be victim of spurious wakeups, so we need to loop
     let key = get_futex_key(uaddr, flags)?;
+    current_task().op_memory_set(|memory_set| {
+        memory_set.page_table.dump_all_user_mapping();
+    });
     let real_futex_val = futex_get_value_locked(uaddr as *const u32)?;
+    log::error!("[futex_wait] real futex value: {:?}, expected_val: {}", real_futex_val, expected_val);
     if expected_val != real_futex_val as u32 {
         return Err(Errno::EAGAIN);
     }
@@ -182,7 +203,6 @@ pub fn futex_wait(
             };
             is_timeout = deadline < now;
             if !is_timeout {
-                dump_scheduler();
                 yield_current_task(); // 返回时状态会变成running
                 current_task().set_interruptable();
             }
@@ -196,7 +216,7 @@ pub fn futex_wait(
             log::trace!("[futex_wait] hash_bucket len: {:?}", hash_bucket.len());
             let cur_id = current_task().tid();
             // 查看自己是否在队列中
-             hash_bucket.retain(|futex_q| futex_q.task.upgrade().is_some());
+            hash_bucket.retain(|futex_q| futex_q.task.upgrade().is_some());
             if let Some(idx) = hash_bucket
                 .iter()
                 .position(|futex_q| futex_q.task.upgrade().unwrap().tid() == cur_id)
@@ -308,6 +328,67 @@ pub fn futex_requeue(
     uaddr2: usize,
     nr_requeue: u32,
 ) -> SyscallRet {
+    let mut ret = 0;
+    let mut requeued = 0;
+    let key = get_futex_key(uaddr, flags)?;
+    let req_key = get_futex_key(uaddr2, flags)?;
+
+    if key == req_key {
+        return futex_wake(uaddr, flags, nr_waken);
+    }
+
+    {
+        let mut hash_bucket = FUTEXQUEUES.buckets[futex_hash(&key)].lock();
+        if hash_bucket.is_empty() {
+            return Ok(0);
+        } else {
+            while let Some(futex_q) = hash_bucket.pop_front() {
+                if futex_q.key == key {
+                    //WAIT_FOR_FUTEX.notify_task(&futex_q.task);
+                    ret += 1;
+                    wakeup(futex_q.task.upgrade().unwrap().tid());
+                    if ret == nr_waken {
+                        break;
+                    }
+                }
+            }
+            if hash_bucket.is_empty() {
+                return Ok(ret as usize);
+            }
+            // requeue the rest of the waiters
+            let mut req_bucket = FUTEXQUEUES.buckets[futex_hash(&req_key)].lock();
+            while let Some(futex_q) = hash_bucket.pop_front() {
+                req_bucket.push_back(futex_q);
+                requeued += 1;
+                if requeued == nr_requeue {
+                    break;
+                }
+            }
+        }
+    }
+    yield_current_task();
+    Ok(ret as usize)
+}
+
+pub fn futex_cmp_requeue(
+    uaddr: usize,
+    flags: i32,
+    nr_waken: u32,
+    uaddr2: usize,
+    nr_requeue: u32,
+    val3: u32,
+) -> SyscallRet {
+
+    // 对应的是 val或val2 为-1的情况
+    if nr_waken == 4294967295 || nr_requeue == 4294967295 {
+        return Err(Errno::EINVAL);
+    }
+
+    let real_futex_val = futex_get_value_locked(uaddr as *const u32)?;
+    if val3 != real_futex_val as u32 {
+        return Err(Errno::EAGAIN);
+    }
+
     let mut ret = 0;
     let mut requeued = 0;
     let key = get_futex_key(uaddr, flags)?;
