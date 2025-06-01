@@ -4,7 +4,7 @@ use core::time::Duration;
 use log::error;
 
 use flags::*;
-use futex::{futex_requeue, futex_wait, futex_wake, futex_wake_bitset};
+use futex::{futex_cmp_requeue, futex_requeue, futex_wait, futex_wake, futex_wake_bitset};
 
 use crate::{
     arch::mm::copy_from_user,
@@ -84,9 +84,14 @@ pub fn do_futex(
         FUTEX_WAKE => futex_wake(uaddr.into(), flags, val),
         FUTEX_WAKE_BITSET => futex_wake_bitset(uaddr.into(), flags, val, val3),
         FUTEX_REQUEUE => futex_requeue(uaddr.into(), flags, val, uaddr2.into(), val2 as u32),
-        FUTEX_CMP_REQUEUE => {
-            panic!("[linux_syscall_api] futex: unsupported futex operation: FUTEX_CMP_REQUEUE");
-        }
+        FUTEX_CMP_REQUEUE => futex_cmp_requeue(
+            uaddr.into(),
+            flags,
+            val,
+            uaddr2.into(),
+            val2 as u32,
+            val3 as u32,
+        ),
         FUTEX_WAKE_OP => {
             // futex_wake(uaddr, flags, uaddr2, val, val2, val3)
             panic!("[linux_syscall_api] futex: unsupported futex operation: FUTEX_WAKE_OP");

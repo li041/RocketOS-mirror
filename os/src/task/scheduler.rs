@@ -53,6 +53,7 @@ pub fn dump_scheduler() {
         );
     }
     log::error!("**************************** dump scheduler ****************************");
+    dump_wait_queue();
 }
 
 // 由caller保证原任务的状态切换

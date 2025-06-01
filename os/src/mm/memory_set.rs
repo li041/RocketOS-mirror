@@ -3,7 +3,9 @@ use core::{arch::asm, iter::Map, mem, ops::Range, usize};
 
 use super::{address::StepByOne, area::MapArea, shm::ShmSegment, VPNRange};
 use crate::drivers::get_dev_tree_size;
+use crate::fs::file;
 use crate::signal::Sig;
+use crate::syscall::errno;
 use crate::{
     arch::mm::{sfence_vma_vaddr, PTEFlags, PageTable, PageTableEntry},
     fs::{fdtable::FdFlags, file::OpenFlags},
@@ -576,10 +578,10 @@ impl MemorySet {
         if argv.len() > 0 {
             let file_name = &argv[0];
             // 文件后缀是.sh或者file_data是#!开头
-            if file_name.ends_with(".sh") || elf_data.starts_with(b"#!") {
-                let prepend_args = vec![String::from("./busybox"), String::from("sh")];
+            if file_name.ends_with(".sh") || elf_data.starts_with(b"#!"){
+                let prepend_args = vec![String::from("/musl/busybox"), String::from("sh")];
                 argv.splice(0..0, prepend_args);
-                if let Ok(busybox) = path_openat("./busybox", OpenFlags::empty(), AT_FDCWD, 0) {
+                if let Ok(busybox) = path_openat("/musl/busybox", OpenFlags::empty(), AT_FDCWD, 0) {
                     elf_data = busybox.read_all();
                     elf_file = busybox;
                 }
