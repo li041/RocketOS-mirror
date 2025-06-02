@@ -175,7 +175,7 @@ impl From<&DateTime> for TimeSpec {
         let mut seconds = 0;
         let mut year = dt.year as u64;
         let mut month = dt.month as u64;
-        let mut day = dt.day as u64;
+        let day = dt.day as u64;
 
         // Step 1: 计算天数
         while year > 1970 {

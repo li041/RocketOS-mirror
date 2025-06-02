@@ -1,11 +1,8 @@
-use core::{mem, panic, time};
-
 use alloc::sync::Arc;
+use alloc::vec;
 use alloc::vec::Vec;
-use alloc::{string::String, vec};
 
 use alloc::string::ToString;
-use xmas_elf::header::parse_header;
 
 use crate::arch::timer::get_time_ms;
 use crate::fs::dentry::{dentry_check_access, dentry_chown};
@@ -22,15 +19,14 @@ use crate::syscall::errno::Errno;
 use crate::task::yield_current_task;
 use crate::timer::TimeSpec;
 use crate::{
-    ext4::{self, inode::S_IFDIR},
+    ext4::inode::S_IFDIR,
     fs::{
-        dentry::{delete_dentry, LinuxDirent64},
+        dentry::delete_dentry,
         file::File,
         kstat::Stat,
         mount::do_mount,
         namei::{filename_create, filename_lookup, path_openat, Nameidata},
         path::Path,
-        pipe::Pipe,
         uapi::IoVec,
         AT_FDCWD,
     },
@@ -165,13 +161,17 @@ pub fn sys_readv(fd: usize, iov_ptr: *const IoVec, iovcnt: usize) -> SyscallRet 
         // let buf = copy_from_user_mut(iovec.base as *mut u8, iovec.len).unwrap();
         let mut ker_buf = vec![0u8; iovec.len];
         let read = file.read(&mut ker_buf)?;
-                log::info!(
+        log::info!(
             "[sys_readv] read: {}, iovec.base: {:#x}, iovec.len: {}",
             read,
             iovec.base,
             iovec.len
         );
-        log::error!("[copy_to_user]iovec.base {:#x},ker_buf: {:?}", iovec.base, ker_buf.as_ptr());
+        log::error!(
+            "[copy_to_user]iovec.base {:#x},ker_buf: {:?}",
+            iovec.base,
+            ker_buf.as_ptr()
+        );
         copy_to_user(iovec.base as *mut u8, ker_buf.as_ptr(), read).unwrap();
         // 如果读取失败, 则返回已经读取的字节数, 或错误码
 

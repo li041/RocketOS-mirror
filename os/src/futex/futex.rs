@@ -175,11 +175,12 @@ pub fn futex_wait(
 
     // we may be victim of spurious wakeups, so we need to loop
     let key = get_futex_key(uaddr, flags)?;
-    current_task().op_memory_set(|memory_set| {
-        memory_set.page_table.dump_all_user_mapping();
-    });
     let real_futex_val = futex_get_value_locked(uaddr as *const u32)?;
-    log::error!("[futex_wait] real futex value: {:?}, expected_val: {}", real_futex_val, expected_val);
+    log::error!(
+        "[futex_wait] real futex value: {:?}, expected_val: {}",
+        real_futex_val,
+        expected_val
+    );
     if expected_val != real_futex_val as u32 {
         return Err(Errno::EAGAIN);
     }
@@ -378,7 +379,6 @@ pub fn futex_cmp_requeue(
     nr_requeue: u32,
     val3: u32,
 ) -> SyscallRet {
-
     // 对应的是 val或val2 为-1的情况
     if nr_waken == 4294967295 || nr_requeue == 4294967295 {
         return Err(Errno::EINVAL);

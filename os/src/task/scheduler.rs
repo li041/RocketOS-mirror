@@ -186,11 +186,11 @@ pub fn yield_current_task() {
             if let Some(next_task) = fetch_task() {
                 let next_task_kernel_stack = next_task.kstack();
                 {
-                    log::error!(
+                    log::debug!(
                         "**********************************  task {} end **********************************",
                         current_task().tid()
                     );
-                    log::error!(
+                    log::debug!(
                         "**********************************  task {} start **********************************",
                         next_task.tid()
                     );

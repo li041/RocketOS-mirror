@@ -3,8 +3,6 @@ use core::{
     ops::{Add, Sub},
 };
 
-use crate::syscall::errno::SyscallRet;
-
 pub const TICKS_PER_SEC: usize = 100;
 pub const MSEC_PER_SEC: usize = 1000;
 
@@ -60,12 +58,15 @@ impl Sub for TimeSpec {
     type Output = Self;
     fn sub(self, rhs: Self) -> Self::Output {
         let mut sec = self.sec - rhs.sec;
-        let mut nsec = self.nsec - rhs.nsec;
+        let mut nsec = self.nsec as isize - rhs.nsec as isize;
         if nsec < 0 {
             sec -= 1;
             nsec += 1_000_000_000;
         }
-        Self { sec, nsec }
+        Self {
+            sec,
+            nsec: nsec as usize,
+        }
     }
 }
 
@@ -74,7 +75,7 @@ impl TimeSpec {
         self.sec == 0 && self.nsec == 0
     }
     //检查timespec是否符合 UTC/TAI/合理范围约束
- pub fn timespec_valid_settod(&self) -> bool {
+    pub fn timespec_valid_settod(&self) -> bool {
         // 纳秒每秒
         const NSEC_PER_SEC: usize = 1_000_000_000;
         // signed 64 位能表示的最大秒数
@@ -121,6 +122,10 @@ impl From<TimeVal> for TimeSpec {
 impl TimeVal {
     pub fn is_zero(&self) -> bool {
         self.sec == 0 && self.usec == 0
+    }
+
+    pub fn timespec_to_ticks(&self) -> usize {
+        self.sec * TICKS_PER_SEC + self.usec / (1_000 / TICKS_PER_SEC)
     }
 }
 

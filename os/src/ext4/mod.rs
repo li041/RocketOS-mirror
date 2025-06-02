@@ -1,8 +1,6 @@
 use crate::{
-    drivers::block::block_cache::get_block_cache,
-    ext4,
     fs::{
-        dentry::{Dentry, DentryFlags, LinuxDirent64},
+        dentry::{Dentry, DentryFlags},
         dev::{
             loop_device::LoopInode, null::NullInode, rtc::RtcInode, tty::TtyInode,
             urandom::UrandomInode,
@@ -10,7 +8,6 @@ use crate::{
         inode::InodeOp,
         kstat::Kstat,
         pipe::PipeInode,
-        proc::{exe::EXE, maps::MAPS, meminfo::MEMINFO, mounts::MOUNTS, pagemap::PAGEMAP},
         uapi::{DevT, RenameFlags},
     },
     mm::Page,
@@ -23,7 +20,7 @@ use alloc::{
     string::{String, ToString},
     sync::Arc,
 };
-use block_op::{Ext4DirContentRO, Ext4DirContentWE};
+use block_op::Ext4DirContentWE;
 use dentry::{EXT4_DT_CHR, EXT4_DT_DIR, EXT4_DT_FIFO, EXT4_DT_LNK};
 use fs::EXT4_BLOCK_SIZE;
 use inode::{
@@ -137,7 +134,7 @@ impl InodeOp for Ext4Inode {
 
                 let inode_mode = inode.get_mode();
                 let dentry_flags;
-                log::error!("inode: {:#x}",inode_mode&S_IFMT);
+                log::error!("inode: {:#x}", inode_mode & S_IFMT);
                 match inode_mode & S_IFMT {
                     S_IFREG => dentry_flags = DentryFlags::DCACHE_REGULAR_TYPE,
                     S_IFDIR => dentry_flags = DentryFlags::DCACHE_DIRECTORY_TYPE,

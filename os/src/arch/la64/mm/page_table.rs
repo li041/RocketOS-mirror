@@ -2,7 +2,6 @@ use alloc::vec;
 use alloc::{string::String, vec::Vec};
 use bitflags::bitflags;
 use core::fmt::{self, Debug};
-use core::result;
 
 use crate::arch::config::{PAGE_SIZE_BITS, PALEN, USER_MAX_VA};
 use crate::arch::la64::tlb::{tlb_global_invalidate, tlb_invalidate};

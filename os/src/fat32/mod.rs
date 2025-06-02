@@ -3,8 +3,6 @@
 // #![allow(unused)]
 // #![allow(dead_code)]
 
-use crate::mutex::SpinNoIrqLock;
-
 mod dentry;
 mod fat;
 mod file;

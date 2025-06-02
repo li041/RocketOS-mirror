@@ -1,17 +1,17 @@
-use alloc::{collections::vec_deque::VecDeque, sync::Arc};
 use super::{Task, Tid};
+use alloc::{collections::vec_deque::VecDeque, sync::Arc};
 
 // 阻塞队列结构（FIFO）
 // Todo: 后期优化
 pub struct WaitQueue {
-    queue: VecDeque<Arc<Task>>
+    queue: VecDeque<Arc<Task>>,
 }
 
 impl WaitQueue {
     // 创建一个新的阻塞队列
     pub fn new() -> Self {
         WaitQueue {
-            queue: VecDeque::new()
+            queue: VecDeque::new(),
         }
     }
 
@@ -22,13 +22,12 @@ impl WaitQueue {
 
     // 从阻塞队列中移除特定任务
     pub fn remove(&mut self, tid: Tid) -> Result<Arc<Task>, ()> {
-        if let Some(pos) = self.queue.iter()
-            .position(|e| e.tid() == tid) {
+        if let Some(pos) = self.queue.iter().position(|e| e.tid() == tid) {
             log::debug!("[remove] task {} removed from queue", tid);
             Ok(self.queue.remove(pos).unwrap())
         } else {
             Err(())
-        } 
+        }
     }
 
     // 从阻塞队列中首部取出一个任务
@@ -40,12 +39,15 @@ impl WaitQueue {
             None
         }
     }
-
     // 打印队列中所有内容
     pub fn dump_queue(&self) {
         log::error!("**************************** dump queue ****************************");
         for task in self.queue.iter() {
-            log::error!("task {} in queue\t strong count: {}", task.tid(), Arc::strong_count(task));
+            log::error!(
+                "task {} in queue\t strong count: {}",
+                task.tid(),
+                Arc::strong_count(task)
+            );
         }
         log::error!("**************************** dump queue ****************************");
     }

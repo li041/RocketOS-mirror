@@ -2,10 +2,7 @@
 use heap_allocator::heap_test;
 
 use crate::{
-    arch::{
-        config::{DIR_WIDTH, PAGE_SIZE, PAGE_SIZE_BITS, PTE_WIDTH},
-        CrMd, TLBREHi, DMW0, DMW1, DMW2, DMW3, PWCH, PWCL, STLBPS,
-    },
+    arch::config::PAGE_SIZE,
     mm::{MapPermission, VPNRange, VirtAddr},
     syscall::errno::{Errno, SyscallRet},
     task::current_task,

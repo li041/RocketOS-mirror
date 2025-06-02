@@ -4,7 +4,7 @@ use crate::ext4::inode::S_IFDIR;
 
 use super::{
     dentry::insert_core_dentry,
-    namei::{filename_create, parse_path, path_openat, Nameidata},
+    namei::{filename_create, parse_path, Nameidata},
     path::Path,
 };
 

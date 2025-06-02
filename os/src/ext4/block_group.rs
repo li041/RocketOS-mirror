@@ -1,10 +1,7 @@
 use alloc::sync::Arc;
 use spin::RwLock;
 
-use crate::{
-    drivers::block::{self, block_cache::get_block_cache, block_dev::BlockDevice},
-    mutex::SpinNoIrqLock,
-};
+use crate::drivers::block::{block_cache::get_block_cache, block_dev::BlockDevice};
 
 use super::{block_op::Ext4Bitmap, inode::Ext4InodeDisk};
 
@@ -150,6 +147,7 @@ impl GroupDesc {
         is_dir: bool,
         inode_size: usize,
         ext4_block_size: usize,
+        block_bitmap_size: usize,
     ) {
         let mut inner = self.inner.write();
         // 释放inode_table
@@ -172,7 +170,7 @@ impl GroupDesc {
                 .lock()
                 .get_mut(0),
         )
-        .dealloc(block_offset);
+        .dealloc(block_offset, block_bitmap_size);
         inner.free_inodes_count += 1;
         if is_dir {
             inner.used_dirs_count -= 1;
@@ -224,7 +222,7 @@ impl GroupDesc {
                 .lock()
                 .get_mut(0),
         )
-        .dealloc(block_offset);
+        .dealloc(block_offset, block_bitmap_size);
         inner.free_blocks_count += 1;
     }
 }

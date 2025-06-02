@@ -1,3 +1,4 @@
+#![allow(unused)]
 pub mod command;
 
 pub const LF: u8 = 0x0au8;

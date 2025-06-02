@@ -1,29 +1,22 @@
-use crate::{
-    arch::config::KERNEL_BASE,
-    mm::{MapArea, MapPermission, MapType, VPNRange, VirtAddr, KERNEL_SPACE},
-};
-use core::{any::Any, arch::asm, error, net, ops::Deref, ptr::NonNull};
+use crate::mm::VirtAddr;
+use core::ptr::NonNull;
 
 use crate::arch::virtio_blk::HalImpl;
 use alloc::vec;
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use fdt::{self, node::FdtNode};
-use loopback::LoopbackDev;
 use netdevice::{NetBufPtr, NetDevice};
 use smoltcp::{
     phy::{DeviceCapabilities, Medium},
     wire::EthernetAddress,
 };
 use spin::Mutex;
-use virtio_drivers::device::net::VirtIONet;
 use virtio_drivers::device::net::VirtIONetRaw;
-use virtio_drivers::transport::mmio::{MmioTransport, VirtIOHeader};
 use virtio_drivers::transport::Transport;
-use virtio_drivers::{transport::pci::PciTransport, Hal};
+use virtio_drivers::Hal;
 const NET_BUF_LEN: usize = 1536;
 const BUF_LEN: usize = 1 << 12;
 const QUEUE_SIZE: usize = 16;
-pub mod loopback;
 pub mod netdevice;
 
 static NET_DEVICE_ADDR: Mutex<Option<VirtAddr>> = Mutex::new(None);
@@ -33,6 +26,15 @@ pub fn init_net_device(dtb_addr: usize) {
     // log::error!("{:?}",data);
     // println!("11111");
     // log::error!("{:?}",KERNEL_SPACE.lock().page_table.translate_va_to_pa((0xbfe00000+KERNEL_BASE).into()));
+
+    use core::arch::asm;
+
+    use virtio_drivers::transport::mmio::{MmioTransport, VirtIOHeader};
+
+    use crate::{
+        arch::config::KERNEL_BASE,
+        mm::{MapArea, MapPermission, MapType, VPNRange, KERNEL_SPACE},
+    };
     let dev_tree = unsafe { fdt::Fdt::from_ptr((dtb_addr + KERNEL_BASE) as *const u8).unwrap() };
 
     //获取节点存储设备reg的地址
@@ -253,7 +255,7 @@ impl<const QS: usize, H: Hal, T: Transport> NetDevice for VirtioNetDevice<QS, H,
 
     //这个函数目的是为一个新的netbuf分配token等待接收，相当于回收了buf
     fn recycle_recv_buffer(&mut self, recv_buf_ptr: NetBufPtr) {
-        let mut recv_buf = NetBuf::from_ptr_into_NetBuf(recv_buf_ptr);
+        let mut recv_buf = NetBuf::from_ptr_into_netbuf(recv_buf_ptr);
         //为这个buf_ptr对应的netbuf提交接收请求，返回一个token,相当于将这个buf加入到inner中
         let token = unsafe {
             self.inner
@@ -291,7 +293,7 @@ impl<const QS: usize, H: Hal, T: Transport> NetDevice for VirtioNetDevice<QS, H,
 
     fn send(&mut self, ptr: NetBufPtr) {
         // log::error!("[VirtioNetDevice_send]:send begin");
-        let send_netbuf = NetBuf::from_ptr_into_NetBuf(ptr);
+        let send_netbuf = NetBuf::from_ptr_into_netbuf(ptr);
         // log::error!("[VirtioNetDevice_send]:{:?}",send_netbuf.capacity);
         // log::error!("[VirtioNetDevice_send]:{:?}",send_netbuf.buf_ptr);
         // log::error!("-----");
@@ -436,7 +438,7 @@ impl NetBuf {
         assert!(packet_len + self.header_len <= self.capacity);
         self.packet_len = packet_len;
     }
-    pub fn from_ptr_into_NetBuf(ptr: NetBufPtr) -> Box<Self> {
+    pub fn from_ptr_into_netbuf(ptr: NetBufPtr) -> Box<Self> {
         unsafe { Box::from_raw(ptr.raw_ptr::<Self>()) }
     }
     pub fn into_buf_ptr(mut self: Box<Self>) -> NetBufPtr {

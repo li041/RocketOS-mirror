@@ -1,13 +1,13 @@
 use crate::arch::{
     timer::{get_clock_freq, get_timer_freq_first_time},
-    CrMd, ECfg, LineBasedInterrupt, TCfg,
+    ECfg, LineBasedInterrupt, TCfg,
 };
 
 pub const TICKS_PER_SEC: usize = 100;
 
 pub fn enable_timer_interrupt() {
     get_timer_freq_first_time();
-    let timer_freq = get_clock_freq();
+    let _timer_freq = get_clock_freq();
     // 使能定时器局部中断
     ECfg::empty()
         .set_line_based_interrupt_vector(LineBasedInterrupt::TIMER)

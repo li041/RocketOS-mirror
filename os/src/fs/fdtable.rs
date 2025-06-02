@@ -1,9 +1,6 @@
-use crate::{
-    syscall::{
-        errno::{Errno, SyscallRet},
-        FcntlOp,
-    },
-    task::current_task,
+use crate::syscall::{
+    errno::{Errno, SyscallRet},
+    FcntlOp,
 };
 
 use alloc::vec;
@@ -15,7 +12,6 @@ use super::{
     dev::tty::TTY,
     file::{FileOp, OpenFlags},
     uapi::RLimit,
-    Stdin, Stdout,
 };
 use alloc::sync::Arc;
 
@@ -90,8 +86,6 @@ impl FdEntry {
         self.fd_flags = flags;
     }
 }
-
-pub const EMFILE: isize = -24;
 
 impl FdTable {
     pub fn new_bare() -> Arc<Self> {

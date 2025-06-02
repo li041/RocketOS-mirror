@@ -84,6 +84,7 @@ pub fn current_task() -> Arc<Task> {
 }
 
 #[cfg(target_arch = "riscv64")]
+#[allow(unused)]
 pub fn current_tp() -> usize {
     let mut tp: usize;
     unsafe {
@@ -92,6 +93,7 @@ pub fn current_tp() -> usize {
     tp
 }
 #[cfg(target_arch = "loongarch64")]
+#[allow(unused)]
 pub fn current_tp() -> usize {
     let mut tp: usize;
     unsafe {

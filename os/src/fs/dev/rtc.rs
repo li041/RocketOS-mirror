@@ -24,7 +24,7 @@ pub struct RtcInode {
     pub inner: RwLock<RtcInodeInner>,
 }
 
-struct RtcInodeInner {
+pub struct RtcInodeInner {
     pub inode_on_disk: Ext4InodeDisk,
 }
 
