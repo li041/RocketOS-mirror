@@ -215,35 +215,6 @@ impl Page {
     }
 
     pub fn sync(&mut self) {
-        // if self.modified {
-        //     println!("[Page::modified]sync page: {:#x}", self.vaddr);
-        //     match &self.page_kind {
-        //         PageKind::Filebe(info) => {
-        //             // 判断文件是否已删除, 若已删除, 则不需要回写
-        //             // 注意ext4可能有稀疏文件, 当第一次读extent_tree时发现空洞, 页缓存直接分配一个全0页面, 并没有对应磁盘的block
-        //             if let Some(_) = info.read().inode.upgrade() {
-        //                 let cache = unsafe {
-        //                     core::slice::from_raw_parts_mut(self.vaddr as *mut u8, PAGE_SIZE)
-        //                 };
-        //                 // let start_block_id = info.read().start_block_id;
-        //                 // info.write()
-        //                 //     .block_device
-        //                 //     .upgrade()
-        //                 //     .unwrap()
-        //                 //     .write_blocks(start_block_id, cache);
-        //                 info.write().inode.upgrade().unwrap().write(0, cache);
-        //             }
-        //         }
-        //         PageKind::Inline(info) => {
-        //             let inline_data = unsafe {
-        //                 core::slice::from_raw_parts_mut(self.vaddr as *mut u8, PAGE_SIZE)
-        //             };
-        //             info.write().inode.upgrade().unwrap().write(0, inline_data);
-        //         }
-        //         // Private does not need to sync when dropping
-        //         _ => {}
-        //     }
-        // }
         match &self.page_kind {
             PageKind::Filebe(info) => {
                 let guard = info.write(); // 加写锁
@@ -257,17 +228,8 @@ impl Page {
                     }
                 }
             }
-            PageKind::Inline(info) => {
-                let guard = info.write(); // 加写锁
-                if guard.modified {
-                    // println!("[Page::modified]sync page: {:#x}", self.vaddr);
-                    let inline_data = unsafe {
-                        core::slice::from_raw_parts_mut(self.vaddr as *mut u8, PAGE_SIZE)
-                    };
-                    if let Some(inode) = guard.inode.upgrade() {
-                        inode.write(0, inline_data);
-                    }
-                }
+            PageKind::Inline(_info) => {
+                // inline page的数据应该在Inode Drop时写回block
             }
             _ => {}
         }

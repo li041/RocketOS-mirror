@@ -89,8 +89,9 @@ pub fn get_time() -> usize {
 }
 
 pub fn get_time_ms() -> usize {
+    log::trace!("get_time_ms");
     unsafe {
-        assert!(CLOCK_FREQ != 0, "CLOCK_FREQ is not initialized");
+        debug_assert!(CLOCK_FREQ != 0, "CLOCK_FREQ is not initialized");
         get_time() / (CLOCK_FREQ / MSEC_PER_SEC)
     }
 }

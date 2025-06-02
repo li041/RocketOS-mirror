@@ -35,7 +35,7 @@ use super::kstat::Kstat;
 pub struct PipeInode {
     inode_num: usize,
     buffer: Arc<Mutex<PipeRingBuffer>>,
-    inner: RwLock<PipeInodeInner>,
+    pub inner: RwLock<PipeInodeInner>,
 }
 
 impl PipeInode {
@@ -50,7 +50,7 @@ impl PipeInode {
     }
 }
 
-struct PipeInodeInner {
+pub struct PipeInodeInner {
     pub inode_on_disk: Ext4InodeDisk,
 }
 

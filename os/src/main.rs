@@ -99,7 +99,6 @@ pub fn rust_main(_hart_id: usize, dtb_address: usize) -> ! {
     }
 
     clear_bss();
-    println!("hello world!");
     logging::init();
     mm::init();
     trap::init();
@@ -134,7 +133,6 @@ pub fn rust_main() -> ! {
     use arch::{
         bootstrap_init,
         drivers::pci,
-        timer::time_test,
         trap::{
             self,
             timer::{enable_timer_interrupt, set_next_trigger},

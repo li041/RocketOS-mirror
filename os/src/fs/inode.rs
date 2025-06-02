@@ -127,7 +127,23 @@ pub trait InodeOp: Any + Send + Sync {
     fn get_mode(&self) -> u16 {
         unimplemented!();
     }
+    // 设置mode, file type + permission bits
     fn set_mode(&self, mode: u16) {
+        unimplemented!();
+    }
+    fn set_perm(&self, perm: u16) {
+        unimplemented!();
+    }
+    fn get_uid(&self) -> u32 {
+        unimplemented!();
+    }
+    fn set_uid(&self, uid: u32) {
+        unimplemented!();
+    }
+    fn get_gid(&self) -> u32 {
+        unimplemented!();
+    }
+    fn set_gid(&self, gid: u32) {
         unimplemented!();
     }
     // (主设备号, 次设备号)

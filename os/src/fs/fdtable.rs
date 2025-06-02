@@ -55,7 +55,8 @@ impl From<&FcntlOp> for FdFlags {
 }
 
 /// Max file descriptors counts
-pub const MAX_FDS: usize = 1024;
+/// 需要大于1024
+pub const MAX_FDS: usize = 1025;
 
 /// 进程的文件描述符表
 pub struct FdTable {
@@ -93,6 +94,12 @@ impl FdEntry {
 pub const EMFILE: isize = -24;
 
 impl FdTable {
+    pub fn new_bare() -> Arc<Self> {
+        Arc::new(Self {
+            table: RwLock::new(Vec::new()),
+            rlimit: RwLock::new(RLimit::new(MAX_FDS)),
+        })
+    }
     pub fn new() -> Arc<Self> {
         let mut vec = vec![None; 3];
         // vec[0] = Some(FdEntry::new(Arc::new(Stdin), FdFlags::empty()));
@@ -166,22 +173,27 @@ impl FdTable {
     }
 
     /// 给dup2使用, 将new_fd(并不是进程所能分配的最小描述符)指向old_fd的文件
+    /// bool表示是否发生替换
     pub fn insert(
         &self,
         new_fd: usize,
         file: Arc<dyn FileOp>,
         flags: FdFlags,
-    ) -> Option<Arc<dyn FileOp>> {
+    ) -> Result<bool, Errno> {
         if new_fd >= self.rlimit.read().rlim_cur {
-            panic!("[FdTable::insert] fd out of range: {}", new_fd);
-            // return None;
+            log::error!("[FdTable::insert] fd out of range: {}", new_fd);
+            return Err(Errno::EBADF);
         }
         let mut table = self.table.write();
         if new_fd >= table.len() {
             table.resize(new_fd + 1, None);
         }
         let old = table[new_fd].replace(FdEntry::new(file, flags));
-        old.map(|entry| entry.file)
+        if let Some(_entry) = old {
+            return Ok(true);
+        } else {
+            return Ok(false);
+        }
     }
 
     pub fn get_file(&self, fd: usize) -> Option<Arc<dyn FileOp>> {
@@ -274,7 +286,7 @@ impl FdTable {
             .get_file();
         self.alloc_fd(file, FdFlags::empty())
     }
-    pub fn dup3(&self, fd: usize, new_fd: usize, flags: i32) -> SyscallRet {
+    pub fn dup3(&self, fd: usize, new_fd: usize, fd_flags: FdFlags) -> SyscallRet {
         let file = self
             .table
             .read()
@@ -282,11 +294,12 @@ impl FdTable {
             .and_then(|entry| entry.as_ref())
             .ok_or(Errno::EBADF)?
             .get_file();
-        let fd_flags = FdFlags::from_bits(flags as usize).unwrap_or(FdFlags::empty());
-        if self.insert(new_fd, file, fd_flags).is_some() {
-            log::warn!("[dup3] fd {} already exists, replaced", new_fd);
-        }
-        Ok(new_fd)
+        self.insert(new_fd, file, fd_flags).map(|replaced| {
+            if replaced {
+                log::warn!("[dup3] fd {} already exists, replaced", new_fd);
+            }
+            new_fd
+        })
     }
     pub fn fcntl(&self, fd: usize, op: i32, arg: usize) -> SyscallRet {
         // let table = self.table.read();

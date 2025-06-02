@@ -11,6 +11,7 @@ use crate::fat32::inode;
 use crate::fs::inode::InodeOp;
 use crate::fs::kstat::Kstat;
 use crate::syscall::errno::{Errno, SyscallRet};
+use crate::task::current_task;
 use crate::timer::TimeSpec;
 // use crate::fs::inode::InodeMeta;
 use crate::{
@@ -285,8 +286,14 @@ impl Ext4InodeDisk {
     pub fn get_uid(&self) -> u32 {
         self.uid as u32
     }
+    pub fn set_uid(&mut self, uid: u32) {
+        self.uid = uid as u16;
+    }
     pub fn get_gid(&self) -> u32 {
         self.gid as u32
+    }
+    pub fn set_gid(&mut self, gid: u32) {
+        self.gid = gid as u16;
     }
     pub fn get_atime(&self) -> TimeSpec {
         TimeSpec {
@@ -320,9 +327,13 @@ impl Ext4InodeDisk {
         self.change_inode_time = ctime.sec as u32;
         self.change_inode_time_extra = (ctime.nsec as u32) << 2 | ((ctime.sec >> 32) as u32 & 0x3);
     }
+    /// 设置mode, file type + permission bits
     pub fn set_mode(&mut self, mode: u16) {
-        // 只设置低12位的权限, 高4位的文件类型不变
-        self.mode = (self.mode & !S_IALLUGO) | (mode & S_IALLUGO);
+        self.mode = mode;
+    }
+    /// 只设置低十二位权限位, 不修改文件类型
+    pub fn set_perm(&mut self, perm: u16) {
+        self.mode = (self.mode & !S_IALLUGO) | (perm & S_IALLUGO);
     }
     pub fn get_mode(&self) -> u16 {
         self.mode
@@ -659,8 +670,22 @@ impl Drop for Ext4Inode {
     // 释放页缓存, inode bitmap, block bitmap, inode table
     // Todo: 可能有资源还没有释放
     fn drop(&mut self) {
-        // 释放页缓存
-        self.address_space.clear();
+        log::warn!("[Ext4Inode::drop] inode_num: {}", self.inode_num,);
+        let mut inner = self.inner.write();
+        // 将inline_data写回磁盘
+        if inner.inode_on_disk.has_inline_data() {
+            log::warn!("[Ext4Inode::drop] has inline data, write back to disk");
+            if let Some(inline_page) = self.address_space.get_page_cache(0) {
+                // inline data在页缓存中, 写回磁盘
+                let inline_data: &[u8; EXT4_MAX_INLINE_DATA] = inline_page.get_ref(0);
+                inner.inode_on_disk.block[0..inline_data.len()].copy_from_slice(inline_data);
+            } else {
+                log::error!("[Ext4Inode::drop] inline data not found in page cache");
+            }
+        }
+        drop(inner);
+        // 写回inode到磁盘
+        write_inode(&self, self.inode_num, self.block_device.clone());
         // 释放inode bitmap和inode table
         // self.ext4_fs.upgrade().unwrap().dealloc_inode(
         //     self.block_device.clone(),
@@ -698,8 +723,13 @@ impl Ext4Inode {
         let current_time = TimeSpec::new_wall_time();
         let time = current_time.sec as u32;
         let time_extra = (current_time.nsec as u32) << 2 | ((current_time.sec >> 32) as u32 & 0x3);
+        let task = current_task();
+        let uid = task.euid();
+        let gid = task.egid();
         let mut new_inode_disk = Ext4InodeDisk {
             mode: inode_mode,
+            uid: uid as u16,
+            gid: gid as u16,
             flags,
             change_inode_time: time,
             change_inode_time_extra: time_extra,
@@ -1120,38 +1150,6 @@ impl Ext4Inode {
         current_write
     }
 
-    // pub fn lookup_or_create_extent(
-    //     &self,
-    //     logical_start_block: u32,
-    //     block_device: Arc<dyn BlockDevice>,
-    //     ext4_block_size: usize,
-    // ) -> Ext4Extent {
-    //     match self.inner.write().inode_on_disk.lookup_extent(
-    //         logical_start_block,
-    //         block_device.clone(),
-    //         ext4_block_size,
-    //     ) {
-    //         Some(extent) => extent,
-    //         None => {
-    //             // 创建新的extent
-    //             let new_block_num = self.alloc_block();
-    //             let new_extent = Ext4Extent::new(logical_start_block, 1, new_block_num);
-    //             self.inner
-    //                 .write()
-    //                 .inode_on_disk
-    //                 .insert_extent(
-    //                     logical_start_block,
-    //                     new_extent.physical_start_block() as u64,
-    //                     1,
-    //                     block_device,
-    //                     ext4_block_size,
-    //                 )
-    //                 .unwrap();
-    //             new_extent
-    //         }
-    //     }
-    // }
-
     // 可能会更新inode的内容
     /// 如果extent没有找到, 会创建新的extent
     pub fn lookup_or_create_extent(
@@ -1220,7 +1218,6 @@ impl Ext4Inode {
 
         {
             let inode_guard = self.inner.read();
-            let inode_on_disk = &inode_guard.inode_on_disk;
             let inode_size_before = self.inner.read().inode_on_disk.get_size();
             // 2. 若写入后文件大小超过60字节, 转换为extent tree
             // 同样会调用write_extent_tree, 但是如果size > 0, 说明有inline_data, 会先将inline_data写入新的block
@@ -1230,11 +1227,18 @@ impl Ext4Inode {
                 // 写入inline_data内容到新的block
                 // 注意这里应该写入页缓存(在页缓存drop时写回), 而不是直接写入block_cache
                 if inode_size_before > 0 {
-                    let page = self.get_page_cache(0).unwrap();
-                    // 复制原来的inline_data, 同时写入新的block
-                    page.modify(0, |data: &mut [u8; PAGE_SIZE]| {
-                        data[0..EXT4_MAX_INLINE_DATA]
-                            .copy_from_slice(&inode_on_disk.block[..EXT4_MAX_INLINE_DATA]);
+                    let inline_page = self.get_page_cache(0).unwrap();
+                    // 将Inline Page替换为Filebe Page
+                    let new_page = self.address_space.new_page_cache(
+                        0,
+                        new_block,
+                        self.block_device.clone(),
+                        self.self_weak.clone(),
+                    );
+                    // 复制原来的inline_data到new_page
+                    let inline_data: &[u8; EXT4_MAX_INLINE_DATA] = inline_page.get_ref(0);
+                    new_page.modify(0, |data: &mut [u8; PAGE_SIZE]| {
+                        data[0..EXT4_MAX_INLINE_DATA].copy_from_slice(inline_data);
                     });
                 }
                 drop(inode_guard);
@@ -1292,7 +1296,6 @@ impl Ext4Inode {
 
         {
             let inode_guard = self.inner.read();
-            let inode_on_disk = &inode_guard.inode_on_disk;
             let inode_size_before = self.inner.read().inode_on_disk.get_size();
             // 2. 若写入后文件大小超过60字节, 转换为extent tree
             // 同样会调用write_extent_tree, 但是如果size > 0, 说明有inline_data, 会先将inline_data写入新的block
@@ -1302,11 +1305,18 @@ impl Ext4Inode {
                 // 写入inline_data内容到新的block
                 // 注意这里应该写入页缓存(在页缓存drop时写回), 而不是直接写入block_cache
                 if inode_size_before > 0 {
-                    let page = self.get_page_cache(0).unwrap();
-                    // 复制原来的inline_data, 同时写入新的block
-                    page.modify(0, |data: &mut [u8; PAGE_SIZE]| {
-                        data[0..EXT4_MAX_INLINE_DATA]
-                            .copy_from_slice(&inode_on_disk.block[..EXT4_MAX_INLINE_DATA]);
+                    let inline_page = self.get_page_cache(0).unwrap();
+                    // 将Inline Page替换为Filebe Page
+                    let new_page = self.address_space.new_page_cache(
+                        0,
+                        new_block,
+                        self.block_device.clone(),
+                        self.self_weak.clone(),
+                    );
+                    // 复制原来的inline_data到new_page
+                    let inline_data: &[u8; EXT4_MAX_INLINE_DATA] = inline_page.get_ref(0);
+                    new_page.modify(0, |data: &mut [u8; PAGE_SIZE]| {
+                        data[0..EXT4_MAX_INLINE_DATA].copy_from_slice(inline_data);
                     });
                 }
                 drop(inode_guard);

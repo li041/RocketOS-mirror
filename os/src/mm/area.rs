@@ -51,6 +51,7 @@ pub enum MapType {
     Linear,
     Framed,
     Stack,
+    Heap,
     Filebe,
     FilebeRO,
 }
@@ -178,6 +179,15 @@ impl MapArea {
             MapType::Stack => {
                 // 栈映射, 懒分配
                 panic!("MapType::Stack never use this function");
+            }
+            MapType::Heap => {
+                // 堆映射, 除了初次分配, 后续都是懒分配
+                for vpn in self.vpn_range {
+                    let page = Page::new_framed(None);
+                    ppn = page.ppn();
+                    self.pages.insert(vpn, Arc::new(page));
+                    page_table.map(vpn, ppn, pte_flags.clone());
+                }
             }
         }
     }
