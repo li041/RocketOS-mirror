@@ -1,6 +1,7 @@
 // Sizes
 // loongarch64内核地址空间是直接映射的, 物理地址和虚拟地址是一样的
 pub const KERNEL_BASE: usize = 0;
+pub const USER_MAX: usize = 0x0000_003f_ffff_ffff;
 pub const USER_HEAP_SIZE: usize = PAGE_SIZE * 20;
 pub const SYSTEM_TASK_LIMIT: usize = 128;
 pub const DEFAULT_FD_LIMIT: usize = 128;

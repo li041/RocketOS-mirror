@@ -136,7 +136,6 @@ impl InodeOp for Ext4Inode {
                 );
 
                 let inode_mode = inode.get_mode();
-                log::warn!("inode_mode: {}", inode_mode);
                 let dentry_flags;
                 match inode_mode & S_IFMT {
                     S_IFREG => dentry_flags = DentryFlags::DCACHE_REGULAR_TYPE,
@@ -479,11 +478,21 @@ impl InodeOp for Ext4Inode {
                     .upgrade()
                     .unwrap()
                     .alloc_inode(self.block_device.clone(), true);
+                // ToOptimize: 为了写回创建的冗余inode
+                let ext4_inode = Ext4Inode::new(
+                    (mode & S_IALLUGO) as u16 | S_IFIFO,
+                    EXT4_INLINE_DATA_FL,
+                    self.ext4_fs.clone(),
+                    new_inode_num,
+                    self.block_device.clone(),
+                );
                 let pipe_inode = PipeInode::new(new_inode_num);
                 // 在父目录中添加对应项
                 self.add_entry(dentry.clone(), new_inode_num as u32, EXT4_DT_FIFO);
                 // 关联到dentry
                 dentry.inner.lock().inode = Some(pipe_inode);
+                // 写回inode
+                write_inode(&ext4_inode, new_inode_num, self.block_device.clone());
             }
             S_IFCHR => {
                 // 提取主,次设备号
@@ -638,6 +647,21 @@ impl InodeOp for Ext4Inode {
     }
     fn set_mode(&self, mode: u16) {
         self.inner.write().inode_on_disk.set_mode(mode);
+    }
+    fn set_perm(&self, perm: u16) {
+        self.inner.write().inode_on_disk.set_perm(perm);
+    }
+    fn get_gid(&self) -> u32 {
+        self.inner.read().inode_on_disk.get_gid()
+    }
+    fn set_gid(&self, gid: u32) {
+        self.inner.write().inode_on_disk.set_gid(gid);
+    }
+    fn get_uid(&self) -> u32 {
+        self.inner.read().inode_on_disk.get_uid()
+    }
+    fn set_uid(&self, uid: u32) {
+        self.inner.write().inode_on_disk.set_uid(uid);
     }
     fn get_devt(&self) -> (u32, u32) {
         self.inner.read().inode_on_disk.get_devt()

@@ -634,7 +634,7 @@ pub fn sys_acct(pathname: *const u8) -> SyscallRet {
 /// 执行此操作后，程序将无法重新获得 root 权限。
 /// EPERM 用户不具有特权（Linux：其用户命名空间中没有 CAP_SETUID 功能），并且 uid 与调用进程的真实 UID 或保存的设置用户 ID 不匹配。
 // Todo: 命名空间
-pub fn sys_setuid(uid: usize) -> SyscallRet {
+pub fn sys_setuid(uid: u32) -> SyscallRet {
     let task = current_task();
     if task.euid() == 0 {
         log::warn!(
@@ -663,7 +663,7 @@ pub fn sys_setuid(uid: usize) -> SyscallRet {
 
 /// setgid() 设置调用进程的有效组 ID。
 /// 如果调用进程拥有特权则还会设置实际 GID 和保存的设置组 ID。
-pub fn sys_setgid(gid: usize) -> SyscallRet {
+pub fn sys_setgid(gid: u32) -> SyscallRet {
     let task = current_task();
     if task.euid() == 0 {
         log::warn!(
@@ -709,10 +709,10 @@ pub fn sys_setreuid(ruid: isize, euid: isize) -> SyscallRet {
             euid
         );
         if ruid != -1 {
-            task.set_uid(ruid as usize);
+            task.set_uid(ruid as u32);
         }
         if euid != -1 {
-            task.set_euid(euid as usize);
+            task.set_euid(euid as u32);
         }
     } else {
         if ruid != -1 {
@@ -724,7 +724,7 @@ pub fn sys_setreuid(ruid: isize, euid: isize) -> SyscallRet {
                 task.tid(),
                 ruid,
             );
-            task.set_uid(ruid as usize);
+            task.set_uid(ruid as u32);
         }
         if euid != -1 {
             if euid != origin_uid as isize
@@ -738,11 +738,11 @@ pub fn sys_setreuid(ruid: isize, euid: isize) -> SyscallRet {
                 task.tid(),
                 euid,
             );
-            task.set_euid(euid as usize);
+            task.set_euid(euid as u32);
         }
     }
     if ruid != -1 || (euid != -1 && euid != origin_uid as isize) {
-        task.set_suid(task.euid() as usize);
+        task.set_suid(task.euid() as u32);
     }
     Ok(0)
 }
@@ -773,10 +773,10 @@ pub fn sys_setregid(rgid: isize, egid: isize) -> SyscallRet {
             egid
         );
         if rgid != -1 {
-            task.set_gid(rgid as usize);
+            task.set_gid(rgid as u32);
         }
         if egid != -1 {
-            task.set_egid(egid as usize);
+            task.set_egid(egid as u32);
         }
     } else {
         if rgid != -1 {
@@ -788,7 +788,7 @@ pub fn sys_setregid(rgid: isize, egid: isize) -> SyscallRet {
                 task.tid(),
                 rgid,
             );
-            task.set_gid(rgid as usize);
+            task.set_gid(rgid as u32);
         }
         if egid != -1 {
             if egid != origin_gid as isize && egid != origin_sgid as isize {
@@ -799,11 +799,11 @@ pub fn sys_setregid(rgid: isize, egid: isize) -> SyscallRet {
                 task.tid(),
                 egid,
             );
-            task.set_egid(egid as usize);
+            task.set_egid(egid as u32);
         }
     }
     if rgid != -1 || (egid != -1 && egid != origin_gid as isize) {
-        task.set_sgid(task.egid() as usize);
+        task.set_sgid(task.egid() as u32);
     }
     Ok(0)
 }
@@ -831,13 +831,13 @@ pub fn sys_setresuid(ruid: isize, euid: isize, suid: isize) -> SyscallRet {
             euid
         );
         if ruid != -1 {
-            task.set_uid(ruid as usize);
+            task.set_uid(ruid as u32);
         }
         if euid != -1 {
-            task.set_euid(euid as usize);
+            task.set_euid(euid as u32);
         }
         if suid != -1 {
-            task.set_suid(suid as usize);
+            task.set_suid(suid as u32);
         }
     } else {
         if ruid != -1 {
@@ -852,7 +852,7 @@ pub fn sys_setresuid(ruid: isize, euid: isize, suid: isize) -> SyscallRet {
                 task.tid(),
                 ruid,
             );
-            task.set_uid(ruid as usize);
+            task.set_uid(ruid as u32);
         }
         if euid != -1 {
             if euid != origin_uid as isize
@@ -866,7 +866,7 @@ pub fn sys_setresuid(ruid: isize, euid: isize, suid: isize) -> SyscallRet {
                 task.tid(),
                 euid,
             );
-            task.set_euid(euid as usize);
+            task.set_euid(euid as u32);
         }
         if suid != -1 {
             if suid != origin_uid as isize
@@ -880,7 +880,7 @@ pub fn sys_setresuid(ruid: isize, euid: isize, suid: isize) -> SyscallRet {
                 task.tid(),
                 suid,
             );
-            task.set_suid(suid as usize);
+            task.set_suid(suid as u32);
         }
     }
     Ok(0)
@@ -906,13 +906,13 @@ pub fn sys_setresgid(rgid: isize, egid: isize, sgid: isize) -> SyscallRet {
             egid
         );
         if rgid != -1 {
-            task.set_gid(rgid as usize);
+            task.set_gid(rgid as u32);
         }
         if egid != -1 {
-            task.set_egid(egid as usize);
+            task.set_egid(egid as u32);
         }
         if sgid != -1 {
-            task.set_sgid(sgid as usize);
+            task.set_sgid(sgid as u32);
         }
     } else {
         if rgid != -1 {
@@ -927,7 +927,7 @@ pub fn sys_setresgid(rgid: isize, egid: isize, sgid: isize) -> SyscallRet {
                 task.tid(),
                 rgid,
             );
-            task.set_gid(rgid as usize);
+            task.set_gid(rgid as u32);
         }
         if egid != -1 {
             if egid != origin_gid as isize
@@ -941,7 +941,7 @@ pub fn sys_setresgid(rgid: isize, egid: isize, sgid: isize) -> SyscallRet {
                 task.tid(),
                 egid,
             );
-            task.set_egid(egid as usize);
+            task.set_egid(egid as u32);
         }
         if sgid != -1 {
             if sgid != origin_gid as isize
@@ -955,7 +955,7 @@ pub fn sys_setresgid(rgid: isize, egid: isize, sgid: isize) -> SyscallRet {
                 task.tid(),
                 sgid,
             );
-            task.set_sgid(sgid as usize);
+            task.set_sgid(sgid as u32);
         }
     }
     Ok(0)
@@ -970,13 +970,13 @@ pub fn sys_getresuid(ruid_ptr: usize, euid_ptr: usize, suid_ptr: usize) -> Sysca
     );
     let task = current_task();
     if ruid_ptr != 0 {
-        copy_to_user(ruid_ptr as *mut usize, &task.uid() as *const usize, 1)?;
+        copy_to_user(ruid_ptr as *mut u32, &task.uid() as *const u32, 1)?;
     }
     if euid_ptr != 0 {
-        copy_to_user(euid_ptr as *mut usize, &task.euid() as *const usize, 1)?;
+        copy_to_user(euid_ptr as *mut u32, &task.euid() as *const u32, 1)?;
     }
     if suid_ptr != 0 {
-        copy_to_user(suid_ptr as *mut usize, &task.suid() as *const usize, 1)?;
+        copy_to_user(suid_ptr as *mut u32, &task.suid() as *const u32, 1)?;
     }
     Ok(0)
 }
@@ -990,31 +990,31 @@ pub fn sys_getresgid(rgid_ptr: usize, egid_ptr: usize, sgid_ptr: usize) -> Sysca
     );
     let task = current_task();
     if rgid_ptr != 0 {
-        copy_to_user(rgid_ptr as *mut usize, &task.gid() as *const usize, 1)?;
+        copy_to_user(rgid_ptr as *mut u32, &task.gid() as *const u32, 1)?;
     }
     if egid_ptr != 0 {
-        copy_to_user(egid_ptr as *mut usize, &task.egid() as *const usize, 1)?;
+        copy_to_user(egid_ptr as *mut u32, &task.egid() as *const u32, 1)?;
     }
     if sgid_ptr != 0 {
-        copy_to_user(sgid_ptr as *mut usize, &task.sgid() as *const usize, 1)?;
+        copy_to_user(sgid_ptr as *mut u32, &task.sgid() as *const u32, 1)?;
     }
     Ok(0)
 }
 
 pub fn sys_getuid() -> SyscallRet {
-    Ok(current_task().uid())
+    Ok(current_task().uid() as usize)
 }
 
 pub fn sys_geteuid() -> SyscallRet {
-    Ok(current_task().euid())
+    Ok(current_task().euid() as usize)
 }
 
 pub fn sys_getgid() -> SyscallRet {
-    Ok(current_task().gid())
+    Ok(current_task().gid() as usize)
 }
 
 pub fn sys_getegid() -> SyscallRet {
-    Ok(current_task().egid())
+    Ok(current_task().egid() as usize)
 }
 
 pub fn sys_setgroups(size: usize, list: usize) -> SyscallRet {
@@ -1057,9 +1057,9 @@ pub fn sys_getgroups(size: usize, list: usize) -> SyscallRet {
     }
     if size == 0 {
         // 如果size为0, 则只返回补充组的数量
-        return Ok(task.op_sup_groups_mut(|groups| groups.len()));
+        return Ok(task.op_sup_groups(|groups| groups.len()));
     }
-    let groups = task.op_sup_groups_mut(|groups| Ok(groups.clone()))?;
+    let groups = task.op_sup_groups(|groups| Ok(groups.clone()))?;
     if size < groups.len() {
         return Err(Errno::EINVAL);
     }

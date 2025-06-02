@@ -8,6 +8,7 @@ use alloc::string::ToString;
 use xmas_elf::header::parse_header;
 
 use crate::arch::timer::get_time_ms;
+use crate::fs::dentry::{dentry_check_access, dentry_chown};
 use crate::fs::fd_set::init_fdset;
 use crate::fs::fdtable::FdFlags;
 use crate::fs::file::OpenFlags;
@@ -286,7 +287,21 @@ pub fn sys_dup3(oldfd: usize, newfd: usize, flags: i32) -> SyscallRet {
         flags
     );
     let task = current_task();
-    task.fd_table().dup3(oldfd, newfd, flags)
+    if (flags & !(OpenFlags::O_CLOEXEC.bits())) != 0 {
+        return Err(Errno::EINVAL);
+    }
+    if newfd == oldfd {
+        log::info!("[sys_dup3] oldfd and newfd are the same, return EINVAL");
+        return Err(Errno::EINVAL);
+    }
+    let fd_flags = if flags & OpenFlags::O_CLOEXEC.bits() != 0 {
+        // 设置FD_CLOEXEC标志
+        FdFlags::FD_CLOEXEC
+    } else {
+        // 不设置FD_CLOEXEC标志
+        FdFlags::empty()
+    };
+    task.fd_table().dup3(oldfd, newfd, fd_flags)
 }
 
 /// 如果最后一个路径组件是符号链接, 则删除符号链接不跟随
@@ -398,7 +413,7 @@ pub fn sys_openat(dirfd: i32, pathname: *const u8, flags: i32, mode: usize) -> S
     let task = current_task();
     let path = c_str_to_string(pathname)?;
     log::info!(
-        "[sys_openat] dirfd: {}, pathname: {:?}, flags: {:?}, mode: {}",
+        "[sys_openat] dirfd: {}, pathname: {:?}, flags: {:?}, mode: 0o{:o}",
         dirfd,
         path,
         flags,
@@ -1523,6 +1538,16 @@ pub fn sys_copy_file_range(
     }
 }
 
+// Todo:
+pub fn sys_umask(mask: usize) -> SyscallRet {
+    // log::info!("[sys_umask] mask: {:o}", mask);
+    // let task = current_task();
+    // let old_mask = task.umask();
+    // task.set_umask(mask as u16);
+    // Ok(old_mask as usize)
+    Ok(0)
+}
+
 /* Todo: fake start  */
 pub fn sys_fallocate(fd: usize, mode: i32, offset: usize, len: usize) -> SyscallRet {
     log::info!(
@@ -1590,6 +1615,9 @@ pub fn sys_ioctl(fd: usize, op: usize, _arg_ptr: usize) -> SyscallRet {
     return Err(Errno::EBADF);
 }
 
+// 使用有效user and group id检查文件访问权限(faccessat默认使用real id检查)
+pub const AT_EACCESS: i32 = 0x200;
+
 /// 检查进程是否可以访问指定的文件
 /// Todo: 目前只检查pathname指定的文件是否存在, 没有检查权限
 pub fn sys_faccessat(fd: usize, pathname: *const u8, mode: i32, flags: i32) -> SyscallRet {
@@ -1607,20 +1635,14 @@ pub fn sys_faccessat(fd: usize, pathname: *const u8, mode: i32, flags: i32) -> S
         flags
     );
     let mut nd = Nameidata::new(&path, fd as i32)?;
-    match filename_lookup(&mut nd, flags) {
-        Ok(_) => {
-            // let inode = dentry.get_inode();
-            // if inode.mode() & mode as u16 == 0 {
-            //     log::error!("[sys_faccessat] permission denied");
-            //     return;
-            // }
-            return Ok(0);
-        }
-        Err(e) => {
-            log::info!("[sys_faccessat] fail to faccessat: {}, {:?}", path, e);
-            return Err(e);
-        }
+    let fake_lookup_flags = 0;
+    let dentry = filename_lookup(&mut nd, fake_lookup_flags)?;
+    if mode == 0 {
+        // mode为0表示只检查文件是否存在
+        return Ok(0);
     }
+    let use_effective = flags & AT_EACCESS != 0;
+    dentry_check_access(&dentry, mode, use_effective)
 }
 
 pub fn sys_sync(fd: usize) -> SyscallRet {
@@ -1645,7 +1667,7 @@ pub fn sys_fchmod(fd: usize, mode: usize) -> SyscallRet {
     if let Some(file) = task.fd_table().get_file(fd) {
         // Todo: 检查权限
         // 修改权限
-        file.get_inode().set_mode(mode as u16);
+        file.get_inode().set_perm(mode as u16);
         return Ok(0);
     }
     Err(Errno::EBADF)
@@ -1678,7 +1700,7 @@ pub fn sys_fchmodat(fd: usize, path: *const u8, mode: usize, flag: i32) -> Sysca
             //     return Err(Errno::EACCES);
             // }
             // 修改权限
-            inode.set_mode(mode as u16);
+            inode.set_perm(mode as u16);
             return Ok(0);
         }
         Err(e) => {
@@ -1688,8 +1710,22 @@ pub fn sys_fchmodat(fd: usize, path: *const u8, mode: usize, flag: i32) -> Sysca
     }
 }
 
-pub fn sys_fchownat(fd: usize, path: *const u8, owner: usize, group: usize) -> SyscallRet {
-    Ok(0)
+pub fn sys_fchownat(fd: usize, path: *const u8, owner: u32, group: u32, flag: i32) -> SyscallRet {
+    let path = c_str_to_string(path)?;
+    if path.len() > NAME_MAX {
+        log::error!("[sys_fchownat] path is too long: {}", path.len());
+        return Err(Errno::ENAMETOOLONG);
+    }
+    log::info!(
+        "[sys_fchownat] fd: {}, path: {:?}, owner: {}, group: {}",
+        fd,
+        path,
+        owner,
+        group
+    );
+    let mut nd = Nameidata::new(&path, fd as i32)?;
+    let dentry = filename_lookup(&mut nd, flag)?;
+    dentry_chown(&dentry, owner, group)
 }
 
 pub fn sys_fadvise64(fd: usize, offset: usize, len: usize, advice: i32) -> SyscallRet {

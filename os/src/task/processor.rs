@@ -57,6 +57,19 @@ pub fn run_tasks() {
             processor.current = next_task.clone();
             drop(processor);
             drop(next_task);
+            // 将tp寄存器指向idle_task
+            #[cfg(target_arch = "riscv64")]
+            unsafe {
+                // 注意这里需要对Arc指针先解引用再取`IDLE_TASK`地址
+                // 两种方法都可以, Arc::as_ptr或者直接解引用然后引用
+                asm!("mv tp, {}", in(reg) &(*idle_task) as *const _ as usize);
+            }
+            #[cfg(target_arch = "loongarch64")]
+            unsafe {
+                // 注意这里需要对Arc指针先解引用再取`IDLE_TASK`地址
+                // 两种方法都可以, Arc::as_ptr或者直接解引用然后引用
+                asm!("addi.d $r2, {}, 0", in(reg) &(*idle_task) as *const _ as usize);
+            }
             unsafe {
                 switch::__switch(next_task_kstack);
             }

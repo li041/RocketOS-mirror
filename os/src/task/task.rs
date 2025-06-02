@@ -57,7 +57,7 @@ use core::{
     assert_ne,
     cell::{SyncUnsafeCell, UnsafeCell},
     mem,
-    sync::atomic::{AtomicI32, AtomicUsize},
+    sync::atomic::{AtomicI32, AtomicU32, AtomicUsize},
 };
 use spin::{Mutex, RwLock};
 
@@ -108,13 +108,13 @@ pub struct Task {
     cpu_mask: SpinNoIrqLock<CpuMask>,            // CPU掩码
     // 权限设置
     pgid: AtomicUsize, // 进程组id
-    uid: AtomicUsize,  // 用户id
-    euid: AtomicUsize, // 有效用户id
-    suid: AtomicUsize, // 保存用户id
-    gid: AtomicUsize,  // 组id
-    egid: AtomicUsize, // 有效组id
-    sgid: AtomicUsize, // 保存组id
-    sup_groups: SpinNoIrqLock<Vec<u32>>, // 附加组列表
+    uid: AtomicU32,    // 用户id
+    euid: AtomicU32,   // 有效用户id
+    suid: AtomicU32,   // 保存用户id
+    gid: AtomicU32,    // 组id
+    egid: AtomicU32,   // 有效组id
+    sgid: AtomicU32,   // 保存组id
+    sup_groups: RwLock<Vec<u32>>, // 附加组列表
                        // ToDo：运行时间(调度相关)
                        // ToDo: 多核启动
 }
@@ -151,7 +151,7 @@ impl Task {
             exe_path: Arc::new(RwLock::new(String::new())),
             memory_set: Arc::new(RwLock::new(MemorySet::new_bare())),
             robust_list_head: AtomicUsize::new(0),
-            fd_table: FdTable::new(),
+            fd_table: FdTable::new_bare(),
             root: Arc::new(SpinNoIrqLock::new(Path::zero_init())),
             pwd: Arc::new(SpinNoIrqLock::new(Path::zero_init())),
             sig_pending: SpinNoIrqLock::new(SigPending::new()),
@@ -161,13 +161,13 @@ impl Task {
             rlimit: Arc::new(RwLock::new([RLimit::default(); RLIM_NLIMITS])),
             cpu_mask: SpinNoIrqLock::new(CpuMask::ALL),
             pgid: AtomicUsize::new(0),
-            uid: AtomicUsize::new(0),
-            euid: AtomicUsize::new(0),
-            suid: AtomicUsize::new(0),
-            gid: AtomicUsize::new(0),
-            egid: AtomicUsize::new(0),
-            sgid: AtomicUsize::new(0),
-            sup_groups: SpinNoIrqLock::new(Vec::new()),
+            uid: AtomicU32::new(0),
+            euid: AtomicU32::new(0),
+            suid: AtomicU32::new(0),
+            gid: AtomicU32::new(0),
+            egid: AtomicU32::new(0),
+            sgid: AtomicU32::new(0),
+            sup_groups: RwLock::new(Vec::new()),
         }
     }
 
@@ -178,13 +178,13 @@ impl Task {
         let tid = tid_alloc();
         let tgid = AtomicUsize::new(tid.0);
         let pgid = AtomicUsize::new(1);
-        let uid = AtomicUsize::new(0); // 默认为root(0)用户
-        let euid = AtomicUsize::new(0);
-        let suid = AtomicUsize::new(0);
-        let gid = AtomicUsize::new(0); // 默认为root(0)组
-        let egid = AtomicUsize::new(0);
-        let sgid = AtomicUsize::new(0);
-        let sup_groups = SpinNoIrqLock::new(Vec::new());
+        let uid = AtomicU32::new(0); // 默认为root(0)用户
+        let euid = AtomicU32::new(0);
+        let suid = AtomicU32::new(0);
+        let gid = AtomicU32::new(0); // 默认为root(0)组
+        let egid = AtomicU32::new(0);
+        let sgid = AtomicU32::new(0);
+        let sup_groups = RwLock::new(Vec::new());
         // 申请内核栈
         let mut kstack = kstack_alloc();
         // Trap_context
@@ -250,7 +250,7 @@ impl Task {
             task_cx_ptr.write(task_context);
         }
         log::info!("[Initproc] Init-sp:\t{:#x}", kstack);
-        
+
         log::error!("[Initproc] Initproc complete!");
         task
     }
@@ -299,13 +299,13 @@ impl Task {
 
         // 继承父进程
         pgid = AtomicUsize::new(self.pgid());
-        uid = AtomicUsize::new(self.uid());
-        euid = AtomicUsize::new(self.euid());
-        suid = AtomicUsize::new(self.suid());
-        gid = AtomicUsize::new(self.gid());
-        egid = AtomicUsize::new(self.egid());
-        sgid = AtomicUsize::new(self.sgid());
-        sup_groups = SpinNoIrqLock::new(self.op_sup_groups_mut(|groups| groups.clone()));
+        uid = AtomicU32::new(self.uid());
+        euid = AtomicU32::new(self.euid());
+        suid = AtomicU32::new(self.suid());
+        gid = AtomicU32::new(self.gid());
+        egid = AtomicU32::new(self.egid());
+        sgid = AtomicU32::new(self.sgid());
+        sup_groups = RwLock::new(self.op_sup_groups(|groups| groups.clone()));
 
         // 创建线程
         if flags.contains(CloneFlags::CLONE_THREAD) {
@@ -894,27 +894,27 @@ impl Task {
         self.pgid.load(core::sync::atomic::Ordering::SeqCst)
     }
 
-    pub fn uid(&self) -> usize {
+    pub fn uid(&self) -> u32 {
         self.uid.load(core::sync::atomic::Ordering::SeqCst)
     }
 
-    pub fn euid(&self) -> usize {
+    pub fn euid(&self) -> u32 {
         self.euid.load(core::sync::atomic::Ordering::SeqCst)
     }
 
-    pub fn suid(&self) -> usize {
+    pub fn suid(&self) -> u32 {
         self.suid.load(core::sync::atomic::Ordering::SeqCst)
     }
 
-    pub fn gid(&self) -> usize {
+    pub fn gid(&self) -> u32 {
         self.gid.load(core::sync::atomic::Ordering::SeqCst)
     }
 
-    pub fn egid(&self) -> usize {
+    pub fn egid(&self) -> u32 {
         self.egid.load(core::sync::atomic::Ordering::SeqCst)
     }
 
-    pub fn sgid(&self) -> usize {
+    pub fn sgid(&self) -> u32 {
         self.sgid.load(core::sync::atomic::Ordering::SeqCst)
     }
 
@@ -950,22 +950,22 @@ impl Task {
     pub fn set_pgid(&self, pgid: usize) {
         self.pgid.store(pgid, core::sync::atomic::Ordering::SeqCst);
     }
-    pub fn set_uid(&self, uid: usize) {
+    pub fn set_uid(&self, uid: u32) {
         self.uid.store(uid, core::sync::atomic::Ordering::SeqCst);
     }
-    pub fn set_euid(&self, euid: usize) {
+    pub fn set_euid(&self, euid: u32) {
         self.euid.store(euid, core::sync::atomic::Ordering::SeqCst);
     }
-    pub fn set_suid(&self, suid: usize) {
+    pub fn set_suid(&self, suid: u32) {
         self.suid.store(suid, core::sync::atomic::Ordering::SeqCst);
     }
-    pub fn set_gid(&self, gid: usize) {
+    pub fn set_gid(&self, gid: u32) {
         self.gid.store(gid, core::sync::atomic::Ordering::SeqCst);
     }
-    pub fn set_egid(&self, egid: usize) {
+    pub fn set_egid(&self, egid: u32) {
         self.egid.store(egid, core::sync::atomic::Ordering::SeqCst);
     }
-    pub fn set_sgid(&self, sgid: usize) {
+    pub fn set_sgid(&self, sgid: u32) {
         self.sgid.store(sgid, core::sync::atomic::Ordering::SeqCst);
     }
 
@@ -1009,8 +1009,11 @@ impl Task {
     pub fn op_rlimit_mut<T>(&self, f: impl FnOnce(&mut [RLimit; RLIM_NLIMITS]) -> T) -> T {
         f(&mut self.rlimit.write())
     }
+    pub fn op_sup_groups<T>(&self, f: impl FnOnce(&Vec<u32>) -> T) -> T {
+        f(&mut self.sup_groups.read())
+    }
     pub fn op_sup_groups_mut<T>(&self, f: impl FnOnce(&mut Vec<u32>) -> T) -> T {
-        f(&mut self.sup_groups.lock())
+        f(&mut self.sup_groups.write())
     }
     /******************************** 任务状态判断 **************************************/
     pub fn is_ready(&self) -> bool {

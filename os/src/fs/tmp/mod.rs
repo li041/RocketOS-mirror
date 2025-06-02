@@ -3,6 +3,7 @@ use alloc::sync::Arc;
 use crate::ext4::inode::S_IFDIR;
 
 use super::{
+    dentry::insert_core_dentry,
     namei::{filename_create, parse_path, path_openat, Nameidata},
     path::Path,
 };
@@ -20,7 +21,8 @@ pub fn init_tmpfs(root_path: Arc<Path>) {
     match filename_create(&mut nd, 0) {
         Ok(dentry) => {
             let parent_inode = nd.dentry.get_inode();
-            parent_inode.mkdir(dentry, tmp_mode);
+            parent_inode.mkdir(dentry.clone(), tmp_mode);
+            insert_core_dentry(dentry);
         }
         Err(e) => {
             panic!("create {} failed: {:?}", tmp_path, e);

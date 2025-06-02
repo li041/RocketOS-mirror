@@ -1,4 +1,4 @@
-use core::{fmt::Debug, iter::Map};
+use core::{fmt::Debug, iter::Map, mem};
 
 use crate::{
     arch::{
@@ -13,7 +13,7 @@ use crate::{
             self, add_shm_segment, attach_shm_segment, check_shm_segment_exist, detach_shm_segment,
             stat_shm_segment, ShmAtFlags, ShmCtlOp, ShmGetFlags, ShmId, ShmSegment, IPC_PRIVATE,
         },
-        MapArea, MapPermission, VPNRange, VirtAddr, VirtPageNum,
+        MapArea, MapPermission, MapType, VPNRange, VirtAddr, VirtPageNum,
     },
     syscall::errno::Errno,
     task::current_task,
@@ -25,6 +25,7 @@ use bitflags::bitflags;
 use super::errno::SyscallRet;
 
 /// 失败返回的是当前brk, 成功返回新的brk
+/// 堆区域: [heap_bottom, brk)
 pub fn sys_brk(brk: usize) -> SyscallRet {
     log::info!("sys_brk: brk: {:#x}", brk);
     let task = current_task();
@@ -45,7 +46,6 @@ pub fn sys_brk(brk: usize) -> SyscallRet {
         } else if brk > ceil_to_page_size(current_brk) {
             // 需要分配页
             if current_brk == heap_bottom {
-                // 初始分配堆空间
                 log::info!(
                     "[sys_brk] init heap space: {:#x} - {:#x}",
                     heap_bottom,
@@ -55,18 +55,139 @@ pub fn sys_brk(brk: usize) -> SyscallRet {
                     VirtAddr::from(heap_bottom).floor(),
                     VirtAddr::from(new_end_vpn.0 << PAGE_SIZE_BITS).ceil(),
                 );
-                memory_set.insert_framed_area(
+
+                let heap_area = MapArea::new(
                     vpn_range,
+                    MapType::Heap,
                     MapPermission::R | MapPermission::W | MapPermission::U,
+                    None,
+                    0,
                 );
+                memory_set.push_anoymous_area(heap_area);
             } else {
                 // 扩展堆空间
-                // 懒分配?
-                memory_set.remap_area_with_start_vpn(start_vpn, new_end_vpn);
+                // 懒分配
+                #[cfg(target_arch = "riscv64")]
+                {
+                    memory_set.remap_area_with_start_vpn(start_vpn, new_end_vpn);
+                }
+                #[cfg(target_arch = "loongarch64")]
+                {
+                    // loongarch需要检查[heap_bottom, brk)中间是否有其他映射
+                    let heap_range = VPNRange::new(start_vpn, new_end_vpn);
+                    // 找到最后一个空洞
+                    let hole: Option<VPNRange> = memory_set
+                        .areas
+                        .range(..new_end_vpn)
+                        .rev()
+                        .find_map(|(_, area)| {
+                            if area.vpn_range.is_intersect_with(&heap_range)
+                                && area.map_type != MapType::Heap
+                            {
+                                Some(area.vpn_range.clone())
+                            } else {
+                                None
+                            }
+                        });
+                    if let Some(hole) = hole {
+                        // 如果有空洞, 则将空洞的结束VPN为堆区域开始VPN
+                        let start_vpn = hole.get_end();
+                        log::warn!("[sys_brk] found hole: {:?} for heap area", hole,);
+                        log::info!(
+                            "[sys_brk] remap area with start_vpn: {:#x}, new_end_vpn: {:#x}",
+                            start_vpn.0,
+                            new_end_vpn.0
+                        );
+                        if let Some(area) = memory_set.areas.get_mut(&start_vpn) {
+                            // 调整原有堆区域, 懒分配
+                            area.vpn_range.set_end(new_end_vpn);
+                        } else {
+                            // 插入新的堆区域, 懒分配
+                            let heap_area = MapArea::new(
+                                VPNRange::new(start_vpn, new_end_vpn),
+                                MapType::Heap,
+                                MapPermission::R | MapPermission::W | MapPermission::U,
+                                None,
+                                0,
+                            );
+                            memory_set.insert_map_area_lazily(heap_area);
+                        }
+                    } else {
+                        // 如果没有空洞, 则直接将堆区域扩展到新的结束VPN
+                        memory_set.remap_area_with_start_vpn(start_vpn, new_end_vpn);
+                    }
+                }
             }
         } else if brk < floor_to_page_size(current_brk) {
             // 需要释放页, 若start_vpn == new_end_vpn, 会将空间删除
-            memory_set.remap_area_with_start_vpn(start_vpn, new_end_vpn);
+            #[cfg(target_arch = "riscv64")]
+            {
+                memory_set.remap_area_with_start_vpn(start_vpn, new_end_vpn);
+            }
+            #[cfg(target_arch = "loongarch64")]
+            {
+                // loongarch需要检查[brk, current_brk)中间是否有其他映射
+                let old_end_vpn =
+                    VirtPageNum::from(ceil_to_page_size(current_brk) >> PAGE_SIZE_BITS);
+                let remove_range = VPNRange::new(new_end_vpn, old_end_vpn);
+                // 找出需要删除的堆区域
+                let areas_to_remove: Vec<VirtPageNum> = memory_set
+                    .areas
+                    .range(..old_end_vpn)
+                    .filter_map(|(_, area)| {
+                        if area.vpn_range.is_intersect_with(&remove_range)
+                            && area.map_type == MapType::Heap
+                        {
+                            // 删除堆区域
+                            log::info!(
+                                "[sys_brk] remove area: {:?} with vpn_range: {:?}",
+                                area.map_type,
+                                area.vpn_range
+                            );
+                            Some(area.vpn_range.get_start())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                for start_vpn in areas_to_remove {
+                    let mut area = memory_set.areas.remove(&start_vpn).expect("area not found");
+                    log::warn!(
+                        "[sys_brk] complete remove area: {:?} contains in {:?}  ",
+                        area.vpn_range,
+                        remove_range
+                    );
+                    // 如果完全覆盖, 则从memory_set中删除
+                    if remove_range.is_contain(&area.vpn_range) {
+                    } else {
+                        // 如果部分覆盖, 则只删除部分, 注意看是覆盖前部分还是后一部分
+                        log::warn!(
+                            "[sys_brk] partial remove area: {:?} contains in {:?}  ",
+                            area.vpn_range,
+                            remove_range
+                        );
+                        if area.vpn_range.get_end() < remove_range.get_end() {
+                            // 覆盖后部分
+                            for vpn in
+                                VPNRange::new(area.vpn_range.get_end(), remove_range.get_start())
+                            {
+                                area.dealloc_one_page(&mut memory_set.page_table, vpn);
+                            }
+                            area.vpn_range.set_end(remove_range.get_start());
+                            memory_set.areas.insert(area.vpn_range.get_start(), area);
+                        } else {
+                            // 覆盖前部分
+                            for vpn in
+                                VPNRange::new(remove_range.get_start(), area.vpn_range.get_end())
+                            {
+                                area.dealloc_one_page(&mut memory_set.page_table, vpn);
+                            }
+                            area.vpn_range.set_start(remove_range.get_end());
+                            memory_set.areas.insert(area.vpn_range.get_start(), area);
+                        }
+                    }
+                }
+            }
         } else {
             // brk在同一页, 不用alloc/dealloc页
             // 页内偏移

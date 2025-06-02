@@ -118,7 +118,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
             let task = current_task();
             task.op_memory_set_mut(|memory_set| {
                 if let Err(e) = memory_set.handle_recoverable_page_fault(va, cause) {
-                        // memory_set.page_table.dump_all_user_mapping();
+                        memory_set.page_table.dump_all_user_mapping();
                         // dump_trap_context(&current_task());
                         log::error!(
                             "Unrecoverble page fault in application, bad addr = {:#x}, scause = {:?}, era = {:#x}",

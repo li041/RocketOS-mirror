@@ -9,12 +9,6 @@ use spin::RwLock;
 // use alloc::sync::Arc;
 pub use stdio::{Stdin, Stdout};
 
-use crate::{
-    drivers::BLOCK_DEVICE,
-    ext4::{fs::Ext4FileSystem, inode::Ext4Inode},
-    fat32::fs::FAT32FileSystem,
-    mutex::SpinNoIrqLock,
-};
 use lazy_static::lazy_static;
 
 pub use old::{FileMeta, FileOld};

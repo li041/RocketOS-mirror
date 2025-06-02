@@ -229,6 +229,12 @@ fn create_file_from_dentry(
 ) -> Result<Arc<dyn FileOp>, Errno> {
     let inode = dentry.get_inode();
     let file_type = inode.get_mode() & S_IFMT;
+    log::warn!(
+        "[create_file_from_dentry] Creating file from dentry: {}, type: {:?}, flags: {:?}",
+        dentry.absolute_path,
+        file_type,
+        flags
+    );
 
     let path = Path::new(mount, dentry.clone());
 
@@ -375,10 +381,10 @@ pub fn lookup_dentry(nd: &mut Nameidata) -> Arc<Dentry> {
         return dentry;
     }
 
-    log::warn!(
-        "[lookup_dentry] Cache miss, performing inode lookup for: {}",
-        segment
-    );
+    // log::warn!(
+    //     "[lookup_dentry] Cache miss, performing inode lookup for: {}",
+    //     segment
+    // );
 
     // 从 inode 进行实际查找
     let parent_inode = nd.dentry.get_inode();
@@ -547,6 +553,7 @@ pub fn link_path_walk(nd: &mut Nameidata) -> Result<String, Errno> {
     }
     let mut len = nd.path_segments.len() - 1;
     let mut symlink_count = 0;
+    let task = current_task();
     while nd.depth < len {
         if nd.path_segments[nd.depth] == "." {
             nd.depth += 1;
@@ -561,6 +568,11 @@ pub fn link_path_walk(nd: &mut Nameidata) -> Result<String, Errno> {
             // 路径组件不存在
             if dentry.is_negative() {
                 return Err(Errno::ENOENT);
+            }
+            if task.euid() != 0 {
+                if !dentry.can_search() {
+                    return Err(Errno::EACCES); // 没有搜索权限
+                }
             }
             while dentry.is_symlink() {
                 if symlink_count > SYMLINK_MAX {
