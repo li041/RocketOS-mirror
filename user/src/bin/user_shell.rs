@@ -19,9 +19,9 @@ const RESET_COLOR: &str = "\u{1B}[0m";
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use shell::command::{parse_pipeline, Command};
+use shell::command::parse_pipeline;
 use user_lib::console::getchar;
-use user_lib::{chdir, close, dup3, execve, fork, pipe, waitpid};
+use user_lib::{chdir, close, dup3, fork, pipe, waitpid};
 
 fn print_prompt() {
     let cwd = user_lib::getcwd(); // 假设你有这个系统调用

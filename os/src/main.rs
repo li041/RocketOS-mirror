@@ -6,6 +6,11 @@
 #![feature(sync_unsafe_cell)]
 #![feature(trait_upcasting)]
 #![feature(ip_from)]
+#![allow(static_mut_refs)]
+
+// #![allow(non_snake_case)]
+// #![allow(non_camel_case_types)]
+// #![allow(unused)]
 
 extern crate alloc;
 
@@ -29,8 +34,8 @@ mod ext4;
 
 mod fat32;
 
-mod time;
 mod fs;
+mod time;
 
 // 目前只支持riscv64
 mod syscall;
@@ -87,7 +92,6 @@ pub fn rust_main(_hart_id: usize, dtb_address: usize) -> ! {
     };
     use riscv::register::sstatus;
     use task::{add_initproc, run_tasks, TaskContext};
-    use xmas_elf::sections;
     pub fn show_context_size() {
         log::error!(
             "size of trap context: {}",

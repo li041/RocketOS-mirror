@@ -1,8 +1,7 @@
 use core::{any::Any, u8};
 use spin::Once;
 
-use alloc::{sync::Arc, sync::Weak};
-use bitflags::Flag;
+use alloc::sync::Arc;
 use spin::RwLock;
 
 use crate::{
@@ -10,14 +9,8 @@ use crate::{
         mm::{copy_from_user, copy_to_user},
         sbi::console_getchar,
     },
-    drivers::block::block_dev::BlockDevice,
-    ext4::{
-        dentry,
-        fs::Ext4FileSystem,
-        inode::{Ext4InodeDisk, S_IFCHR},
-    },
+    ext4::inode::{Ext4InodeDisk, S_IFCHR},
     fs::{
-        dentry::Dentry,
         file::{FileOp, OpenFlags},
         inode::InodeOp,
         kstat::Kstat,
@@ -257,7 +250,7 @@ pub struct TtyFile {
     pub inner: RwLock<TtyFileInner>,
 }
 
-struct TtyFileInner {
+pub struct TtyFileInner {
     fg_pgid: Tid,
     win_size: WinSize,
     termios: Termios,

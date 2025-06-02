@@ -23,7 +23,7 @@ pub struct ZeroInode {
     pub inner: RwLock<ZeroInodeInner>,
 }
 
-struct ZeroInodeInner {
+pub struct ZeroInodeInner {
     pub inode_on_disk: Ext4InodeDisk,
 }
 

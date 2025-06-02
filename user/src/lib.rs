@@ -13,7 +13,6 @@ extern crate bitflags;
 
 use core::ptr::null;
 
-use alloc::vec;
 use alloc::{
     ffi::CString,
     string::{String, ToString},
@@ -37,6 +36,7 @@ pub fn handle_alloc_error(layout: core::alloc::Layout) -> ! {
 #[no_mangle]
 #[link_section = ".text.entry"]
 pub extern "C" fn _start() -> ! {
+    #[allow(static_mut_refs)]
     unsafe {
         HEAP.lock()
             .init(HEAP_SPACE.as_ptr() as usize, USER_HEAP_SIZE);

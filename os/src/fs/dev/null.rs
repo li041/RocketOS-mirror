@@ -24,7 +24,7 @@ pub struct NullInode {
     pub inner: RwLock<NullInodeInner>,
 }
 
-struct NullInodeInner {
+pub struct NullInodeInner {
     pub inode_on_disk: Ext4InodeDisk,
 }
 
@@ -111,7 +111,7 @@ pub struct NullFile {
     pub inner: Mutex<NullFileInner>,
 }
 
-struct NullFileInner {
+pub struct NullFileInner {
     offset: usize,
 }
 

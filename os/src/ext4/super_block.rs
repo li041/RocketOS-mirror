@@ -1,19 +1,9 @@
 use core::fmt::Debug;
 
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 use spin::RwLock;
 
-use crate::{
-    drivers::block::{
-        self,
-        block_cache::{self, BlockCache},
-    },
-    fs::{manager::FileSystemOp, FSMutex},
-    mutex::SpinNoIrqLock,
-};
-
-use super::{block_group, inode::Ext4Inode};
+use crate::fs::FSMutex;
 
 pub struct Ext4SuperBlock {
     /* 基本信息 */
@@ -58,10 +48,7 @@ impl SuperBlockInner {
 }
 
 impl Ext4SuperBlock {
-    pub fn new(
-        super_block: &Ext4SuperBlockDisk,
-        block_cache: Arc<SpinNoIrqLock<BlockCache>>,
-    ) -> Self {
+    pub fn new(super_block: &Ext4SuperBlockDisk) -> Self {
         let block_group_count = (super_block.blocks_count_lo + super_block.blocks_per_group - 1)
             / super_block.blocks_per_group;
         Self {
@@ -268,7 +255,7 @@ impl Ext4SuperBlockDisk {
         1 << self.log_cluster_size
     }
     pub fn block_count(&self) -> u64 {
-        (self.blocks_count_lo as u64 | ((self.block_count_hi as u64) << 32))
+        self.blocks_count_lo as u64 | ((self.block_count_hi as u64) << 32)
     }
     pub fn reserved_blocks_count(&self) -> u64 {
         self.reserved_blocks_count_lo as u64 | ((self.reserved_blocks_count_hi as u64) << 32)

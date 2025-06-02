@@ -1,7 +1,9 @@
 use alloc::sync::Arc;
-use hashbrown::hash_map::Entry;
 
-use crate::{arch::PrMd, task::{get_stack_top_by_sp, Task}};
+use crate::{
+    arch::PrMd,
+    task::{get_stack_top_by_sp, Task},
+};
 
 #[repr(C)]
 pub struct TrapContext {
@@ -12,11 +14,10 @@ pub struct TrapContext {
     /// 记录普通例外处理完毕后的返回地址
     pub era: usize,
     pub last_a0: usize,
-    pub kernel_tp: usize,  // 将内核tp放在栈顶，也许会有助于debug
+    pub kernel_tp: usize, // 将内核tp放在栈顶，也许会有助于debug
 }
 
 impl TrapContext {
-
     /* getter */
     pub fn get_sp(&self) -> usize {
         self.r[3]
@@ -99,7 +100,10 @@ pub fn save_trap_context(task: &Arc<Task>, cx: TrapContext) {
     log::trace!("[save_trap_context] kstack top: {:#x}", task_kstack_top);
     let trap_cx_ptr = task_kstack_top - core::mem::size_of::<TrapContext>();
     let trap_cx_ptr = trap_cx_ptr as *mut TrapContext;
-    log::trace!("[save_trap_context] trap_cx_ptr: {:#x}", trap_cx_ptr as usize);
+    log::trace!(
+        "[save_trap_context] trap_cx_ptr: {:#x}",
+        trap_cx_ptr as usize
+    );
     unsafe { trap_cx_ptr.write_volatile(cx) }
 }
 
@@ -126,16 +130,16 @@ pub fn dump_trap_context(task: &Arc<Task>) {
 
 pub fn reg_name(i: usize) -> &'static str {
     match i {
-        0  => "zero",
-        1  => "ra",
-        2  => "tp",
-        3  => "sp",
-        4  => "a0",
-        5  => "a1",
-        6  => "a2",
-        7  => "a3",
-        8  => "a4",
-        9  => "a5",
+        0 => "zero",
+        1 => "ra",
+        2 => "tp",
+        3 => "sp",
+        4 => "a0",
+        5 => "a1",
+        6 => "a2",
+        7 => "a3",
+        8 => "a4",
+        9 => "a5",
         10 => "a6",
         11 => "a7",
         12 => "t0",

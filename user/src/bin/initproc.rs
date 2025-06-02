@@ -3,7 +3,7 @@
 
 extern crate user_lib;
 
-use user_lib::{execve, fork, println, wait, yield_};
+use user_lib::{execve, fork, wait, yield_};
 
 #[no_mangle]
 fn main() -> i32 {

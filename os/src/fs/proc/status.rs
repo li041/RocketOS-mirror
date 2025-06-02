@@ -1,42 +1,50 @@
-use core::{default, str};
+use core::{default, mem, str};
 
-use spin::{mutex, Once, RwLock};
+use lazy_static::lazy_static;
+use spin::{lazy, mutex, Once, RwLock};
 
 use crate::{
+    arch::config::PAGE_SIZE_BITS,
     ext4::inode::Ext4InodeDisk,
     fs::{
         file::{FileOp, OpenFlags},
         inode::InodeOp,
         kstat::Kstat,
-        mount::read_proc_mounts,
         path::Path,
+        uapi::Whence,
         FileOld,
     },
-    syscall::errno::SyscallRet,
+    mm::{MapPermission, VPNRange, VirtPageNum},
+    syscall::errno::{Errno, SyscallRet},
+    task::current_task,
     timer::TimeSpec,
 };
 
-use alloc::sync::Arc;
+use alloc::{
+    format,
+    string::{String, ToString},
+    sync::Arc,
+    vec::Vec,
+};
 
-pub static MOUNTS: Once<Arc<dyn FileOp>> = Once::new();
+pub static STATUS: Once<Arc<dyn FileOp>> = Once::new();
 
-pub struct MountsInode {
-    pub inner: RwLock<MountsInodeInner>,
+pub struct StatusInode {
+    pub inner: RwLock<StatusInodeInner>,
 }
-
-pub struct MountsInodeInner {
+pub struct StatusInodeInner {
     pub inode_on_disk: Ext4InodeDisk,
 }
 
-impl MountsInode {
+impl StatusInode {
     pub fn new(inode_on_disk: Ext4InodeDisk) -> Arc<Self> {
-        Arc::new(MountsInode {
-            inner: RwLock::new(MountsInodeInner { inode_on_disk }),
+        Arc::new(StatusInode {
+            inner: RwLock::new(StatusInodeInner { inode_on_disk }),
         })
     }
 }
 
-impl InodeOp for MountsInode {
+impl InodeOp for StatusInode {
     fn getattr(&self) -> Kstat {
         let mut kstat = Kstat::new();
         let inner_guard = self.inner.read();
@@ -91,30 +99,26 @@ impl InodeOp for MountsInode {
     fn set_ctime(&self, ctime: TimeSpec) {
         self.inner.write().inode_on_disk.set_ctime(ctime);
     }
-    fn set_mode(&self, mode: u16) {
-        self.inner.write().inode_on_disk.set_mode(mode);
-    }
 }
 
-pub struct MountsFile {
+pub struct StatusFile {
     pub path: Arc<Path>,
     pub inode: Arc<dyn InodeOp>,
     pub flags: OpenFlags,
-    pub inner: RwLock<MountsFileInner>,
+    pub inner: RwLock<StatusFileInner>,
 }
 
-#[derive(Default)]
-pub struct MountsFileInner {
+pub struct StatusFileInner {
     pub offset: usize,
 }
 
-impl MountsFile {
+impl StatusFile {
     pub fn new(path: Arc<Path>, inode: Arc<dyn InodeOp>, flags: OpenFlags) -> Arc<Self> {
-        Arc::new(MountsFile {
+        Arc::new(StatusFile {
             path,
             inode,
             flags,
-            inner: RwLock::new(MountsFileInner::default()),
+            inner: RwLock::new(StatusFileInner { offset: 0 }),
         })
     }
     pub fn add_offset(&self, offset: usize) {
@@ -122,21 +126,21 @@ impl MountsFile {
     }
 }
 
-impl FileOp for MountsFile {
-    fn as_any(&self) -> &dyn core::any::Any {
-        self
+impl FileOp for StatusFile {
+    fn get_inode(&self) -> Arc<dyn InodeOp> {
+        self.inode.clone()
     }
     fn read(&self, buf: &mut [u8]) -> SyscallRet {
-        let mount_info = read_proc_mounts();
-        let len = mount_info.len();
+        let task_info = current_task().info();
+        let len = task_info.len();
         if self.inner.read().offset >= len {
             return Ok(0);
         }
-        buf[..len].copy_from_slice(mount_info.as_bytes());
+        buf[..len].copy_from_slice(task_info.as_bytes());
         self.add_offset(len);
         Ok(len)
     }
-    fn seek(&self, offset: isize, whence: crate::fs::uapi::Whence) -> SyscallRet {
+    fn seek(&self, offset: isize, whence: Whence) -> SyscallRet {
         let mut inner_guard = self.inner.write();
         match whence {
             crate::fs::uapi::Whence::SeekSet => {
@@ -149,16 +153,17 @@ impl FileOp for MountsFile {
                 inner_guard.offset = inner_guard.offset.checked_add_signed(offset).unwrap();
             }
             crate::fs::uapi::Whence::SeekEnd => {
-                inner_guard.offset = read_proc_mounts().len().checked_add_signed(offset).unwrap();
+                inner_guard.offset = current_task()
+                    .info()
+                    .len()
+                    .checked_add_signed(offset)
+                    .unwrap();
             }
         }
         Ok(inner_guard.offset)
     }
     fn readable(&self) -> bool {
         true
-    }
-    fn get_inode(&self) -> Arc<dyn InodeOp> {
-        self.inode.clone()
     }
     fn get_flags(&self) -> OpenFlags {
         self.flags

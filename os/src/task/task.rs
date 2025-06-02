@@ -14,26 +14,24 @@ use crate::{
         config::USER_STACK_SIZE,
         mm::copy_to_user,
         trap::{
-            context::{dump_trap_context, get_trap_context, save_trap_context},
+            context::{get_trap_context, save_trap_context},
             TrapContext,
         },
     },
-    ext4::{fs, inode::S_IWUSR},
+    ext4::inode::S_IWUSR,
     fs::{
         fdtable::FdTable,
         file::FileOp,
         inode::InodeOp,
         path::Path,
         uapi::{RLimit, Resource},
-        FileOld, Stdin, Stdout,
     },
     futex::{
         do_futex,
         flags::{FUTEX_PRIVATE_FLAG, FUTEX_WAKE},
-        robust_list::RobustListHead,
     },
     mm::{MapArea, MapPermission, MapType, MemorySet, VPNRange, VirtAddr, KERNEL_SPACE},
-    mutex::{Spin, SpinNoIrq, SpinNoIrqLock},
+    mutex::SpinNoIrqLock,
     net::addr::is_unspecified,
     signal::{SiField, Sig, SigHandler, SigInfo, SigPending, SigSet, SignalStack, UContext},
     syscall::errno::{self, Errno, SyscallRet},
@@ -49,6 +47,7 @@ use crate::{
 use alloc::{
     collections::btree_map::BTreeMap,
     format,
+    string::ToString,
     sync::{Arc, Weak},
     vec,
     vec::Vec,
@@ -56,7 +55,8 @@ use alloc::{
 use bitflags::bitflags;
 use core::{
     assert_ne,
-    cell::{SyncUnsafeCell, UnsafeCell},
+    cell::SyncUnsafeCell,
+    fmt::Write,
     mem,
     sync::atomic::{AtomicI32, AtomicU32, AtomicUsize},
 };
@@ -444,7 +444,7 @@ impl Task {
         log::trace!("[kernel_clone] child task{} created", task.tid());
 
         if flags.contains(CloneFlags::CLONE_CHILD_SETTID) {
-            task.set_TAS(task.tid());
+            task.set_tas(task.tid());
         }
 
         // 向任务管理器注册新任务（不是调度器）
@@ -920,7 +920,7 @@ impl Task {
     pub fn sigstack(&self) -> Option<SignalStack> {
         self.sig_stack.lock().take()
     }
-    pub fn TAC(&self) -> Option<usize> {
+    pub fn tac(&self) -> Option<usize> {
         self.tid_address.lock().clear_child_tid
     }
     pub fn robust_list_head(&self) -> usize {
@@ -985,11 +985,11 @@ impl Task {
         *self.sig_stack.lock() = Some(sigstack)
     }
     // tid_address 中的 set_child_tid
-    pub fn set_TAS(&self, tas: usize) {
+    pub fn set_tas(&self, tas: usize) {
         self.tid_address.lock().set_child_tid = Some(tas);
     }
     // tid_address 中的 clear_child_tid
-    pub fn set_TAC(&self, tac: usize) {
+    pub fn set_tac(&self, tac: usize) {
         self.tid_address.lock().clear_child_tid = Some(tac);
     }
     pub fn set_robust_list_head(&self, head: usize) {
@@ -1100,6 +1100,317 @@ impl Task {
         *self.status.lock() = TaskStatus::Zombie;
     }
     /******************************** 任务信息提供 **************************************/
+
+    pub fn info(&self) -> String {
+        let mut info = String::new();
+        // 名称：这里我们用执行路径的文件名部分作为任务名（类似 bash）
+        let name = self.exe_path.read();
+        let name = name.rsplit('/').next().unwrap_or("unknown");
+        let umask = 0o022; // 默认umask为022(fake)
+        let status = self.status.lock();
+        let state_str = match *status {
+            TaskStatus::Running | TaskStatus::Ready => "R (running)",
+            TaskStatus::Interruptable => "S (sleeping)",
+            TaskStatus::UnInterruptable => "D (Uninterruptible sleep)",
+            TaskStatus::Zombie => "Z (zombie)",
+        };
+        let tgid = self.tgid();
+        let ngid = 0; // NUMA 组 ID（如果没有则为 0）
+        let pid = self.tid();
+        let ppid = self.op_parent(|parent| {
+            if let Some(parent) = parent {
+                parent.upgrade().map_or(0, |p| p.tid())
+            } else {
+                0
+            }
+        });
+        let tracerpid = 0; // 跟踪此进程的进程 PID（如果未被跟踪，则为 0）
+        let uid = self.uid();
+        let euid = self.euid();
+        let suid = self.suid();
+        let fsuid = self.fsuid();
+        let gid = self.gid();
+        let egid = self.egid();
+        let sgid = self.sgid();
+        let fsgid = self.fsgid();
+        let fdsize = self.fd_table().get_rlimit().rlim_cur as usize;
+        let mut groups = String::new();
+        self.op_sup_groups_mut(|sup_groups| {
+            for group in sup_groups.iter() {
+                groups.push_str(&format!("{} ", group));
+            }
+        });
+        let nstgid = self.tgid(); // pid 所属的每个 PID 命名空间中的线程组 ID
+        let nstpid = self.tid(); // pid 所属的每个 PID 命名空间中的线程 ID
+        let nspgid = self.pgid(); // pid 所属的每个 PID 命名空间中的进程组 ID
+        let nssid = self.tgid(); // pid 所属的每个 PID 命名空间中的会话 ID
+        let vmpeak = 3356; // 虚拟内存峰值（fake）需要遍历统计
+        let vmsize = 3356; // 虚拟内存大小（fake）
+        let vmlck = 0; // 锁定的虚拟内存大小（fake）
+        let vmpin = 0; // 锁定的物理内存大小（fake）
+        let vmhwm = 1076; // 常驻内存峰值（fake）
+        let vmrss = 1076; // 常驻内存大小（fake）请注意，此处的值是 RssAnon、RssFile 和 RssShmem 的总和
+        let rssanon = 92; // 匿名内存（fake）
+        let rssfile = 984; // 文件映射的常驻内存（fake）
+        let rssshmem = 0; // 共享内存的常驻内存（fake）
+        let vmdata = 3840; // 数据段大小（fake）
+        let vmstk = 2570; // 栈大小（fake）
+        let vmexe = 378; // 可执行文件大小（fake）
+        let vmlib = 993; // 共享库大小（fake）
+        let vmpte = 85; // 页表大小（fake）
+        let vmswap = 169; // 交换空间大小（fake）
+        let hugetlbpages = 0; // 巨页内存大小（fake）
+        let core_dumping = 0; // 核心转储大小（fake）
+        let thp_enabled = 1; // 透明大页是否启用（fake）
+        let threads = self.op_thread_group(|tg| tg.len());
+        let sigq = 1; // 信号队列大小（fake）
+        let sigpnd = self.mask(); // 信号掩码
+        let shdpnd = 0; // 共享信号掩码（fake）
+        let sigblk = 0; // 阻塞的信号掩码（fake）
+        let sigign = 0; // 忽略的信号掩码（fake）
+        let sigcatch = 0; // 捕获的信号掩码（fake）
+        let cap_inheritable = 0; // 可继承的能力（fake）
+        let cap_permitted = 0; // 允许的能力（fake）
+        let cap_effective = 0; // 有效的能力（fake）
+        let cap_bounding = 0x000001ffffffffff as i64; // 边界能力（fake）
+        let cap_ambient = 0; // 环境能力（fake）
+        let no_new_privs = 0; // 是否设置了 no_new_privs（fake）
+        let seccomp = 0; // seccomp 状态（fake）
+        let seccomp_filter = 0; // seccomp 过滤器（fake）
+        let speculation_store_bypass = "thread vulnerable".to_string();
+        let speculation_indirect_branch = "conditional enabled".to_string();
+        let cpus_allowed = 1; // 允许的 CPU 掩码（fake）
+        let cpus_allowed_list = "0".to_string(); // 允许的 CPU 列表（fake）
+        let mems_allowed = 1; // 允许的内存节点掩码（fake）
+        let mems_allowed_list = "0".to_string(); // 允许的内存节点列表（fake）
+        let voluntary_ctxt_switches = 0; // 自愿上下文切换次数（fake）
+        let nonvoluntary_ctxt_switches = 0; // 非自愿上下文切换次数（fake）
+
+        // 构造信息
+        write!(
+            info,
+            "\
+            Name:\t{}\n\
+            Umask:\t{:04o}\n\
+            State:\t{}\n\
+            Tgid:\t{}\n\
+            Ngid:\t{}\n\
+            Pid:\t{}\n\
+            PPid:\t{}\n\
+            TracerPid:\t{}\n\
+            Uid:\t{}\t{}\t{}\t{}\n\
+            Gid:\t{}\t{}\t{}\t{}\n\
+            FDSize:\t{}\n\
+            Groups:\t{}\n\
+            NStgid:\t{}\n\
+            NSpid:\t{}\n\
+            NSpgid:\t{}\n\
+            NSsid:\t{}\n\
+            VmPeak:\t{:>8} kB\n\
+            VmSize:\t{:>8} kB\n\
+            VmLck:\t{:>8} kB\n\
+            VmPin:\t{:>8} kB\n\
+            VmHWM:\t{:>8} kB\n\
+            VmRSS:\t{:>8} kB\n\
+            RssAnon:\t{:>8} kB\n\
+            RssFile:\t{:>8} kB\n\
+            RssShmem:\t{:>8} kB\n\
+            VmData:\t{:>8} kB\n\
+            VmStk:\t{:>8} kB\n\
+            VmExe:\t{:>8} kB\n\
+            VmLib:\t{:>8} kB\n\
+            VmPTE:\t{:>8} kB\n\
+            VmSwap:\t{:>8} kB\n\
+            HugetlbPages:\t{:>8} kB\n\
+            CoreDumping:\t{}\n\
+            THP_enabled:\t{}\n\
+            Threads:\t{}\n\
+            SigQ:\t{}/31760\n\
+            SigPnd:\t{:016x}\n\
+            ShdPnd:\t{:016x}\n\
+            SigBlk:\t{:016x}\n\
+            SigIgn:\t{:016x}\n\
+            SigCgt:\t{:016x}\n\
+            CapInh:\t{:016x}\n\
+            CapPrm:\t{:016x}\n\
+            CapEff:\t{:016x}\n\
+            CapBnd:\t{:016x}\n\
+            CapAmb:\t{:016x}\n\
+            NoNewPrivs:\t{}\n\
+            Seccomp:\t{}\n\
+            Seccomp_filters:\t{}\n\
+            Speculation_Store_Bypass:\t{}\n\
+            SpeculationIndirectBranch:\t{}\n\
+            Cpus_allowed:\t{:x}\n\
+            Cpus_allowed_list:\t{}\n\
+            Mems_allowed:\t{:x}\n\
+            Mems_allowed_list:\t{}\n\
+            voluntary_ctxt_switches:\t{}\n\
+            nonvoluntary_ctxt_switches:\t{}\n",
+            name,
+            umask,
+            state_str,
+            tgid,
+            ngid,
+            pid,
+            ppid,
+            tracerpid,
+            uid,
+            euid,
+            suid,
+            fsuid,
+            gid,
+            egid,
+            sgid,
+            fsgid,
+            fdsize,
+            groups.trim_end(),
+            nstgid,
+            nstpid,
+            nspgid,
+            nssid,
+            vmpeak,
+            vmsize,
+            vmlck,
+            vmpin,
+            vmhwm,
+            vmrss,
+            rssanon,
+            rssfile,
+            rssshmem,
+            vmdata,
+            vmstk,
+            vmexe,
+            vmlib,
+            vmpte,
+            vmswap,
+            hugetlbpages,
+            core_dumping,
+            thp_enabled,
+            threads,
+            sigq,
+            sigpnd,
+            shdpnd,
+            sigblk,
+            sigign,
+            sigcatch,
+            cap_inheritable,
+            cap_permitted,
+            cap_effective,
+            cap_bounding,
+            cap_ambient,
+            no_new_privs,
+            seccomp,
+            seccomp_filter,
+            speculation_store_bypass,
+            speculation_indirect_branch,
+            cpus_allowed,
+            cpus_allowed_list,
+            mems_allowed,
+            mems_allowed_list,
+            voluntary_ctxt_switches,
+            nonvoluntary_ctxt_switches,
+        )
+        .unwrap();
+
+        info
+    }
+
+    // Todo: 记录程序地址等信息，根据需要完善
+    pub fn stat(&self) -> String {
+        let tid = self.tid();
+        let name = self.exe_path.read();
+        let name = name.rsplit('/').next().unwrap_or("unknown");
+        let comm = format!("({})", name);
+
+        let status = self.status.lock();
+        let state_char = match *status {
+            TaskStatus::Running | TaskStatus::Ready => 'R',
+            TaskStatus::Interruptable => 'S',
+            TaskStatus::UnInterruptable => 'D',
+            TaskStatus::Zombie => 'Z',
+        };
+
+        let ppid = self.op_parent(|parent| {
+            if let Some(parent) = parent {
+                parent.upgrade().map_or(0, |p| p.tid())
+            } else {
+                0
+            }
+        });
+        let pgrp = self.pgid(); // 进程组 id
+        let session = self.tgid(); // 简化为 session = tgid
+        let tty_nr = 0; // 没有终端设备支持
+        let tpgid = 0; // 暂无前台进程组
+        let flags = 0; // 先设为 0
+
+        // 缺页统计等暂设为 0
+        let minflt = 0;
+        let cminflt = 0;
+        let majflt = 0;
+        let cmajflt = 0;
+
+        // CPU 时间统计
+        let time_stat = self.time_stat();
+        let utime = time_stat.user_time().timespec_to_ticks();
+        let stime = time_stat.sys_time().timespec_to_ticks();
+        let cutime = time_stat.child_user_system_time().0.timespec_to_ticks();
+        let cstime = time_stat.child_user_system_time().1.timespec_to_ticks();
+
+        // 其他字段（fake）
+        let priority = 99; // 优先级，暂设为 99
+        let nice = 0; // nice 值，暂设为 0（-19-20)
+        let num_threads = self.op_thread_group(|tg| tg.len());
+        let itrealvalue = 0; // 自 Linux 2.6.17 起，此字段不再维护，并被硬编码为 0。
+        let starttime = 0; // 系统启动后进程的启动时间，暂设为 0
+        let vsize = 114514; // 虚拟内存（fake）
+        let rss = 242; // 驻留集大小：进程在实际内存中拥有的页面数（fake）
+        let rsslim = self.rlimit.read()[5].rlim_cur; // 进程 rss 的当前软限制（以字节为单位）
+        let startcode = 0; // 程序文本可运行的地址
+        let endcode = 0; // 程序文本可运行的地址
+        let startstack = 0; // 用户栈的起始地址
+        let kstkesp = 0; // 内核栈指针
+        let kstkeip = 0; // 内核栈指令指针
+        let signal = 0; // 信号掩码，暂设为 0（已过时）
+        let blocked = 0; // 阻塞的信号掩码，暂设为 0（已过时）
+        let sigignore = 0; // 忽略的信号掩码，暂设为 0（已过时）
+        let sigcatch = 0; // 捕获的信号掩码，暂设为 0（已过时）
+        let wchan = 0; // 等待的事件，暂设为 0
+        let nswap = 0; // 交换次数，暂设为 0（不维护）
+        let cnswap = 0; // 子进程交换次数，暂设为 0（不维护）
+        let exit_signal = 17; // 退出信号
+        let processor = 0; // 假定当前 CPU
+        let rt_priority = 0; // 实时优先级，暂设为 0
+        let policy = 0; // 调度策略，暂设为 0
+        let delayacct_blkio_ticks = 0; // 延迟块 I/O ticks，暂设为 0
+        let guest_time = 0; // guest 时间，暂设为 0
+        let cguest_time = 0; // 子进程 guest 时间，暂设为 0
+        let start_data = 0; // 数据段起始地址
+        let end_data = 0; // 数据段结束地址
+        let start_brk = 0; // 程序 break 地址
+        let arg_start = 0; // 参数起始地址
+        let arg_end = 0; // 参数结束地址
+        let env_start = 0; // 环境变量起始地址
+        let env_end = 0; // 环境变量结束地址
+        let exit_code = self.exit_code();
+
+        // 拼接所有字段
+        format!(
+            "{} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}\n",
+            tid, comm, state_char, ppid, pgrp, session, tty_nr, tpgid, flags,
+            minflt, cminflt, majflt, cmajflt,
+            utime, stime, cutime, cstime,
+            priority, nice, num_threads, itrealvalue, starttime,
+            vsize, rss,
+            rsslim, startcode, endcode, startstack, kstkesp, kstkeip,
+            signal, blocked, sigignore, sigcatch, wchan,
+            nswap, cnswap, exit_signal, processor, rt_priority,
+            policy, delayacct_blkio_ticks, guest_time, cguest_time,
+            start_data, end_data, start_brk,
+            arg_start, arg_end, env_start, env_end,
+            exit_code
+        )
+    }
 }
 
 /****************************** 辅助函数 ****************************************/
@@ -1124,7 +1435,7 @@ pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
 
     // 检验tid_address（线程异常退出不清理）（可能语义有问题，需要细确认）
     if !task.is_process() && exit_code != -1 {
-        if let Some(tidptr) = task.TAC() {
+        if let Some(tidptr) = task.tac() {
             // 防止地址不对齐的情况
             let content = [0u8; 8];
             log::info!("[kernel_exit] clear_child_tid: {:#x}", tidptr);

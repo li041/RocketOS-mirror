@@ -1,13 +1,7 @@
 use core::arch::global_asm;
 
 use crate::{
-    arch::{
-        config::PAGE_SIZE_BITS,
-        mm::PageTable,
-        tlbrelo::{TLBRELo0, TLBRELo1},
-        Interrupt, TLBRBadV, TLBREHi, PGDL, PWCL, TLBRERA,
-    }, mm::VirtAddr, signal::{handle_signal, SiField, Sig, SigInfo}, syscall::{errno::Errno, syscall}, task::{current_task, handle_timeout, yield_current_task},
-    fs::dentry::clean_dentry_cache,
+     arch::Interrupt, fs::dentry::clean_dentry_cache, mm::VirtAddr, signal::{handle_signal, SiField, Sig, SigInfo}, syscall::syscall, task::{current_task, handle_timeout, yield_current_task}
 };
 
 use super::{register, Exception, TIClr, Trap, ERA};
@@ -15,8 +9,6 @@ use super::{register, Exception, TIClr, Trap, ERA};
 pub mod context;
 pub mod timer;
 
-use alloc::task;
-use context::dump_trap_context;
 pub use context::TrapContext;
 use timer::set_next_trigger;
 
@@ -117,7 +109,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
             let cause = PageFaultCause::from(cause);
             let task = current_task();
             task.op_memory_set_mut(|memory_set| {
-                if let Err(e) = memory_set.handle_recoverable_page_fault(va, cause) {
+                if let Err(_e) = memory_set.handle_recoverable_page_fault(va, cause) {
                         memory_set.page_table.dump_all_user_mapping();
                         // dump_trap_context(&current_task());
                         log::error!(
@@ -158,6 +150,6 @@ pub fn trap_handler(cx: &mut TrapContext) {
 }
 
 #[no_mangle]
-pub fn kernel_trap_handler(cx: &mut TrapContext) {
+pub fn kernel_trap_handler(_cx: &mut TrapContext) {
     todo!()
 }

@@ -1,8 +1,5 @@
 use crate::task::current_task;
-use crate::{
-    arch::mm::{copy_from_user, copy_to_user},
-    syscall::errno::Errno,
-};
+use crate::{arch::mm::copy_from_user, syscall::errno::Errno};
 use alloc::vec;
 use alloc::{sync::Arc, vec::Vec};
 
@@ -34,19 +31,19 @@ impl FdSet {
             return Err(Errno::EINVAL);
         }
 
-        let kernel_len=core::cmp::min(len, 15);
+        let kernel_len = core::cmp::min(len, 15);
         // 创建内核缓冲区并拷贝数据
         let mut kernel_buf = vec![0; kernel_len];
-        
-            copy_from_user(
-                addr as *const i32,
-                kernel_buf.as_mut_ptr() as *mut i32,
-                kernel_len,
-            )?;
+
+        copy_from_user(
+            addr as *const i32,
+            kernel_buf.as_mut_ptr() as *mut i32,
+            kernel_len,
+        )?;
 
         Ok(FdSet {
             addr: kernel_buf.as_mut_ptr(),
-            len:kernel_len,
+            len: kernel_len,
             kernel_buf,
         })
     }
@@ -99,50 +96,46 @@ impl Drop for FdSet {
 
 // 修改后的FdSetIter
 pub struct FdSetIter {
-    pub fdset: FdSet,       // 现在由FdSet自己管理缓冲区
+    pub fdset: FdSet, // 现在由FdSet自己管理缓冲区
     pub files: Vec<Arc<dyn FileOp>>,
     pub fds: Vec<usize>,
 }
 pub fn init_fdset(addr: usize, len: usize) -> Result<FdSetIter, Errno> {
-        if len > MAX_FDS || len < 0 {
-            //非法长度
-            return Err(Errno::EINVAL);
-        }
-        if addr == 0 {
-            return Ok(FdSetIter {
-                // kernel_buffer:Vec::new(),
-                fdset: FdSet::new_empty(),
-                files: Vec::new(),
-                fds: Vec::new(),
-            });
-        }
-        // let mut kernel_fs=vec![0;len];
-        // copy_from_user(addr as *const i32,kernel_fs.as_mut_ptr() ,len)?;
-        let fdset = FdSet::from_user(addr, len)?;
-        let task = current_task();
-        let mut files: Vec<Arc<dyn FileOp>> = Vec::new();
-        let mut fds: Vec<usize> = Vec::new();
-        for fd in 0..len {
-            if fdset.check(fd) {
-                // let fd=addr[i] as usize;
-                log::error!("[init_fdset]:fdset check fd {} ", fd);
-                // let file=task.fd_table().get_file(fd).unwrap();
-                if let Some(file) = task.fd_table().get_file(fd) {
-                    files.push(file.clone());
-                    fds.push(fd);
-                } else {
-                    //不是合法的fd
-                    return Err(Errno::EBADF);
-                }
+    if len > MAX_FDS {
+        //非法长度
+        return Err(Errno::EINVAL);
+    }
+    if addr == 0 {
+        return Ok(FdSetIter {
+            // kernel_buffer:Vec::new(),
+            fdset: FdSet::new_empty(),
+            files: Vec::new(),
+            fds: Vec::new(),
+        });
+    }
+    // let mut kernel_fs=vec![0;len];
+    // copy_from_user(addr as *const i32,kernel_fs.as_mut_ptr() ,len)?;
+    let fdset = FdSet::from_user(addr, len)?;
+    let task = current_task();
+    let mut files: Vec<Arc<dyn FileOp>> = Vec::new();
+    let mut fds: Vec<usize> = Vec::new();
+    for fd in 0..len {
+        if fdset.check(fd) {
+            // let fd=addr[i] as usize;
+            log::error!("[init_fdset]:fdset check fd {} ", fd);
+            // let file=task.fd_table().get_file(fd).unwrap();
+            if let Some(file) = task.fd_table().get_file(fd) {
+                files.push(file.clone());
+                fds.push(fd);
+            } else {
+                //不是合法的fd
+                return Err(Errno::EBADF);
             }
         }
-        drop(task);
-        fdset.clear();
-        Ok(FdSetIter {
-            fdset,
-            files,
-            fds,
-        })
+    }
+    drop(task);
+    fdset.clear();
+    Ok(FdSetIter { fdset, files, fds })
 }
 // use alloc::{sync::Arc, vec:: Vec};
 // use alloc::vec;

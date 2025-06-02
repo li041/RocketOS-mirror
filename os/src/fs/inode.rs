@@ -1,18 +1,14 @@
 //! new
 use crate::ext4::inode::Ext4Inode;
 use crate::mm::Page;
-use crate::mutex::SpinNoIrqLock;
 use crate::syscall::errno::{Errno, SyscallRet};
 use crate::timer::TimeSpec;
-use log::SetLoggerError;
-use spin::RwLock;
 
-use super::dentry::{Dentry, LinuxDirent64};
+use super::dentry::Dentry;
 use super::kstat::Kstat;
-use super::uapi::{DevT, RenameFlags, StatFs};
+use super::uapi::{DevT, RenameFlags};
 use alloc::string::String;
 use alloc::sync::Arc;
-use alloc::vec::Vec;
 use core::any::Any;
 
 /// 由页缓存直接和block device交互
@@ -24,20 +20,20 @@ pub trait InodeOp: Any + Send + Sync {
         unimplemented!();
     }
     // 用于文件读写
-    fn read<'a>(&'a self, offset: usize, buf: &'a mut [u8]) -> usize {
+    fn read<'a>(&'a self, _offset: usize, _buf: &'a mut [u8]) -> usize {
         unimplemented!();
     }
     // 先查找页缓存, 如果没有则从块设备中读取
-    fn get_page(self: Arc<Self>, page_index: usize) -> Option<Arc<Page>> {
+    fn get_page(self: Arc<Self>, _page_index: usize) -> Option<Arc<Page>> {
         unimplemented!();
     }
-    fn write<'a>(&'a self, page_offset: usize, buf: &'a [u8]) -> usize {
+    fn write<'a>(&'a self, _page_offset: usize, _buf: &'a [u8]) -> usize {
         unimplemented!();
     }
-    fn write_dio<'a>(&'a self, page_offset: usize, buf: &'a [u8]) -> usize {
+    fn write_dio<'a>(&'a self, _page_offset: usize, _buf: &'a [u8]) -> usize {
         unimplemented!();
     }
-    fn truncate<'a>(&'a self, size: usize) {
+    fn truncate<'a>(&'a self, _size: usize) {
         unimplemented!();
     }
     // 返回目录项
@@ -48,7 +44,7 @@ pub trait InodeOp: Any + Send + Sync {
     // 上层调用者保证:
     //      1. 先查找dentry cache, 如果没有再查找目录
     //      3. 上层调用者保证将dentry放进dentry cache中
-    fn lookup<'a>(&'a self, name: &str, parent_dentry: Arc<Dentry>) -> Arc<Dentry> {
+    fn lookup<'a>(&'a self, _name: &str, _parent_dentry: Arc<Dentry>) -> Arc<Dentry> {
         unimplemented!();
     }
     // self是目录inode, name是新建文件的名字, mode是新建文件的类型
@@ -56,7 +52,7 @@ pub trait InodeOp: Any + Send + Sync {
     // 上层调用者保证:
     //      1. 创建的文件名在目录中不存在
     //      2. Dentry的inode字段为None(负目录项)
-    fn create<'a>(&'a self, negative_dentry: Arc<Dentry>, mode: u16) {
+    fn create<'a>(&'a self, _negative_dentry: Arc<Dentry>, _mode: u16) {
         unimplemented!();
     }
     // 由上层调用者保证: 进行了类型 + ancestor + flags检查
@@ -64,38 +60,38 @@ pub trait InodeOp: Any + Send + Sync {
     // self是old_dir, 注意如果移到另一个目录, 需要修改数据块中的`..`
     fn rename<'a>(
         &'a self,
-        new_dir: Arc<dyn InodeOp>,
-        old_dentry: Arc<Dentry>,
-        new_dentry: Arc<Dentry>,
-        flags: RenameFlags,
-        should_mv: bool,
+        _new_dir: Arc<dyn InodeOp>,
+        _old_dentry: Arc<Dentry>,
+        _new_dentry: Arc<Dentry>,
+        _flags: RenameFlags,
+        _should_mv: bool,
     ) -> SyscallRet {
         unimplemented!();
     }
     // self是目录inode, old_dentry是旧的目录项, new_dentry是新的目录项, 他们指向同一个inode
-    fn link<'a>(&'a self, old_dentry: Arc<Dentry>, new_dentry: Arc<Dentry>) {
+    fn link<'a>(&'a self, _old_dentry: Arc<Dentry>, _new_dentry: Arc<Dentry>) {
         unimplemented!();
     }
     // self是目录inode, dentry是符号链接的目录项, target是符号链接的目标
-    fn symlink<'a>(&'a self, dentry: Arc<Dentry>, target: String) {
+    fn symlink<'a>(&'a self, _dentry: Arc<Dentry>, _target: String) {
         unimplemented!();
     }
     // 上层调用者保证:
     //     1. 在unlink调用后, inode的dentry cache中中对应的dentry无效化(变为负目录项)
     //     2. 仅有已有`File`可以访问inode
-    fn unlink<'a>(&'a self, dentry: Arc<Dentry>) -> Result<(), Errno> {
+    fn unlink<'a>(&'a self, _dentry: Arc<Dentry>) -> Result<(), Errno> {
         unimplemented!();
     }
     // 创建临时文件, 用于临时文件系统, inode没有对应的路径, 不会分配目录项
     // 临时文件没有对应的目录项, 只能通过fd进行访问
     // 与create的唯一区别是: 1. 没有对应的目录项
-    fn tmpfile<'a>(&'a self, mode: u16) -> Arc<Ext4Inode> {
+    fn tmpfile<'a>(&'a self, _mode: u16) -> Arc<Ext4Inode> {
         unimplemented!();
     }
-    fn mkdir<'a>(&'a self, dentry: Arc<Dentry>, mode: u16) {
+    fn mkdir<'a>(&'a self, _dentry: Arc<Dentry>, _mode: u16) {
         unimplemented!();
     }
-    fn mknod<'a>(&'a self, dentry: Arc<Dentry>, mode: u16, dev: DevT) {
+    fn mknod<'a>(&'a self, _dentry: Arc<Dentry>, _mode: u16, _dev: DevT) {
         unimplemented!();
     }
     // 检查是否是目录, 且有子目录项可以用于lookup
@@ -104,7 +100,7 @@ pub trait InodeOp: Any + Send + Sync {
     }
     // 上层readdir调用
     // 返回(file_offset, buf_offset)
-    fn getdents(&self, buf: &mut [u8], offset: usize) -> (usize, usize) {
+    fn getdents(&self, _buf: &mut [u8], _offset: usize) -> (usize, usize) {
         unimplemented!();
     }
     // 上层fstat调用
@@ -128,22 +124,22 @@ pub trait InodeOp: Any + Send + Sync {
         unimplemented!();
     }
     // 设置mode, file type + permission bits
-    fn set_mode(&self, mode: u16) {
+    fn set_mode(&self, _mode: u16) {
         unimplemented!();
     }
-    fn set_perm(&self, perm: u16) {
+    fn set_perm(&self, _perm: u16) {
         unimplemented!();
     }
     fn get_uid(&self) -> u32 {
         unimplemented!();
     }
-    fn set_uid(&self, uid: u32) {
+    fn set_uid(&self, _uid: u32) {
         unimplemented!();
     }
     fn get_gid(&self) -> u32 {
         unimplemented!();
     }
-    fn set_gid(&self, gid: u32) {
+    fn set_gid(&self, _gid: u32) {
         unimplemented!();
     }
     // (主设备号, 次设备号)
@@ -154,19 +150,19 @@ pub trait InodeOp: Any + Send + Sync {
     fn get_atime(&self) -> TimeSpec {
         unimplemented!();
     }
-    fn set_atime(&self, atime: TimeSpec) {
+    fn set_atime(&self, _atime: TimeSpec) {
         unimplemented!();
     }
     fn get_mtime(&self) -> TimeSpec {
         unimplemented!();
     }
-    fn set_mtime(&self, mtime: TimeSpec) {
+    fn set_mtime(&self, _mtime: TimeSpec) {
         unimplemented!();
     }
     fn get_ctime(&self) -> TimeSpec {
         unimplemented!();
     }
-    fn set_ctime(&self, ctime: TimeSpec) {
+    fn set_ctime(&self, _ctime: TimeSpec) {
         unimplemented!();
     }
 }

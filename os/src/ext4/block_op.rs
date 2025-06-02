@@ -1,7 +1,7 @@
 //! 用于处理EXT4文件系统的块操作, 如读取目录项, 操作位图等
+use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec;
-use alloc::{string::String, vec::Vec};
 
 use crate::drivers::block::block_cache::get_block_cache;
 use crate::drivers::block::block_dev::BlockDevice;
@@ -330,6 +330,12 @@ impl<'a> Ext4DirContentWE<'a> {
             );
             let dentry_name = String::from_utf8(dentry.name[..].to_vec()).unwrap();
             if dentry_name == name {
+                assert!(
+                    dentry.inode_num == inode_num,
+                    "[Ext4DirContentWE::delete_entry] name match, but inode_num mismatch: expected {}, found {}",
+                    inode_num,
+                    dentry.inode_num
+                );
                 // 删除目录项
                 if rec_len_total == 0 {
                     // 删除的是块中的第一个目录项
@@ -488,15 +494,28 @@ impl<'a> Ext4Bitmap<'a> {
     }
 
     // 注意block_offset只是inode_num % (block_size * 8), 需要上层调用者负责转换
-    pub fn dealloc(&mut self, block_offset: usize) {
-        assert!(
-            block_offset < PAGE_SIZE * 8,
-            "block_offset out of range, block_offset: {}",
-            block_offset
-        );
-        let byte_offset = block_offset / 8;
-        let bit_offset = block_offset % 8;
-        self.bitmap[byte_offset] &= !(1 << bit_offset);
+    pub fn dealloc(&mut self, block_offset: usize, bitmap_size: usize) {
+        // 逐字节处理, 加速dealloc过程
+        let byte_index = block_offset / 8;
+        let bit_index = block_offset % 8;
+        if byte_index < self.bitmap.len() {
+            // 检查是否在bitmap范围内
+            if byte_index < bitmap_size {
+                self.bitmap[byte_index] &= !(1 << bit_index);
+            } else {
+                log::error!(
+                    "Dealloc block offset out of range: {}, bitmap size: {}",
+                    block_offset,
+                    bitmap_size
+                );
+            }
+        } else {
+            log::error!(
+                "Dealloc block offset out of range: {}, bitmap length: {}",
+                block_offset,
+                self.bitmap.len()
+            );
+        }
     }
 }
 

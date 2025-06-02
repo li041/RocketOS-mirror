@@ -14,6 +14,8 @@ use super::{
         meminfo::{self, MEMINFO},
         mounts::{MountsFile, MOUNTS},
         pagemap::PAGEMAP,
+        pid::PID_STAT,
+        status::STATUS,
     },
     FileOld, Stdin, FS_BLOCK_SIZE,
 };
@@ -32,6 +34,7 @@ use crate::{
             zero::ZERO,
         },
         fdtable::{FdEntry, FdFlags},
+        proc::pid::{record_target_pid, TARGERT_PID},
         AT_FDCWD,
     },
     syscall::{errno::Errno, AT_SYMLINK_NOFOLLOW},
@@ -216,7 +219,6 @@ pub fn open_last_lookups(
                 }
             }
         };
-
         return create_file_from_dentry(target_dentry, nd.mnt.clone(), flags);
     }
 }
@@ -260,6 +262,16 @@ fn create_file_from_dentry(
             let pagemap: Arc<dyn FileOp> = PAGEMAP.get().unwrap().clone();
             pagemap.seek(0, super::uapi::Whence::SeekSet).unwrap();
             return Ok(pagemap);
+        }
+        if dentry.absolute_path == "/proc/self/status" {
+            let status: Arc<dyn FileOp> = STATUS.get().unwrap().clone();
+            status.seek(0, super::uapi::Whence::SeekSet).unwrap();
+            return Ok(status);
+        }
+        if dentry.absolute_path == "/proc/pid/stat" {
+            let pid_stat: Arc<dyn FileOp> = PID_STAT.get().unwrap().clone();
+            pid_stat.seek(0, super::uapi::Whence::SeekSet).unwrap();
+            return Ok(pid_stat);
         }
     }
 
@@ -375,24 +387,19 @@ pub fn lookup_dentry(nd: &mut Nameidata) -> Arc<Dentry> {
     let segment = &nd.path_segments[nd.depth];
     let absolute_path = format!("{}/{}", nd.dentry.absolute_path, segment);
     log::debug!("[lookup_dentry] Looking up path: {}", absolute_path);
-
     // 尝试从 dcache 查找
     if let Some(dentry) = lookup_dcache_with_absolute_path(&absolute_path) {
         return dentry;
     }
-
     // log::warn!(
     //     "[lookup_dentry] Cache miss, performing inode lookup for: {}",
     //     segment
     // );
-
     // 从 inode 进行实际查找
     let parent_inode = nd.dentry.get_inode();
     let dentry = parent_inode.lookup(segment, nd.dentry.clone());
-
     // 插入 dentry，无论是正的还是负的
     insert_dentry(dentry.clone());
-
     dentry
 }
 
@@ -562,6 +569,10 @@ pub fn link_path_walk(nd: &mut Nameidata) -> Result<String, Errno> {
             let parent_dentry = nd.dentry.get_parent();
             nd.depth += 1;
             nd.dentry = parent_dentry;
+        } else if nd.path_segments[nd.depth].parse::<usize>().is_ok() {
+            record_target_pid(nd.path_segments[nd.depth].parse::<usize>().unwrap());
+            nd.path_segments[nd.depth] = "pid".to_string();
+            nd.depth += 1;
         } else {
             // name是String
             let mut dentry = lookup_dentry(nd);

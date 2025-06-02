@@ -61,7 +61,7 @@ pub fn sys_clone(
     }
     if flags.contains(CloneFlags::CLONE_CHILD_CLEARTID) {
         log::warn!("[sys_clone] handle CLONE_CHILD_CLEARTID");
-        new_task.set_TAC(children_tid_ptr);
+        new_task.set_tac(children_tid_ptr);
     }
     if flags.contains(CloneFlags::CLONE_SETTLS) {
         log::warn!("[sys_clone] handle CLONE_SETTLS");
@@ -74,7 +74,7 @@ pub fn sys_clone(
     if flags.contains(CloneFlags::CLONE_VFORK) {
         log::warn!("[sys_clone] handle CLONE_VFORK");
         // vfork的特殊处理, 需要阻塞父进程直到子进程调用execve或exit
-       wait();
+        wait();
     }
     drop(task);
     // yield_current_task();
@@ -105,7 +105,7 @@ pub fn sys_clone(
     };
     log::error!("[sys_clone] flags: {:?}", flags);
     let task = current_task();
-    let new_task = task.kernel_clone(&flags, stack_ptr);
+    let new_task = task.kernel_clone(&flags, stack_ptr, chilren_tid_ptr)?;
     let new_task_tid = new_task.tid();
 
     if flags.contains(CloneFlags::CLONE_PARENT_SETTID) {
@@ -119,11 +119,11 @@ pub fn sys_clone(
         let content = (new_task_tid as u64).to_le_bytes();
         log::error!("chilren_tid_ptr: {:x}", parent_tid_ptr);
         copy_to_user(chilren_tid_ptr as *mut u8, &content as *const u8, 8)?;
-        new_task.set_TAS(new_task.tid());
+        new_task.set_tas(new_task.tid());
     }
     if flags.contains(CloneFlags::CLONE_CHILD_CLEARTID) {
         log::warn!("[sys_clone] handle CLONE_CHILD_CLEARTID");
-        new_task.set_TAC(chilren_tid_ptr);
+        new_task.set_tac(chilren_tid_ptr);
     }
     if flags.contains(CloneFlags::CLONE_SETTLS) {
         log::warn!("[sys_clone] handle CLONE_SETTLS");
@@ -259,7 +259,7 @@ pub fn sys_getpgid(pid: usize) -> SyscallRet {
 pub fn sys_set_tid_address(tidptr: usize) -> SyscallRet {
     let task = current_task();
     log::info!("[sys_set_tid_address] tidptr:{:#x}", tidptr);
-    task.set_TAC(tidptr);
+    task.set_tac(tidptr);
     Ok(task.tid())
 }
 
@@ -1108,7 +1108,7 @@ pub fn sys_setfsgid(fsgid: i32) -> SyscallRet {
     log::info!("[sys_setfsgid] fsgid: {}", fsgid);
     let task = current_task();
     let origin_fsgid = task.fsgid() as i32;
-    if task.euid() == 0{
+    if task.euid() == 0 {
         if fsgid != -1 {
             log::warn!(
                 "[sys_setfsgid] task{} is root, set fsgid to {}",

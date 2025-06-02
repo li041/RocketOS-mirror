@@ -1,8 +1,5 @@
 use core::arch::global_asm;
 
-use alloc::sync::Arc;
-use bitflags::bitflags;
-use context::dump_trap_context;
 pub use context::TrapContext;
 use riscv::register::{
     satp,
@@ -17,8 +14,8 @@ use crate::{
     arch::mm::PageTable,
     fs::dentry::clean_dentry_cache,
     mm::VirtAddr,
-    signal::{handle_signal, SiField, Sig, SigInfo},
-    syscall::{errno::Errno, syscall},
+    signal::{handle_signal, SiField, SigInfo},
+    syscall::syscall,
     task::{current_task, handle_timeout, yield_current_task},
 };
 

@@ -1,3 +1,4 @@
+#![allow(unused)]
 use core::ptr;
 
 use alloc::string::String;
@@ -7,10 +8,9 @@ use alloc::vec::Vec;
 use spin::RwLock;
 
 use crate::arch::config::EXT4_MAX_INLINE_DATA;
-use crate::fat32::inode;
 use crate::fs::inode::InodeOp;
 use crate::fs::kstat::Kstat;
-use crate::syscall::errno::{Errno, SyscallRet};
+use crate::syscall::errno::Errno;
 use crate::task::current_task;
 use crate::timer::TimeSpec;
 // use crate::fs::inode::InodeMeta;
@@ -23,11 +23,9 @@ use crate::{
     },
     fs::{dentry::Dentry, page_cache::AddressSpace, FSMutex},
     mm::Page,
-    mutex::SpinNoIrqLock,
 };
 
 use super::block_op::Ext4ExtentBlock;
-use super::extent_tree;
 use super::{
     block_group::GroupDesc,
     dentry::Ext4DirEntry,
@@ -250,20 +248,20 @@ impl Ext4InodeDisk {
     fn is_symlink(&self) -> bool {
         self.mode & S_IFLNK == S_IFLNK
     }
-    fn flags(&self) {
-        log::info!(
-            "\thash indexed directory: {}",
-            self.flags & EXT4_INDEX_FL == EXT4_INDEX_FL
-        );
-        log::info!(
-            "\tinode uses extents: {}",
-            self.flags & EXT4_EXTENTS_FL == EXT4_EXTENTS_FL
-        );
-        log::info!(
-            "\tinode has inline data: {}",
-            self.flags & EXT4_INLINE_DATA_FL == EXT4_INLINE_DATA_FL
-        );
-    }
+    // fn flags(&self) {
+    //     log::info!(
+    //         "\thash indexed directory: {}",
+    //         self.flags & EXT4_INDEX_FL == EXT4_INDEX_FL
+    //     );
+    //     log::info!(
+    //         "\tinode uses extents: {}",
+    //         self.flags & EXT4_EXTENTS_FL == EXT4_EXTENTS_FL
+    //     );
+    //     log::info!(
+    //         "\tinode has inline data: {}",
+    //         self.flags & EXT4_INLINE_DATA_FL == EXT4_INLINE_DATA_FL
+    //     );
+    // }
     pub fn get_blocks(&self) -> u64 {
         self.blocks_lo as u64
     }
@@ -453,12 +451,7 @@ impl Ext4InodeDisk {
         return None;
     }
     // Todo: 未实现根节点非叶子节点的情况
-    pub fn truncate_extents(
-        &mut self,
-        new_block_count: u64,
-        block_device: Arc<dyn BlockDevice>,
-        ext4_block_size: usize,
-    ) -> Result<(), &'static str> {
+    pub fn truncate_extents(&mut self, new_block_count: u64) -> Result<(), &'static str> {
         let mut extent_header = self.extent_header();
 
         if extent_header.depth > 0 {
@@ -504,7 +497,7 @@ impl Ext4InodeDisk {
         ext4_fs: Arc<Ext4FileSystem>,
     ) -> Result<(), &'static str> {
         // 获取当前的 extent 头
-        let mut extent_header = self.extent_header();
+        let extent_header = self.extent_header();
 
         // 1. 遍历找到对应的叶子节点
         if extent_header.depth > 0 {
@@ -1468,11 +1461,20 @@ impl Ext4Inode {
             }
         }
         // 更新extent tree
-        inner.inode_on_disk.truncate_extents(
-            new_block_count,
-            self.block_device.clone(),
-            block_size as usize,
-        );
+        match inner.inode_on_disk.truncate_extents(new_block_count) {
+            Ok(_) => {
+                log::info!(
+                    "[Ext4Inode::truncate_shrink] Successfully truncated extents to {} blocks",
+                    new_block_count
+                );
+            }
+            Err(e) => {
+                log::error!(
+                    "[Ext4Inode::truncate_shrink] Failed to truncate extents: {}",
+                    e
+                );
+            }
+        }
     }
     // 目前仅设置大小
     // Todo:
@@ -1747,28 +1749,28 @@ pub fn load_inode(
 }
 
 // 将inode写回到block_cache
-pub fn modify_inode(inode: &Ext4Inode, block_device: Arc<dyn BlockDevice>) {
-    let ext4_fs = inode.ext4_fs.upgrade().unwrap();
-    let inode_num = inode.inode_num;
-    let inodes_per_group = ext4_fs.super_block.inodes_per_group as usize;
-    let bg = (inode_num - 1) / inodes_per_group;
-    let index = (inode_num - 1) % inodes_per_group;
-    let inode_table_block_id = ext4_fs.block_groups[bg].inode_table() as usize;
-    let outer_offset =
-        index * ext4_fs.super_block.inode_size as usize / ext4_fs.super_block.block_size as usize;
-    let inner_offset =
-        index * ext4_fs.super_block.inode_size as usize % ext4_fs.super_block.block_size as usize;
-    let inode_on_disk = &inode.inner.read().inode_on_disk;
-    get_block_cache(
-        inode_table_block_id + outer_offset,
-        block_device.clone(),
-        ext4_fs.super_block.block_size as usize,
-    )
-    .lock()
-    .modify(inner_offset, |inode_disk: &mut Ext4InodeDisk| {
-        *inode_disk = *inode_on_disk
-    });
-}
+// pub fn modify_inode(inode: &Ext4Inode, block_device: Arc<dyn BlockDevice>) {
+//     let ext4_fs = inode.ext4_fs.upgrade().unwrap();
+//     let inode_num = inode.inode_num;
+//     let inodes_per_group = ext4_fs.super_block.inodes_per_group as usize;
+//     let bg = (inode_num - 1) / inodes_per_group;
+//     let index = (inode_num - 1) % inodes_per_group;
+//     let inode_table_block_id = ext4_fs.block_groups[bg].inode_table() as usize;
+//     let outer_offset =
+//         index * ext4_fs.super_block.inode_size as usize / ext4_fs.super_block.block_size as usize;
+//     let inner_offset =
+//         index * ext4_fs.super_block.inode_size as usize % ext4_fs.super_block.block_size as usize;
+//     let inode_on_disk = &inode.inner.read().inode_on_disk;
+//     get_block_cache(
+//         inode_table_block_id + outer_offset,
+//         block_device.clone(),
+//         ext4_fs.super_block.block_size as usize,
+//     )
+//     .lock()
+//     .modify(inner_offset, |inode_disk: &mut Ext4InodeDisk| {
+//         *inode_disk = *inode_on_disk
+//     });
+// }
 
 /// 将新建的inode写回到block_cache
 /// 注意对于inode的修改, 不调用这个函数

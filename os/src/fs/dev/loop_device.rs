@@ -1,15 +1,14 @@
-use alloc::{fmt::format, format, sync::Arc, vec::Vec};
+use alloc::{sync::Arc, vec::Vec};
 use lazy_static::lazy_static;
 use spin::{Mutex, Once, RwLock};
 
 use crate::{
     arch::mm::{copy_from_user, copy_to_user},
-    ext4::inode::{Ext4Inode, Ext4InodeDisk, S_IFCHR},
+    ext4::inode::{Ext4InodeDisk, S_IFCHR},
     fs::{
         file::{FileOp, OpenFlags},
         inode::InodeOp,
         kstat::Kstat,
-        namei::Nameidata,
         path::Path,
         uapi::DevT,
     },
@@ -36,7 +35,7 @@ pub struct LoopManager {
 impl LoopManager {
     fn new(num: usize) -> Self {
         Self {
-            loops: Vec::with_capacity(4),
+            loops: Vec::with_capacity(num),
         }
     }
 
@@ -302,7 +301,7 @@ impl InodeOp for LoopInode {
     }
 }
 
-struct LoopInodeInner {
+pub struct LoopInodeInner {
     pub inode_on_disk: Ext4InodeDisk,
 }
 

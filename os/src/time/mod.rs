@@ -93,16 +93,16 @@ pub fn do_adjtimex(txc: &mut KernelTimex) -> SyscallRet {
     // println!("do_adjtimex: modes: {:?}", modes);
     let mut ret;
     // 2. 一次性设置偏移：ADJ_SETOFFSET
-    if (modes.contains(TimexModes::ADJ_SETOFFSET)) {
+    if modes.contains(TimexModes::ADJ_SETOFFSET) {
         // 将 txc.time 注入到系统时钟
         let mut delta = TimeSpec::default();
         delta.sec = txc.time.sec;
         delta.nsec = txc.time.usec;
-        if (modes.contains(TimexModes::ADJ_NANO)) {
+        if modes.contains(TimexModes::ADJ_NANO) {
             delta.nsec *= 1000;
         }
         //todo 注入系统时间
-        println!("do_adjtimex: ADJ_SETOFFSET, delta: {:?}", delta);
+        log::info!("do_adjtimex: ADJ_SETOFFSET, delta: {:?}", delta);
         ret = timekeeping_inject_offset(&delta)?;
     }
 
@@ -118,7 +118,7 @@ pub fn do_adjtimex(txc: &mut KernelTimex) -> SyscallRet {
 }
 pub fn timekeeping_inject_offset(delta: &TimeSpec) -> SyscallRet {
     // 这里可以实现将 delta 注入到系统时钟的逻辑
-    if (delta.nsec < 0 || delta.nsec >= NSEC_PER_SEC) {
+    if delta.nsec >= NSEC_PER_SEC {
         return Err(Errno::EINVAL);
     }
     let wall_clock = TimeSpec::new_wall_time();

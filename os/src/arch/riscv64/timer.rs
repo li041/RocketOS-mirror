@@ -1,12 +1,5 @@
-use core::{
-    cmp::Ordering,
-    fmt::Debug,
-    ops::{Add, Sub},
-};
-
 use crate::{
     arch::{boards::qemu::CLOCK_FREQ, sbi::set_timer},
-    mm::{VirtAddr, KERNEL_SPACE},
     timer::{StatxTimeStamp, TimeSpec, TimeVal, MSEC_PER_SEC, TICKS_PER_SEC},
 };
 use riscv::register::time;

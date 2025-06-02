@@ -3,12 +3,16 @@ use core::fmt::Debug;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+#[allow(unused)]
 pub const EXT4_DT_UNKNOWN: u8 = 0x0;
+#[allow(unused)]
 pub const EXT4_DT_REG: u8 = 0x1;
 pub const EXT4_DT_DIR: u8 = 0x2;
 pub const EXT4_DT_CHR: u8 = 0x3;
+#[allow(unused)]
 pub const EXT4_DT_BLK: u8 = 0x4;
 pub const EXT4_DT_FIFO: u8 = 0x5;
+#[allow(unused)]
 pub const EXT4_DT_SOCK: u8 = 0x6;
 pub const EXT4_DT_LNK: u8 = 0x7;
 

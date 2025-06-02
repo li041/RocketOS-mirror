@@ -2,29 +2,22 @@ use core::fmt::{Debug, Formatter};
 
 use alloc::{
     collections::vec_deque::VecDeque,
-    format,
     string::{String, ToString},
     sync::{Arc, Weak},
     vec::Vec,
 };
-use bitflags::Flag;
 use hashbrown::HashMap;
 use lazy_static::lazy_static;
-use log::set_logger;
 use spin::{Mutex, RwLock};
 
 use crate::{
-    arch::config::USER_MAX,
-    ext4::{
-        dentry::{self, Ext4DirEntry},
-        inode::{self, S_IFDIR, S_ISGID, S_ISUID},
-    },
+    ext4::inode::{S_ISGID, S_ISUID},
     mutex::SpinNoIrqLock,
     syscall::errno::{Errno, SyscallRet},
     task::current_task,
 };
 
-use super::{file::OpenFlags, inode::InodeOp, uapi::RenameFlags};
+use super::inode::InodeOp;
 
 bitflags::bitflags! {
     /// 目前只支持type
@@ -50,6 +43,7 @@ impl DentryFlags {
         DentryFlags::from_bits_truncate(self.bits() & DCACHE_ENTRY_TYPE_MASK)
     }
 }
+#[allow(unused)]
 pub const F_OK: i32 = 0; // 检查文件是否存在
 pub const R_OK: i32 = 4; // 检查读权限
 pub const W_OK: i32 = 2; // 检查写权限
@@ -371,13 +365,6 @@ impl Dentry {
     pub fn set_parent(&self, parent: Arc<Dentry>) {
         self.inner.lock().parent = Some(Arc::downgrade(&parent));
     }
-    /// renameat在dentry层次的操作 + inode层次的操作
-    pub fn rename(&self, new_dentry: Option<Arc<Dentry>>, flags: RenameFlags) {
-        // 需要检查, 不能将自己放在自己的子目录下, 需要一个辅助函数
-        // 从旧父目录的dentry中移除自身, 修改路径`absolute_path`, 修改 parent 引用为新的父目录（如果 new_dentry 在其他目录下）。
-        // 添加到新父目录的 children
-        // 注意需要操作底层的inode
-    }
 }
 
 lazy_static! {
@@ -421,11 +408,6 @@ pub fn clean_dentry_cache() {
 
 pub fn lookup_dcache_with_absolute_path(absolute_path: &str) -> Option<Arc<Dentry>> {
     DENTRY_CACHE.read().get(absolute_path)
-}
-
-pub fn lookup_dcache(parent: &Arc<Dentry>, name: &str) -> Option<Arc<Dentry>> {
-    let absolute_path = format!("{}/{}", parent.absolute_path, name);
-    DENTRY_CACHE.read().get(&absolute_path)
 }
 
 pub fn insert_dentry(dentry: Arc<Dentry>) {

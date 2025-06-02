@@ -138,7 +138,7 @@ pub fn sys_tgkill(tgid: isize, tid: isize, sig: i32) -> SyscallRet {
     if !sig.is_valid() || tid < 0 {
         return Err(Errno::EINVAL);
     }
-    
+
     if let Some(task) = get_task(tid as usize) {
         if task.tgid() != tgid as usize {
             return Err(Errno::EINVAL);
@@ -253,7 +253,7 @@ pub fn sys_rt_sigprocmask(how: usize, set: usize, oldset: usize) -> SyscallRet {
         // log::info!("[sys_rt_sigprocmask] current mask {:?}", new_mask);
         new_mask.remove(SigSet::SIGKILL | SigSet::SIGCONT);
         // log::info!("[sys_rt_sigprocmask] new mask {:?}", new_mask);
-        let mut change_mask = SigSet::empty();
+        let mut change_mask;
         match how {
             SIG_BLOCK => {
                 change_mask = new_mask | current_mask;

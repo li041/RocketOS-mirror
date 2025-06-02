@@ -1,4 +1,4 @@
-use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use core::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
 /*
  * @Author: Peter/peterluck2021@163.com
@@ -7,22 +7,22 @@ use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddr
  * @LastEditTime: 2025-05-24 17:09:10
  * @FilePath: /RocketOS_netperfright/os/src/net/addr.rs
  * @Description: addr file
- * 
- * Copyright (c) 2025 by peterluck2021@163.com, All Rights Reserved. 
+ *
+ * Copyright (c) 2025 by peterluck2021@163.com, All Rights Reserved.
  */
 use smoltcp::wire::{IpAddress, IpEndpoint, Ipv4Address, Ipv6Address};
 
 // use super::udp::get_ephemeral_port;
 
-
 pub const UNSPECIFIED_IP: IpAddress = IpAddress::v4(0, 0, 0, 0);
-pub const LOOP_BACK_IP:IpAddress=IpAddress::v4(127, 0, 0, 1);
-pub const LOOP_BACK_ENDPOINT:IpEndpoint=IpEndpoint::new(LOOP_BACK_IP,49152);
+pub const LOOP_BACK_IP: IpAddress = IpAddress::v4(127, 0, 0, 1);
+pub const LOOP_BACK_ENDPOINT: IpEndpoint = IpEndpoint::new(LOOP_BACK_IP, 49152);
 pub const UNSPECIFIED_ENDPOINT: IpEndpoint = IpEndpoint::new(UNSPECIFIED_IP, 0);
 pub fn is_unspecified(ip: IpAddress) -> bool {
-    ip.as_bytes() == [0, 0, 0, 0]||ip.as_bytes()==[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    ip.as_bytes() == [0, 0, 0, 0]
+        || ip.as_bytes() == [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 }
-pub fn from_sockaddr_to_ipendpoint(addr:SocketAddr)->IpEndpoint {
+pub fn from_sockaddr_to_ipendpoint(addr: SocketAddr) -> IpEndpoint {
     // match addr {
     //     SocketAddr::V4(socket_addr_v4) => {
     //         IpEndpoint::new(IpAddress::Ipv4(socket_addr_v4.ip()), socket_addr_v4.port())
@@ -31,13 +31,13 @@ pub fn from_sockaddr_to_ipendpoint(addr:SocketAddr)->IpEndpoint {
     //         IpEndpoint::new(IpAddress::Ipv6(socket_addr_v6.ip()), socket_addr_v6.port())
     //     },
     // }
-    let ip=match addr.ip() {
+    let ip = match addr.ip() {
         core::net::IpAddr::V4(ipv4_addr) => IpAddress::Ipv4(Ipv4Address(ipv4_addr.octets())),
         core::net::IpAddr::V6(ipv6_addr) => IpAddress::Ipv6(Ipv6Address(ipv6_addr.octets())),
     };
-    IpEndpoint{
-        addr:ip,
-        port:addr.port()
+    IpEndpoint {
+        addr: ip,
+        port: addr.port(),
     }
 }
 pub fn from_ipendpoint_to_socketaddr(addr: IpEndpoint) -> SocketAddr {
@@ -50,7 +50,7 @@ pub fn from_ipendpoint_to_socketaddr(addr: IpEndpoint) -> SocketAddr {
         }
         IpAddress::Ipv6(ipv6) => {
             // 转换 smoltcp 的 Ipv6Address 到标准库的 Ipv6Addr
-            let segments = ipv6.0; 
+            let segments = ipv6.0;
             let ipv6_addr = Ipv6Addr::from(segments);
             SocketAddr::V6(SocketAddrV6::new(ipv6_addr, port, 0, 0))
         }

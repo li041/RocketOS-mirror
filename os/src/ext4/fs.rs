@@ -1,12 +1,10 @@
-use super::{inode::Ext4InodeDisk, super_block::Ext4SuperBlockDisk};
+use super::super_block::Ext4SuperBlockDisk;
 use alloc::{sync::Arc, vec::Vec};
 
 use crate::{
-    drivers::block::{self, block_cache::get_block_cache, block_dev::BlockDevice},
+    drivers::block::{block_cache::get_block_cache, block_dev::BlockDevice},
     ext4::{
         block_group::{self, Ext4GroupDescDisk, GroupDesc},
-        block_op::Ext4DirContentRO,
-        inode::Ext4Inode,
         super_block::Ext4SuperBlock,
     },
 };
@@ -38,10 +36,7 @@ impl Ext4FileSystem {
                     ext4_super_block_disk.is_valid(),
                     "[Ext4FileSystem::open()] Error loading super_block!"
                 );
-                Arc::new(Ext4SuperBlock::new(
-                    ext4_super_block_disk,
-                    super_block_cache.clone(),
-                ))
+                Arc::new(Ext4SuperBlock::new(ext4_super_block_disk))
             },
         );
 
@@ -66,7 +61,6 @@ impl Ext4FileSystem {
             );
         }
         log::info!("Group 0 inode_table: {}", block_groups[0].inode_table());
-        let root_group_desc = &block_groups[0].clone();
 
         let ext4_fs = Arc::new(Self {
             super_block,
@@ -109,12 +103,14 @@ impl Ext4FileSystem {
     ) {
         let group_id = global_inode_num / self.super_block.inodes_per_group as usize;
         let local_inode_num = global_inode_num % self.super_block.inodes_per_group as usize;
+        let block_bitmap_size = self.super_block.inodes_per_group as usize / 8;
         self.block_groups[group_id].dealloc_inode(
             block_device.clone(),
             local_inode_num,
             is_dir,
             self.super_block.inode_size as usize,
             self.block_size(),
+            block_bitmap_size,
         );
     }
 

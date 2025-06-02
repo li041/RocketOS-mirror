@@ -1,42 +1,65 @@
-use core::{default, str};
+use core::{default, mem, str};
 
-use spin::{mutex, Once, RwLock};
+use lazy_static::lazy_static;
+use spin::{lazy, mutex, Mutex, Once, RwLock};
 
 use crate::{
+    arch::config::PAGE_SIZE_BITS,
     ext4::inode::Ext4InodeDisk,
     fs::{
         file::{FileOp, OpenFlags},
         inode::InodeOp,
         kstat::Kstat,
-        mount::read_proc_mounts,
         path::Path,
+        uapi::Whence,
         FileOld,
     },
-    syscall::errno::SyscallRet,
+    mm::{MapPermission, VPNRange, VirtPageNum},
+    syscall::errno::{Errno, SyscallRet},
+    task::{current_task, get_task},
     timer::TimeSpec,
 };
 
-use alloc::sync::Arc;
+use alloc::{
+    format,
+    string::{String, ToString},
+    sync::Arc,
+    vec::Vec,
+};
 
-pub static MOUNTS: Once<Arc<dyn FileOp>> = Once::new();
+/*
+    为了提高效率，在查询/proc/[PID]/...时，没有为每个任务创建时建立对应文件夹，
+    而是统一导向至/proc/pid/...文件
+*/
 
-pub struct MountsInode {
-    pub inner: RwLock<MountsInodeInner>,
+lazy_static! {
+    /// 用于记录查询的目标PID
+    pub static ref TARGERT_PID: Arc<Mutex<TargetPid>> = Arc::new(Mutex::new(TargetPid::new(0)));
+}
+pub static PID_STAT: Once<Arc<dyn FileOp>> = Once::new();
+
+/// 记录当前查询的目标PID，仅用于替换/proc/pid/...中的pid
+pub fn record_target_pid(pid: usize) {
+    let mut target_pid = TARGERT_PID.lock();
+    target_pid.pid = pid;
 }
 
-pub struct MountsInodeInner {
+pub struct PidInode {
+    pub inner: RwLock<PidInodeInner>,
+}
+pub struct PidInodeInner {
     pub inode_on_disk: Ext4InodeDisk,
 }
 
-impl MountsInode {
+impl PidInode {
     pub fn new(inode_on_disk: Ext4InodeDisk) -> Arc<Self> {
-        Arc::new(MountsInode {
-            inner: RwLock::new(MountsInodeInner { inode_on_disk }),
+        Arc::new(PidInode {
+            inner: RwLock::new(PidInodeInner { inode_on_disk }),
         })
     }
 }
 
-impl InodeOp for MountsInode {
+impl InodeOp for PidInode {
     fn getattr(&self) -> Kstat {
         let mut kstat = Kstat::new();
         let inner_guard = self.inner.read();
@@ -91,30 +114,36 @@ impl InodeOp for MountsInode {
     fn set_ctime(&self, ctime: TimeSpec) {
         self.inner.write().inode_on_disk.set_ctime(ctime);
     }
-    fn set_mode(&self, mode: u16) {
-        self.inner.write().inode_on_disk.set_mode(mode);
+}
+
+pub struct TargetPid {
+    pub pid: usize,
+}
+
+impl TargetPid {
+    pub fn new(pid: usize) -> Self {
+        TargetPid { pid }
     }
 }
 
-pub struct MountsFile {
+pub struct PidStatFile {
     pub path: Arc<Path>,
     pub inode: Arc<dyn InodeOp>,
     pub flags: OpenFlags,
-    pub inner: RwLock<MountsFileInner>,
+    pub inner: RwLock<PidStatFileInner>,
 }
 
-#[derive(Default)]
-pub struct MountsFileInner {
+pub struct PidStatFileInner {
     pub offset: usize,
 }
 
-impl MountsFile {
+impl PidStatFile {
     pub fn new(path: Arc<Path>, inode: Arc<dyn InodeOp>, flags: OpenFlags) -> Arc<Self> {
-        Arc::new(MountsFile {
+        Arc::new(PidStatFile {
             path,
             inode,
             flags,
-            inner: RwLock::new(MountsFileInner::default()),
+            inner: RwLock::new(PidStatFileInner { offset: 0 }),
         })
     }
     pub fn add_offset(&self, offset: usize) {
@@ -122,21 +151,26 @@ impl MountsFile {
     }
 }
 
-impl FileOp for MountsFile {
-    fn as_any(&self) -> &dyn core::any::Any {
-        self
+impl FileOp for PidStatFile {
+    fn get_inode(&self) -> Arc<dyn InodeOp> {
+        self.inode.clone()
     }
     fn read(&self, buf: &mut [u8]) -> SyscallRet {
-        let mount_info = read_proc_mounts();
-        let len = mount_info.len();
-        if self.inner.read().offset >= len {
-            return Ok(0);
+        let tid = TARGERT_PID.lock().pid;
+        if let Some(task) = get_task(tid) {
+            let task_stat = task.stat();
+            let len = task_stat.len();
+            if self.inner.read().offset >= len {
+                return Ok(0);
+            }
+            buf[..len].copy_from_slice(task_stat.as_bytes());
+            self.add_offset(len);
+            Ok(len)
+        } else {
+            return Err(Errno::ENOENT);
         }
-        buf[..len].copy_from_slice(mount_info.as_bytes());
-        self.add_offset(len);
-        Ok(len)
     }
-    fn seek(&self, offset: isize, whence: crate::fs::uapi::Whence) -> SyscallRet {
+    fn seek(&self, offset: isize, whence: Whence) -> SyscallRet {
         let mut inner_guard = self.inner.write();
         match whence {
             crate::fs::uapi::Whence::SeekSet => {
@@ -149,16 +183,18 @@ impl FileOp for MountsFile {
                 inner_guard.offset = inner_guard.offset.checked_add_signed(offset).unwrap();
             }
             crate::fs::uapi::Whence::SeekEnd => {
-                inner_guard.offset = read_proc_mounts().len().checked_add_signed(offset).unwrap();
+                let tid = TARGERT_PID.lock().pid;
+                if let Some(task) = get_task(tid) {
+                    inner_guard.offset = task.stat().len().checked_add_signed(offset).unwrap();
+                } else {
+                    return Err(Errno::ENOENT);
+                }
             }
         }
         Ok(inner_guard.offset)
     }
     fn readable(&self) -> bool {
         true
-    }
-    fn get_inode(&self) -> Arc<dyn InodeOp> {
-        self.inode.clone()
     }
     fn get_flags(&self) -> OpenFlags {
         self.flags

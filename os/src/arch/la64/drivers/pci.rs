@@ -21,7 +21,6 @@ use crate::{
         virtio_blk::HalImpl,
     },
     drivers::net::init_net_dev_la,
-    mutex::SpinNoIrqLock,
 };
 
 fn virtio_device(transport: impl Transport + 'static) {

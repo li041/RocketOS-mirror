@@ -1,9 +1,6 @@
 mod page_table;
 
-use core::{
-    arch::asm,
-    slice::{from_raw_parts, from_raw_parts_mut},
-};
+use core::arch::asm;
 
 pub use page_table::{map_temp, PTEFlags, PageTable, PageTableEntry};
 use virtio_drivers::PAGE_SIZE;
