@@ -58,7 +58,7 @@ pub const MAX_FDS: usize = 1025;
 
 /// 进程的文件描述符表
 pub struct FdTable {
-    table: RwLock<Vec<Option<FdEntry>>>,
+    pub table: RwLock<Vec<Option<FdEntry>>>,
     rlimit: RwLock<RLimit>,
 }
 

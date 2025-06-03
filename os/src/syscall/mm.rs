@@ -418,6 +418,7 @@ pub fn sys_mmap(
                     memory_set.insert_map_area_lazily(mmap_area);
                 };
             }
+            log::error!("[sys_mmap] alloc area is {:#x}",vpn_range.get_start().0 << PAGE_SIZE_BITS);
             return Ok(vpn_range.get_start().0 << PAGE_SIZE_BITS);
         })
     } else {

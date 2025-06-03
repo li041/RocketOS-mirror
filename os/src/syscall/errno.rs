@@ -91,6 +91,11 @@ pub enum Errno {
     ELOOP = -40,
     /// 对非套接字执行套接字操作
     ENOTSOCK = -88,
+    /// 发送信息超过一次message最大内容
+    EMSGSIZE = -90,
+    ENOPROTOOPT=-92,
+    ///EPROTONOSUPPORT表示不支持所选的套接字协议
+    EPROTONOSUPPORT=-93,
     /// 操作不支持（如对普通文件调用套接字操作）
     EOPNOTSUPP = -95,
     // address family 不支持

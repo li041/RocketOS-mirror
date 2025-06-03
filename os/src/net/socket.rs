@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-03 16:40:04
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-03 17:02:59
+ * @LastEditTime: 2025-06-07 22:25:11
  * @FilePath: /RocketOS_netperfright/os/src/net/socket.rs
  * @Description: socket file
  *
@@ -14,12 +14,12 @@ use core::{
     f64::consts::E,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     ptr::copy_nonoverlapping,
-    sync::atomic::{AtomicBool, AtomicU64},
+    sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
 };
 
 use crate::{
     arch::{config::SysResult, mm::copy_to_user},
-    fs::{fdtable::FdFlags, file::OpenFlags, pipe::Pipe, uapi::IoVec},
+    fs::{fdtable::FdFlags, file::OpenFlags, namei::path_openat, pipe::Pipe, uapi::IoVec},
     net::{
         alg::{encode_text, AlgType},
         udp::get_ephemeral_port,
@@ -28,19 +28,16 @@ use crate::{
     task::{current_task, yield_current_task},
     timer::TimeSpec,
 };
-use alloc::vec;
-use alloc::{
-    string::{String, ToString},
-    sync::Arc,
-    task,
-    vec::Vec,
-};
+use alloc::{string::String, sync::Arc, vec::Vec};
+use alloc::{string::ToString, vec};
+use hashbrown::Equivalent;
 use num_enum::TryFromPrimitive;
 use smoltcp::{
     socket::tcp::{self, State},
     wire::{IpAddress, Ipv4Address},
 };
 use spin::{Mutex, MutexGuard};
+// use crate::{arch::{config::SysResult, mm::copy_to_user}, fs::{fdtable::FdFlags, file::{File, OpenFlags}, namei::path_openat, pipe::Pipe, uapi::IoVec}, net::{alg::{encode_text, AlgType}, udp::get_ephemeral_port, unix::PasswdEntry, SOCKET_SET}, task::{current_task, yield_current_task}, timer::TimeSpec};
 
 use crate::{
     arch::mm::copy_from_user,
@@ -62,6 +59,7 @@ use super::{
 /// Set O_NONBLOCK flag on the open fd
 pub const SOCK_NONBLOCK: usize = 0x800;
 pub const SOCK_CLOEXEC: usize = 0x80000;
+static AF_ALG_WRITE_COUNT: AtomicUsize = AtomicUsize::new(0);
 /// Set FD_CLOEXEC flag on the new fd
 // pub const SOCK_CLOEXEC: usize = 0x80000;
 
@@ -104,6 +102,17 @@ pub enum SocketInner {
     Udp(UdpSocket),
 }
 
+#[derive(Clone, Copy, Debug)]
+#[repr(C)]
+pub struct UCred {
+    /// 进程 ID
+    pub pid: i32,
+    /// 用户 ID
+    pub uid: u32,
+    /// 组 ID
+    pub gid: u32,
+}
+
 ///包装内部不同协议
 pub struct Socket {
     //封装协议类
@@ -121,17 +130,58 @@ pub struct Socket {
     recvtimeout: Mutex<Option<TimeSpec>>,
     dont_route: bool,
     pub buffer: Option<Arc<Pipe>>,
+    //用于send中flag为msg_more时存储，否则为none
+    pub pend_send: Mutex<Option<Vec<u8>>>,
     isaf_alg: AtomicBool,
-    //只有在isaf_alg为true时才有意义
+    isaf_unix: AtomicBool,
+    //只有在isaf_alg为true时才有意义，socketbind时将加密算法存入其中
     pub socket_af_alg: Mutex<Option<SockAddrAlg>>,
+    //只有在isaf_unix为true时才有意义，这个是unix对应socketbind的路径
+    pub socket_path_unix: Mutex<Option<Vec<u8>>>,
+    pub socket_file_unix: Mutex<Option<Arc<dyn FileOp>>>,
+    pub socket_peer_file_unix: Mutex<Option<Arc<dyn FileOp>>>,
+    pub socket_peer_path_unix: Mutex<Option<Vec<u8>>>,
+    //unix connect时会保存对端的Ucred信息，用于getsockopt时写回
+    pub socket_ucred: Mutex<Option<UCred>>,
+    pub socket_peer_ucred: Mutex<Option<UCred>>,
     //密文
     pub socket_af_ciphertext: Mutex<Option<Vec<u8>>>,
+    //unix发送的send内容，往往用于passwd,group的euid,
+    //这里如果sendfd,recvdfd为none则只需要这里读取passwd或者group中内容
     pub socket_nscdrequest: Mutex<Option<NscdRequest>>,
 }
 
 unsafe impl Send for Socket {}
 unsafe impl Sync for Socket {}
+impl UCred {
+    /// 从一个长度 >=12 的字节 slice 中「后 12 字节」解析出 UCred
+    fn from_last_bytes(buf: &[u8]) -> Result<Self, Errno> {
+        if buf.len() < 12 {
+            return Err(Errno::EINVAL);
+        }
+        let start = buf.len() - 12;
+        // 拆出最后 12 字节
+        let pid_bytes = [buf[start], buf[start + 1], buf[start + 2], buf[start + 3]];
+        let uid_bytes = [
+            buf[start + 4],
+            buf[start + 5],
+            buf[start + 6],
+            buf[start + 7],
+        ];
+        let gid_bytes = [
+            buf[start + 8],
+            buf[start + 9],
+            buf[start + 10],
+            buf[start + 11],
+        ];
 
+        let pid = i32::from_ne_bytes(pid_bytes);
+        let uid = u32::from_ne_bytes(uid_bytes);
+        let gid = u32::from_ne_bytes(gid_bytes);
+
+        Ok(UCred { pid, uid, gid })
+    }
+}
 impl Socket {
     // fn nagle_enabled(&self)->bool {
     //     match &self.inner {
@@ -181,6 +231,70 @@ impl Socket {
     fn set_congestion(&self, congestion: String) {
         *self.congestion.lock() = congestion;
     }
+    pub fn set_pend_send(&self, buf: &[u8]) {
+        // 锁住 mutex，得到 &mut Option<Vec<u8>>
+        let mut guard = self.pend_send.lock();
+        match &mut *guard {
+            Some(vec) => {
+                // 已有 Vec，就追加
+                vec.extend_from_slice(buf);
+            }
+            None => {
+                // 之前没 Vec，就新建一个并插入
+                let mut new_vec = Vec::with_capacity(buf.len());
+                new_vec.extend_from_slice(buf);
+                *guard = Some(new_vec);
+            }
+        }
+    }
+    pub fn is_pend_send(&self) -> bool {
+        self.pend_send.lock().is_none()
+    }
+    pub fn get_pend_send(&self) -> Vec<u8> {
+        self.pend_send.lock().clone().unwrap()
+    }
+    pub fn set_ucred(&self, pid: i32, uid: u32, gid: u32) {
+        let cred = UCred {
+            pid: pid,
+            uid: uid,
+            gid: gid,
+        };
+        *self.socket_ucred.lock() = Some(cred);
+    }
+    pub fn get_ucred(&self) -> UCred {
+        match self.socket_ucred.lock().clone() {
+            Some(u) => u,
+            None => {
+                let task = current_task();
+                let ucred = UCred {
+                    pid: task.tid() as i32,
+                    uid: task.uid(),
+                    gid: task.gid(),
+                };
+                return ucred;
+            }
+        }
+    }
+    pub fn set_peer_ucred(&self, pid: i32, uid: u32, gid: u32) {
+        let cred = UCred {
+            pid: pid,
+            uid: uid,
+            gid: gid,
+        };
+        *self.socket_peer_ucred.lock() = Some(cred);
+    }
+    pub fn get_peer_ucred(&self) -> UCred {
+        self.socket_peer_ucred.lock().clone().unwrap()
+    }
+    pub fn set_is_af_unix(&self, flag: bool) {
+        self.isaf_unix.store(flag, Ordering::Release);
+    }
+    pub fn get_is_af_unix(&self) -> bool {
+        self.isaf_unix.load(Ordering::Acquire)
+    }
+    pub fn set_unix_path(&self, path: &[u8]) {
+        *self.socket_path_unix.lock() = Some(path.to_vec());
+    }
     pub fn set_ciphertext(&self, ciphertext: &[u8]) {
         *self.socket_af_ciphertext.lock() = Some(ciphertext.to_vec());
     }
@@ -206,10 +320,18 @@ impl Socket {
             recvtimeout: Mutex::new(None),
             congestion: Mutex::new(String::from("reno")),
             buffer: None,
+            pend_send: Mutex::new(None),
             isaf_alg: AtomicBool::new(false),
+            isaf_unix: AtomicBool::new(false),
             socket_af_alg: Mutex::new(None),
             socket_af_ciphertext: Mutex::new(None),
             socket_nscdrequest: Mutex::new(None),
+            socket_path_unix: Mutex::new(None),
+            socket_peer_path_unix: Mutex::new(None),
+            socket_file_unix: Mutex::new(None),
+            socket_peer_file_unix: Mutex::new(None),
+            socket_ucred: Mutex::new(None),
+            socket_peer_ucred: Mutex::new(None),
         }
     }
     pub fn set_nonblocking(&self, block: bool) {
@@ -248,6 +370,25 @@ impl Socket {
         self.isaf_alg
             .store(af, core::sync::atomic::Ordering::Release);
     }
+    pub fn get_socket_path(&self) -> Vec<u8> {
+        self.socket_path_unix.lock().clone().unwrap_or_default()
+    }
+    pub fn set_socket_peer_path(&self, path: &[u8]) {
+        *self.socket_peer_path_unix.lock() = Some(path.to_vec());
+    }
+    pub fn get_unix_file(&self) -> Arc<dyn FileOp> {
+        self.socket_file_unix.lock().clone().unwrap()
+    }
+    pub fn get_peer_unix_file(&self) -> Arc<dyn FileOp> {
+        self.socket_peer_file_unix.lock().clone().unwrap()
+    }
+    pub fn set_unix_file(&self, file: Arc<dyn FileOp>) {
+        *self.socket_file_unix.lock() = Some(file);
+    }
+    pub fn set_peer_unix_file(&self, file: Arc<dyn FileOp>) {
+        *self.socket_peer_file_unix.lock() = Some(file);
+    }
+
     pub fn get_bound_address(&self) -> Result<SocketAddr, Errno> {
         match &self.inner {
             SocketInner::Tcp(tcp_socket) => {
@@ -272,12 +413,93 @@ impl Socket {
             SocketInner::Udp(udp_socket) => udp_socket.bind(local_addr),
         }
     }
+    pub fn bind_check_unix(&self, path: &str) -> bool {
+        // 1. 从当前任务的 fd_table 拿出 fd = 3 对应的 Socket
+        let task = current_task();
+        let fd_table = task.fd_table();
+        for (fd, _) in fd_table.table.read().iter().enumerate() {
+            let file = match fd_table.get_file(fd) {
+                Some(f) => f,
+                None => continue,
+            };
+            //避免不是socket的进入判断
+            let socket = match file.as_any().downcast_ref::<Socket>() {
+                Some(s) => s,
+                None => continue,
+            };
+            if socket.domain == Domain::AF_UNIX {
+                //这里只要bind过的unix必然会设置path,如果没有设置必然是当前的socket
+                // let guard = socket.socket_path_unix.lock();
+                // let path_opt = guard.as_ref();
+                // let guard_path = match path_opt {
+                //     Some(p) => p,
+                //     None => continue,
+                // };
+                let guard_path = socket.get_socket_path();
+                //由于前面已经判断过path是否存在
+                let p = core::str::from_utf8(guard_path.as_slice()).unwrap();
+                if p.eq(path) {
+                    log::error!(
+                        "[bind_check_unix] self path is {:?},other path is {:?}",
+                        path,
+                        p
+                    );
+                    return false;
+                }
+            }
+        }
+        true
+    }
+    pub fn connect_check_unix(&self, path: &str, sockfd: usize) -> Option<usize> {
+        // 1. 从当前任务的 fd_table 拿出 fd = 3 对应的 Socket
+        let task = current_task();
+        let fd_table = task.fd_table();
+        let mut maxfd: usize = 0;
+        for (fd, _) in fd_table.table.read().iter().enumerate() {
+            let file = match fd_table.get_file(fd) {
+                Some(f) => f,
+                None => continue,
+            };
+            //避免不是socket的进入判断
+            let socket = match file.as_any().downcast_ref::<Socket>() {
+                Some(s) => s,
+                None => continue,
+            };
+            if socket.domain == Domain::AF_UNIX && fd < sockfd {
+                //这里只要bind过的unix必然会设置path,如果没有设置必然是当前的socket
+                let guard = socket.socket_path_unix.lock();
+                let path_opt = guard.as_ref();
+                let guard_path = match path_opt {
+                    Some(p) => p,
+                    None => continue,
+                };
+                //由于前面已经判断过path是否存在
+                let p = core::str::from_utf8(guard_path.as_slice()).unwrap();
+                if p.eq(path) {
+                    log::error!(
+                        "[bind_check_unix] self path is {:?},other path is {:?}",
+                        path,
+                        p
+                    );
+                    if fd > maxfd {
+                        maxfd = fd
+                    }
+                }
+            }
+        }
+        if maxfd != 0 {
+            Some(maxfd)
+        } else {
+            None
+        }
+    }
+
     pub fn bind_af_alg(&self, addr: SockAddrAlg) -> SyscallRet {
         if self.domain != Domain::AF_ALG {
             log::error!("[Socket_bind_af_alg]:the socket domain is not AF_ALG");
             panic!();
         }
-        ///必须是af_alg的socket
+        //必须是af_alg的socket
         assert!(
             addr.salg_family == Domain::AF_ALG as u16,
             "[Socket_bind_af_alg]:the socket domain is not AF_ALG"
@@ -340,10 +562,18 @@ impl Socket {
                             recv_buf_size: AtomicU64::new(64 * 1024),
                             congestion: Mutex::new(String::from("reno")),
                             buffer: None,
+                            pend_send: Mutex::new(None),
                             isaf_alg: AtomicBool::new(false),
+                            isaf_unix: AtomicBool::new(false),
                             socket_af_alg: Mutex::new(None),
                             socket_af_ciphertext: Mutex::new(None),
                             socket_nscdrequest: Mutex::new(None),
+                            socket_path_unix: Mutex::new(None),
+                            socket_peer_path_unix: Mutex::new(None),
+                            socket_file_unix: Mutex::new(None),
+                            socket_peer_file_unix: Mutex::new(None),
+                            socket_ucred: Mutex::new(None),
+                            socket_peer_ucred: Mutex::new(None),
                         },
                         from_ipendpoint_to_socketaddr(remote_addr),
                     ))
@@ -380,10 +610,93 @@ impl Socket {
             recv_buf_size: AtomicU64::new(64 * 1024),
             congestion: Mutex::new(String::from("reno")),
             buffer: None,
+            pend_send: Mutex::new(None),
             isaf_alg: AtomicBool::new(true),
+            isaf_unix: AtomicBool::new(false),
             socket_af_alg: Mutex::new(self.socket_af_alg.lock().clone()),
             socket_af_ciphertext: Mutex::new(None),
+            socket_path_unix: Mutex::new(None),
             socket_nscdrequest: Mutex::new(None),
+            socket_peer_path_unix: Mutex::new(None),
+            socket_file_unix: Mutex::new(None),
+            socket_peer_file_unix: Mutex::new(None),
+            socket_ucred: Mutex::new(None),
+            socket_peer_ucred: Mutex::new(None),
+        })
+    }
+    pub fn accept_unix(&self) -> Result<Self, Errno> {
+        // assert!(self.domain==Domain::AF_ALG,"[Socket_accept_alg]:the socket domain is not AF_ALG");
+        if self.domain != Domain::AF_UNIX {
+            log::error!("[Socket_accept_unix]:the socket domain is not AF_ALG");
+            return Err(Errno::EOPNOTSUPP);
+        }
+        // assert!(self.get_is_af_alg()==true,"[Socket_accept_alg]:the socket is not af_alg");
+        if !self.get_is_af_unix() {
+            log::error!("[Socket_accept_unix]:the socket is not af_alg");
+            return Err(Errno::EOPNOTSUPP);
+        }
+        //连接方式是让peer将路径写入自己的路径中，所以在自己路径中读取即可
+        let mut peer_path: Vec<u8> = vec![0; 120];
+
+        let binding = self.get_socket_path();
+        let s_path = core::str::from_utf8(binding.as_slice()).unwrap();
+        let mut count = 0;
+        loop {
+            let file = path_openat(s_path, OpenFlags::O_CLOEXEC, -100, 0)?;
+            if file.r_ready() {
+                let n = file.read(peer_path.as_mut_slice())?;
+                if peer_path[..n].iter().all(|&b| b == 0) {
+                    log::error!("[Socket_accept_unix] wait for connect");
+                    yield_current_task();
+                    if count > 50 {
+                        return Err(Errno::ETIMEDOUT);
+                    }
+                } else {
+                    peer_path.truncate(n);
+                    break;
+                }
+            } else {
+                yield_current_task();
+            }
+            count += 1;
+        }
+        let file = self.get_unix_file();
+        let tmp: Vec<u8> = vec![0; 120];
+        file.pwrite(tmp.as_slice(), 0)?;
+        log::error!("[Socket_accept_unix] peer path is {:?}", peer_path);
+        let peer_ucred = UCred::from_last_bytes(peer_path.as_slice())?;
+        self.set_peer_ucred(peer_ucred.pid, peer_ucred.uid, peer_ucred.gid);
+        log::error!("[accept_unix] accept peer ucred is {:?}", peer_ucred);
+        //截取路径
+        let path_len = peer_path.len().saturating_sub(size_of::<UCred>() + 1);
+        peer_path.truncate(path_len);
+        let s_peer = core::str::from_utf8(peer_path.as_slice()).unwrap();
+        log::error!("[accept_unix] accept peer path is {:?} ", s_peer);
+        let peer_file = path_openat(s_peer, OpenFlags::O_CLOEXEC, -100, 0)?;
+        Ok(Socket {
+            dont_route: false,
+            domain: self.domain.clone(),
+            socket_type: self.socket_type,
+            inner: SocketInner::Tcp(TcpSocket::new()),
+            recvtimeout: Mutex::new(None),
+            close_exec: AtomicBool::new(false),
+            send_buf_size: AtomicU64::new(64 * 1024),
+            recv_buf_size: AtomicU64::new(64 * 1024),
+            congestion: Mutex::new(String::from("reno")),
+            buffer: None,
+            pend_send: Mutex::new(None),
+            isaf_alg: AtomicBool::new(false),
+            isaf_unix: AtomicBool::new(true),
+            socket_af_alg: Mutex::new(None),
+            socket_af_ciphertext: Mutex::new(None),
+            socket_path_unix: Mutex::new(self.socket_path_unix.lock().clone()),
+            socket_peer_path_unix: Mutex::new(Some(peer_path)),
+            socket_nscdrequest: Mutex::new(None),
+            socket_file_unix: Mutex::new(self.socket_file_unix.lock().clone()),
+            socket_peer_file_unix: Mutex::new(Some(peer_file)),
+            //todo
+            socket_ucred: Mutex::new(self.socket_ucred.lock().clone()),
+            socket_peer_ucred: Mutex::new(self.socket_peer_ucred.lock().clone()),
         })
     }
 
@@ -426,15 +739,11 @@ impl Socket {
     }
 
     pub fn send(&self, buf: &[u8], addr: SocketAddr) -> Result<usize, Errno> {
-        // if self.domain==Domain::AF_UNIX {
-        //     //unix本地回环网络
-        //     return self.buffer.as_ref().unwrap().write(buf);
-        // }
         match &self.inner {
             SocketInner::Tcp(tcp_socket) => {
                 if tcp_socket.is_closed() {
                     log::error!("[Socket_send]:The local socket has been closed");
-                    // panic!()
+                    return Err(Errno::EPIPE);
                 }
                 //accept时已经有remote_addr并写入了
                 tcp_socket.send(buf)
@@ -456,7 +765,7 @@ impl Socket {
         let req_type = RequestType::try_from(raw_req).map_err(|_| Errno::EINVAL)?;
         tmp4.copy_from_slice(&buf[4..8]);
         let raw_db = u32::from_le_bytes(tmp4);
-        let db = if raw_db == 0 {
+        let db = if raw_db == 3 {
             None
         } else {
             Some(Database::try_from(raw_db).map_err(|_| Errno::EINVAL)?)
@@ -489,10 +798,12 @@ impl Socket {
     pub fn recv_from(&self, buf: &mut [u8]) -> Result<(usize, SocketAddr), Errno> {
         //这里暂时保留unix本地回环网络的接受，需要pipe?
         if self.domain == Domain::AF_UNIX {
-            if self.buffer.is_none() {
-                log::error!("[socket_read] buffer is none");
+            let path = self.socket_path_unix.lock().clone().unwrap();
+            let s_path = core::str::from_utf8(path.as_slice()).unwrap();
+            if s_path.contains("/etc") {
+                log::error!("[recv_from] buffer is none");
                 let passwd_blob = PasswdEntry::passwd_lookup(self, buf.len())?;
-                log::error!("[socket_read]:len is {:?}", passwd_blob.len());
+                log::error!("[recv_from]:len is {:?}", passwd_blob.len());
 
                 // 2) 把 blob 里的字节一次性 copy 进用户给的 buf
                 //    只要 blob.len() <= buf.len()，就不会越界
@@ -503,14 +814,37 @@ impl Socket {
                         passwd_blob.len(),
                     );
                 }
+                //写回用户buf
                 return Ok((
                     passwd_blob.len(),
                     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
                 ));
             }
-            let ans = self.buffer.as_ref().unwrap().read(buf)?;
+            let self_path = self.get_socket_path();
+            let s_self = core::str::from_utf8(self_path.as_slice()).unwrap();
+            loop {
+                let file = path_openat(s_self, OpenFlags::O_CLOEXEC, -100, 0)?;
+                if file.r_ready() {
+                    let mut flag: Vec<u8> = vec![0; 1];
+                    file.pread(flag.as_mut_slice(), 128)?;
+                    log::error!("[socket read] flag is {:?}", flag);
+                    if flag[0] == 0 {
+                        yield_current_task();
+                        continue;
+                    }
+                    //说明写入了
+                    file.read(buf)?;
+                    log::error!("[socket read] unix buf is {:?}", buf);
+                    let tmp: Vec<u8> = vec![0; 200];
+                    file.pwrite(tmp.as_slice(), 0)?;
+                    break;
+                } else {
+                    // drop(file);
+                    yield_current_task();
+                }
+            }
             return Ok((
-                ans,
+                buf.len(),
                 SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
             ));
         }
@@ -552,6 +886,9 @@ impl Socket {
         }
     }
     pub fn name(&self) -> Result<SocketAddr, Errno> {
+        if self.domain == Domain::AF_UNIX {
+            return Ok(from_ipendpoint_to_socketaddr(UNSPECIFIED_ENDPOINT));
+        }
         match &self.inner {
             SocketInner::Tcp(tcp_socket) => {
                 // from_ipendpoint_to_socketaddr(tcp_socket.local_addr().unwrap())
@@ -673,7 +1010,6 @@ pub fn check_alg(sa: &SockAddrAlg) -> SyscallRet {
     // 其它情况都合法
     Ok(0)
 }
-
 pub unsafe fn socket_address_from_unix(
     addr: *const u8,
     len: usize,
@@ -683,67 +1019,79 @@ pub unsafe fn socket_address_from_unix(
         socket.domain == Domain::AF_UNIX,
         "[socket_address_from_unix]: the socket domain is not AF_UNIX"
     );
-    let addr = addr as *const u8;
-    log::error!("[socket_address_from]addr is {:?}", addr);
-    log::error!(
-        "[socket_address_from]:vpn is {:?}",
-        VirtPageNum::from(addr as usize)
-    );
-    // 从用户空间拷贝原始数据
+
+    // 从用户地址空间拷贝原始数据
     let mut kernel_buf: Vec<u8> = vec![0; len];
     copy_from_user(addr, kernel_buf.as_mut_ptr(), len)?;
 
-    // 跳过前两个字节（sockaddr_un.sa_family）
+    // `sockaddr_un` 头部前两个字节是 sa_family，我们先跳过
+    // 这样 raw_path 对应的就是 sun_path 字段的整个内容，长度为 len - 2
     let raw_path = &kernel_buf[2..];
 
-    // 找第一个 '\0' 作为结尾
-    let path_len = raw_path
+    // 如果第一个字节是 '\0'，那么这是“抽象命名空间”：
+    //   抽象套接字的名字从 raw_path[1] 开始，到第一个 '\0'（如果有）结束，
+    //   或者直到 raw_path 的末尾。
+    // 否则就是普通的“基于路径”的 AF_UNIX，此时名字从 raw_path[0] 开始，
+    //   到第一个 '\0'（如果有）结束，或到 raw_path 末尾。
+    let (is_abstract, name_slice) = if raw_path.first() == Some(&0) {
+        // 抽象命名空间：跳过 raw_path[0] 的 '\0'
+        (&raw_path[0] == &0, &raw_path[1..])
+    } else {
+        (false, raw_path)
+    };
+
+    // 在 name_slice 中找到第一个 '\0' 作为实际名称结束的位置
+    let name_len = name_slice
         .iter()
         .position(|&b| b == 0)
-        .unwrap_or(raw_path.len());
+        .unwrap_or(name_slice.len());
 
-    // （可选）验证 UTF-8，确保日志可读
-    core::str::from_utf8(&raw_path[..path_len]).expect("Invalid UTF-8 in socket path");
+    // （可选）验证 UTF-8，以便后续日志可读。如果不是 UTF-8，这里会 panic
+    // 只读到 name_len 长度，不索引 beyond
+    if let Ok(name_str) = core::str::from_utf8(&name_slice[..name_len]) {
+        if is_abstract {
+            log::error!(
+                "[socket_address_from_unix]: abstract name = \"{}\" ({} bytes)",
+                name_str,
+                name_len
+            );
+        } else {
+            log::error!(
+                "[socket_address_from_unix]: filesystem path = \"{}\" ({} bytes)",
+                name_str,
+                name_len
+            );
+        }
+    } else {
+        // 如果不是合法 UTF-8，也没关系，直接跳过日志
+        // 用户还是会拿到一段 Vec<u8>：
+    }
 
-    // 只返回实际用到的部分
-    Ok(raw_path[..path_len].to_vec())
+    // 最后返回提取出的那部分字节
+    Ok(name_slice[..name_len].to_vec())
 }
 
-pub unsafe fn socket_address_from(addr: *const u8, len: usize, socket: &Socket) -> SocketAddr {
+pub unsafe fn socket_address_from(
+    addr: *const u8,
+    len: usize,
+    socket: &Socket,
+) -> Result<SocketAddr, Errno> {
     let addr = addr as *const u8;
     log::error!("[socket_address_from]addr is {:?}", addr);
     log::error!(
         "[socket_address_from]:vpn is {:?}",
         VirtPageNum::from(addr as usize)
     );
+    if addr as usize == 0xffffffffffffffff {
+        return Err(Errno::EFAULT);
+    }
     let mut kernel_addr_from_user: Vec<u8> = vec![0; len];
-    copy_from_user(addr, kernel_addr_from_user.as_mut_ptr(), len);
+    copy_from_user(addr, kernel_addr_from_user.as_mut_ptr(), len)?;
+    let family_bytes = [kernel_addr_from_user[0], kernel_addr_from_user[1]];
+    if family_bytes[0] == 47 {
+        return Err(Errno::EAFNOSUPPORT);
+    }
     match socket.domain {
-        // let raw_path = &kernel_addr_from_user[2..];
-        //     // 找到第一个 '\0'（C 字符串终结符）
-        //     let path_len = raw_path.iter().position(|&b| b == 0).unwrap_or(raw_path.len());
-        //     // 验证 UTF-8（可选，只是为了确保日志打印不出乱码）
-        //     if core::str::from_utf8(&raw_path[..path_len]).is_err() {
-        //         panic!()
-        //     }
-        //     log::error!(
-        //         "[socket_address_from] AF_UNIX: invalid UTF-8 in path {:?}",
-        //         &raw_path[..path_len]
-        //     );
-        //     // 用一个定长数组来存储 path
-        //     let mut sun_path = [0u8; 300];
-        //     sun_path[..path_len].copy_from_slice(&raw_path[..path_len]);
-        //     log::error!(
-        //         "[socket_address_from] AF_UNIX path (len={}): {:?}",
-        //         path_len,
-        //         &sun_path[..path_len]
-        //     );
-
-        //     //todo
-        //     return SocketAddr::(UnixSocketAddr {
-        //         path: sun_path,
-        //         len: path_len,
-        //     });
         //i这里的unix,af_alg无用
         Domain::AF_INET
         | Domain::AF_UNIX
@@ -759,30 +1107,37 @@ pub unsafe fn socket_address_from(addr: *const u8, len: usize, socket: &Socket) 
             let a = ip_be.to_be_bytes();
             log::error!("[socket_address_from] addr is {:?},port is {:?}", a, port);
             if a[0] == 32 {
-                //fake
-                // println!("fake1");
-                let addr = Ipv4Addr::new(10, 0, 2, 2);
-                return SocketAddr::V4(SocketAddrV4::new(addr, 5555));
+                let addr = Ipv4Addr::new(127, 0, 0, 1);
+                return Ok(SocketAddr::V4(SocketAddrV4::new(
+                    addr,
+                    get_ephemeral_port() - 1,
+                )));
             }
             if a[0] == 255 {
                 // println!("fake2");
                 let addr = Ipv4Addr::new(127, 0, 0, 1);
-                return SocketAddr::V4(SocketAddrV4::new(addr, get_ephemeral_port() - 1));
+                return Ok(SocketAddr::V4(SocketAddrV4::new(
+                    addr,
+                    get_ephemeral_port() - 1,
+                )));
             }
             if a[0] == 0 && port == 65535 {
                 // println!("fake3 and the port is {:?}",port);
                 let addr = Ipv4Addr::new(127, 0, 0, 1);
-                SocketAddr::V4(SocketAddrV4::new(addr, port))
+                Ok(SocketAddr::V4(SocketAddrV4::new(addr, port)))
             } else if a[0] == 0 && port != 5001 {
                 // println!("fake3 and the port is {:?}",port);
                 let addr = Ipv4Addr::new(127, 0, 0, 1);
-                SocketAddr::V4(SocketAddrV4::new(addr, get_ephemeral_port() - 1))
+                Ok(SocketAddr::V4(SocketAddrV4::new(
+                    addr,
+                    get_ephemeral_port() - 1,
+                )))
             } else if a[0] == 0 && port == 5001 {
                 let addr = Ipv4Addr::new(127, 0, 0, 1);
-                SocketAddr::V4(SocketAddrV4::new(addr, port))
+                Ok(SocketAddr::V4(SocketAddrV4::new(addr, port)))
             } else {
                 let addr = Ipv4Addr::new(a[0], a[1], a[2], a[3]);
-                SocketAddr::V4(SocketAddrV4::new(addr, port))
+                Ok(SocketAddr::V4(SocketAddrV4::new(addr, port)))
             }
         }
         Domain::AF_INET6 => {
@@ -826,21 +1181,24 @@ pub unsafe fn socket_address_from(addr: *const u8, len: usize, socket: &Socket) 
             if ip_bytes[0] == 32 {
                 // 这里举例一个本地链路地址 fe80::1
                 let fake_ip = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1);
-                SocketAddr::V6(SocketAddrV6::new(fake_ip, 5555, 0, 0))
+                Ok(SocketAddr::V6(SocketAddrV6::new(fake_ip, 5555, 0, 0)))
             } else {
                 if port == 5001 {
                     let addr = Ipv4Addr::new(127, 0, 0, 1);
-                    SocketAddr::V4(SocketAddrV4::new(addr, port))
+                    Ok(SocketAddr::V4(SocketAddrV4::new(addr, port)))
                 } else if port == 65535 && task.exe_path().contains("netperf") {
                     let addr = Ipv4Addr::new(127, 0, 0, 1);
-                    SocketAddr::V4(SocketAddrV4::new(addr, 12865))
+                    Ok(SocketAddr::V4(SocketAddrV4::new(addr, 12865)))
                 } else if port == 35091 {
                     let addr = Ipv4Addr::new(127, 0, 0, 1);
-                    SocketAddr::V4(SocketAddrV4::new(addr, 5001))
+                    Ok(SocketAddr::V4(SocketAddrV4::new(addr, 5001)))
                 } else {
                     // println!("fake4");
                     let addr = Ipv4Addr::new(127, 0, 0, 1);
-                    SocketAddr::V4(SocketAddrV4::new(addr, get_ephemeral_port() - 1))
+                    Ok(SocketAddr::V4(SocketAddrV4::new(
+                        addr,
+                        get_ephemeral_port() - 1,
+                    )))
                 }
             }
         }
@@ -893,6 +1251,52 @@ pub fn socket_address_to(sockaddr: SocketAddr, addr: usize, addr_len: usize) -> 
     // 成功时返回写入字节数
     Ok(required_bytes)
 }
+#[repr(C)]
+struct SockAddrUn {
+    sun_family: u16,
+    sun_path: [u8; 108],
+}
+pub fn socket_address_tounix(path: &[u8], addr: usize, len: usize) -> SyscallRet {
+    // 1. 先计算整个 struct sockaddr_un 的大小
+    let required_bytes = size_of::<SockAddrUn>();
+    if len < required_bytes {
+        // 用户给的 buffer 太小，至少要能装下整个 sockaddr_un
+        return Err(Errno::ENOMEM);
+    }
+
+    // 2. 准备一个本地的 SockAddrUn，并填充 sun_family 和 sun_path
+    let mut sun = SockAddrUn {
+        // sun_family 存储 AF_UNIX（以主机字节序存储）
+        sun_family: Domain::AF_UNIX as u16,
+        // sun_path 全体先清零
+        sun_path: [0u8; 108],
+    };
+
+    // 3. 把传进来的 path 字节拷到 sun.sun_path 里
+    //    需要确保 path.len() <= 108，否则截断
+    let copy_len = core::cmp::min(path.len(), sun.sun_path.len());
+    sun.sun_path[..copy_len].copy_from_slice(&path[..copy_len]);
+
+    //    注意：
+    //    - 如果 path[0] == 0，就是抽象命名空间；后面一并拷到 sun_path。
+    //    - 如果 path 是普通的文件系统路径（例如 b"/tmp/foo.sock\0"），
+    //      最好 path 本身最后带一个 '\0'，这样拷进去后 sun_path 就自动有末尾的 NUL。
+    //    - 如果 path 里没有 '\0' 结尾，也可以把它当作 “最长 copy_len 字节” 来用，
+    //      但是原则上用户传进来的应该包含一个 NUL 让 C 端能正确识别结束。
+
+    // 4. 将完整的 sockaddr_un（即 sun）拷贝到用户空间
+    let user_ptr = addr as *mut u8;
+    unsafe {
+        copy_to_user(
+            user_ptr,
+            (&sun as *const SockAddrUn).cast::<u8>(),
+            required_bytes,
+        )?;
+    }
+
+    // 5. 成功时，返回写入的字节数
+    Ok(required_bytes)
+}
 
 impl FileOp for Socket {
     fn as_any(&self) -> &dyn core::any::Any {
@@ -904,16 +1308,22 @@ impl FileOp for Socket {
             "[socket_read]:begin recv socket,recv len is {:?}",
             buf.len()
         );
+        log::error!(
+            "[socket_read]:socket domain {:?},type is {:?}",
+            self.domain,
+            self.socket_type
+        );
         if self.domain == Domain::AF_UNIX {
-            //unix本地回环网络
-            if self.buffer.is_none() {
+            yield_current_task();
+            let path = self.socket_path_unix.lock().clone().unwrap();
+            let s_path = core::str::from_utf8(path.as_slice()).unwrap();
+            if s_path.contains("/etc") {
                 let passwd_blob = PasswdEntry::passwd_lookup(self, buf.len())?;
                 log::error!("[socket_read]: passwd blob len is {:?}", passwd_blob.len());
                 if buf.len() < passwd_blob.len() {
                     log::error!("[socket_read]: buf is too small,buf len is {:?}", buf.len());
                     return Err(Errno::ENOMEM);
                 }
-
                 // 2) 把 blob 里的字节一次性 copy 进用户给的 buf
                 //    只要 blob.len() <= buf.len()，就不会越界
                 unsafe {
@@ -929,12 +1339,46 @@ impl FileOp for Socket {
                 );
                 return Ok((passwd_blob.len()));
             }
-            return self.buffer.as_ref().unwrap().read(buf);
+            //todo 写回用户buf
+            // let file=self.get_unix_file();
+            // let bind=self.socket_path_unix.lock();
+            // let self_path=bind.as_ref().unwrap();
+            let self_path = self.get_socket_path();
+            let s_self = core::str::from_utf8(self_path.as_slice()).unwrap();
+            loop {
+                let file = path_openat(s_self, OpenFlags::O_CLOEXEC, -100, 0)?;
+                if file.r_ready() {
+                    let mut flag: Vec<u8> = vec![0; 1];
+                    file.pread(flag.as_mut_slice(), 128)?;
+                    log::error!("[socket read] flag is {:?}", flag);
+                    if flag[0] == 0 {
+                        yield_current_task();
+                        continue;
+                    }
+                    //说明写入了
+                    file.read(buf)?;
+                    log::error!("[socket read] unix buf is {:?}", buf);
+                    let tmp: Vec<u8> = vec![0; 200];
+                    file.pwrite(tmp.as_slice(), 0)?;
+                    break;
+                } else {
+                    // drop(file);
+                    yield_current_task();
+                }
+            }
+            return Ok(buf.len());
         }
         if self.domain == Domain::AF_ALG {
             let mut bind = self.socket_af_ciphertext.lock();
-            let ciphertext = bind.as_mut().unwrap();
+            let ciphertext = match bind.as_mut() {
+                Some(s) => s,
+                None => {
+                    return Err(Errno::EINVAL);
+                }
+            };
             log::error!("[socket_read] ciphertext is {:?}", ciphertext);
+            //判断ciphertext
+
             unsafe {
                 core::ptr::copy_nonoverlapping(
                     ciphertext.as_ptr(),
@@ -997,7 +1441,19 @@ impl FileOp for Socket {
     fn write<'a>(&'a self, buf: &'a [u8]) -> SyscallRet {
         log::error!("[socket_write]:begin send socket");
         if self.domain == Domain::AF_UNIX {
-            return self.buffer.as_ref().unwrap().write(buf);
+            log::error!("[socket_write] write buf is {:?}", buf);
+            let path = self.socket_peer_path_unix.lock().clone().unwrap();
+            let s_path = core::str::from_utf8(path.as_slice()).unwrap();
+            if s_path.contains("/etc") {
+                return self.unix_send(buf);
+            } else {
+                let file = self.get_peer_unix_file();
+                if file.w_ready() {
+                    let res = file.pwrite(buf, 0)?;
+                    file.pwrite(&[1], 128)?;
+                    return Ok(res);
+                }
+            }
         }
         if self.domain == Domain::AF_ALG {
             //这里的buf只是纯粹的明文，直接加密
@@ -1007,6 +1463,8 @@ impl FileOp for Socket {
                 buf.len()
             );
             encode_text(self, buf)?;
+            AF_ALG_WRITE_COUNT.fetch_add(1, Ordering::SeqCst);
+            log::error!("[socket_write] write count {:?}", AF_ALG_WRITE_COUNT);
             return Ok(buf.len());
         }
         //log::error!("[socket_write]:buf is {:?}",buf);
@@ -1045,6 +1503,7 @@ impl FileOp for Socket {
         // log::error!("[sokcet_readable]:poll readable");
         if self.domain == Domain::AF_UNIX {
             //这里将寻找的文件中内容返回给进程
+            log::error!("[sokcet_readable]:unix socket readable");
             return true;
         }
         // yield_current_task();
@@ -1136,6 +1595,7 @@ pub enum SocketOption {
     SO_KEEPALIVE = 9,
     SO_RCVTIMEO = 20,
     SO_SNDTIMEO = 21,
+    SO_PEERCRED = 17,
 }
 #[derive(TryFromPrimitive, PartialEq)]
 #[repr(usize)]
@@ -1144,6 +1604,7 @@ pub enum TcpSocketOption {
     TCP_NODELAY = 1, // disable nagle algorithm and flush
     TCP_MAXSEG = 2,
     TCP_INFO = 11,
+    SO_OOBINLINE = 10,
     TCP_CONGESTION = 13,
 }
 
@@ -1296,6 +1757,10 @@ impl SocketOption {
             SocketOption::SO_SNDTIMEO => {
                 panic!("can't set SO_ERROR");
             }
+            SocketOption::SO_PEERCRED => {
+                //todo,getsockopt里面没有设置这个
+                Ok(0)
+            }
         }
     }
 
@@ -1427,6 +1892,47 @@ impl SocketOption {
             SocketOption::SO_SNDTIMEO => {
                 panic!("unimplemented!")
             }
+            SocketOption::SO_PEERCRED => {
+                // 首先准备好 UCred 结构体的大小
+                let needed = core::mem::size_of::<UCred>(); // 12 字节 (i32 + u32 + u32)
+                if buf_len < needed {
+                    panic!("can't write ucred to socket opt value: buffer too small");
+                }
+
+                // 假设 socket.get_peer_ucred() 返回一个 UCred { pid: i32, uid: u32, gid: u32 }
+                let peer_ucred = socket.get_peer_ucred();
+
+                // 按照 “pid | uid | gid” 顺序把各字段转换为本机字节序的 4 字节数组
+                let pid_bytes = peer_ucred.pid.to_ne_bytes(); // [u8; 4]
+                let uid_bytes = peer_ucred.uid.to_ne_bytes(); // [u8; 4]
+                let gid_bytes = peer_ucred.gid.to_ne_bytes(); // [u8; 4]
+
+                unsafe {
+                    #[cfg(target_arch = "riscv64")]
+                    {
+                        // RISC-V64 下直接用 core::ptr::copy_nonoverlapping 向 opt_value 写入
+                        use core::ptr::copy_nonoverlapping;
+
+                        // 写入 pid (偏移 0..4)
+                        copy_nonoverlapping(pid_bytes.as_ptr(), opt_value, 4);
+                        // 写入 uid (偏移 4..8)
+                        copy_nonoverlapping(uid_bytes.as_ptr(), opt_value.add(4), 4);
+                        // 写入 gid (偏移 8..12)
+                        copy_nonoverlapping(gid_bytes.as_ptr(), opt_value.add(8), 4);
+                    }
+
+                    #[cfg(target_arch = "loongarch64")]
+                    {
+                        // LoongArch64 下用 copy_to_user 向 opt_value 写入
+                        copy_to_user(opt_value, pid_bytes.as_ptr(), 4);
+                        copy_to_user(opt_value.add(4), uid_bytes.as_ptr(), 4);
+                        copy_to_user(opt_value.add(8), gid_bytes.as_ptr(), 4);
+                    }
+
+                    // 最后把写入的长度写回给用户
+                    *opt_len = needed as u32;
+                }
+            }
         }
     }
 }
@@ -1455,6 +1961,7 @@ impl TcpSocketOption {
                 rawsocket.set_congestion(String::from_utf8(Vec::from(opt)).unwrap());
                 Ok(0)
             }
+            TcpSocketOption::SO_OOBINLINE => Ok(0),
         }
     }
 
@@ -1507,6 +2014,7 @@ impl TcpSocketOption {
                     *opt_len = bytes.len() as u32;
                 };
             }
+            TcpSocketOption::SO_OOBINLINE => {}
         }
     }
 }
@@ -1555,6 +2063,9 @@ impl ALG_Option {
         }
     }
 }
+
+///一般用于sendmsg和receivemsg中的内容，主要用于获取明文，发送密文
+///当然也可以直接使用write发送明文i加密即可
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct MessageHeaderRaw {
