@@ -80,6 +80,8 @@ pub struct MapArea {
     /// 文件映射
     pub backend_file: Option<Arc<dyn FileOp>>,
     pub offset: usize,
+
+    pub locked: bool, // 是否被锁定, 用于文件映射
 }
 
 impl Debug for MapArea {
@@ -110,6 +112,7 @@ impl MapArea {
         map_perm: MapPermission,
         backed_file: Option<Arc<dyn FileOp>>,
         offset: usize,
+        locked: bool,
     ) -> Self {
         Self {
             vpn_range,
@@ -118,6 +121,7 @@ impl MapArea {
             map_type,
             backend_file: backed_file,
             offset,
+            locked,
         }
     }
 }
@@ -133,6 +137,7 @@ impl MapArea {
             map_perm: map_area.map_perm,
             backend_file: map_area.backend_file.clone(),
             offset: map_area.offset,
+            locked: false, // 锁定状态不保持
         }
     }
 }
@@ -162,7 +167,8 @@ impl MapArea {
             MapType::Filebe => {
                 let file = self.backend_file.as_ref().unwrap();
                 for vpn in self.vpn_range {
-                    // 文件映射, 应该在缺页时处理
+                    // 文件映射, 大部分在缺页时处理
+                    // MAP_POPULATE
                     log::error!("[MapArea::map] unexpected filebe mapping");
                     let offset = self.offset
                         + (self.vpn_range.get_start().0 - self.vpn_range.get_start().0) * PAGE_SIZE;
@@ -270,6 +276,7 @@ impl MapArea {
             map_perm: self.map_perm,
             backend_file: self.backend_file.clone(),
             offset: new_area_offset,
+            locked: self.locked, // 锁定状态保持
         };
         // 将原有的frames划分到新区域
         self.pages.retain(|vpn, page| {
@@ -310,6 +317,7 @@ impl MapArea {
             map_perm: self.map_perm,
             backend_file: self.backend_file.clone(),
             offset: xmap_area_offset,
+            locked: self.locked, // 锁定状态保持
         };
         // 3. 设置新区域的开始地址: [xmap_end, end)
         let new_vpn_range = VPNRange::new(unmap_end, old_vpn_end);
@@ -326,6 +334,7 @@ impl MapArea {
             map_perm: self.map_perm,
             backend_file: self.backend_file.clone(),
             offset: new_area_offset,
+            locked: self.locked, // 锁定状态保持
         };
         // 将原有的frames划分到新区域
         self.pages.retain(|vpn, page| {

@@ -34,7 +34,10 @@ use crate::{
             zero::ZERO,
         },
         fdtable::{FdEntry, FdFlags},
-        proc::pid::{record_target_pid, TARGERT_PID},
+        proc::{
+            pid::{record_target_pid, TARGERT_PID},
+            tainted::TAINTED,
+        },
         AT_FDCWD,
     },
     syscall::{errno::Errno, AT_SYMLINK_NOFOLLOW},
@@ -272,6 +275,11 @@ fn create_file_from_dentry(
             let pid_stat: Arc<dyn FileOp> = PID_STAT.get().unwrap().clone();
             pid_stat.seek(0, super::uapi::Whence::SeekSet).unwrap();
             return Ok(pid_stat);
+        }
+        if dentry.absolute_path == "/proc/sys/kernel/tainted" {
+            // /proc/sys/kernel/tainted
+            let tainted_file = TAINTED.get().unwrap().clone();
+            return Ok(tainted_file);
         }
     }
 

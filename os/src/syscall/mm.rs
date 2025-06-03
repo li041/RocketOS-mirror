@@ -62,6 +62,7 @@ pub fn sys_brk(brk: usize) -> SyscallRet {
                     MapPermission::R | MapPermission::W | MapPermission::U,
                     None,
                     0,
+                    false,
                 );
                 memory_set.push_anoymous_area(heap_area);
             } else {
@@ -247,6 +248,8 @@ bitflags! {
         const MAP_DENYWRITE = 0x800;
         // MAP_GROWSDOWN, 用于栈的映射, 允许向下增长
         const MAP_GROWSDOWN = 0x100;
+        /// Todo: 锁定映射的内存页, 防止被交换到磁盘
+        const MAP_LOCKED = 0x2000;
         const MAP_NORESERVE = 0x4000;
         // MAP_POPULATE, 预先填充页表, 提高访问速度
         const MAP_POPULATE = 0x8000;
@@ -327,6 +330,12 @@ pub fn sys_mmap(
     if flags.contains(MmapFlags::MAP_DENYWRITE) {
         log::warn!("[sys_mmap] MAP_DENYWRITE not implemented");
     }
+    let locked = if flags.contains(MmapFlags::MAP_LOCKED) {
+        log::warn!("[sys_mmap] MAP_LOCKED set");
+        true
+    } else {
+        false
+    };
     // 加上U权限
     map_perm |= MapPermission::U;
     if flags.contains(MmapFlags::MAP_SHARED) {
@@ -391,18 +400,20 @@ pub fn sys_mmap(
             };
             if map_perm.contains(MapPermission::S) {
                 // 共享映射, 直接分配物理页
-                memory_set.insert_framed_area(vpn_range, map_perm);
+                memory_set.insert_framed_area(vpn_range, map_perm, locked);
             } else {
                 // 匿名私有映射懒分配
                 if flags.contains(MmapFlags::MAP_GROWSDOWN) {
                     // 如果是栈的映射, 则需要将起始虚拟页号减1(保护页包含在vpn_range中, 以便于在访问保护页时, 通过懒分配向下增长)
                     vpn_range.set_start(VirtPageNum(vpn_range.get_start().0 - 1));
-                    let mmap_area = MapArea::new(vpn_range, MapType::Stack, map_perm, None, 0);
+                    let mmap_area =
+                        MapArea::new(vpn_range, MapType::Stack, map_perm, None, 0, locked);
                     memory_set.insert_map_area_lazily(mmap_area);
                 } else {
                     // 懒分配
                     log::info!("[sys_mmap] lazy allocation for anonymous mapping");
-                    let mmap_area = MapArea::new(vpn_range, MapType::Framed, map_perm, None, 0);
+                    let mmap_area =
+                        MapArea::new(vpn_range, MapType::Framed, map_perm, None, 0, locked);
                     memory_set.insert_map_area_lazily(mmap_area);
                 };
             }
@@ -457,14 +468,25 @@ pub fn sys_mmap(
                 map_perm.remove(MapPermission::W);
                 map_perm.insert(MapPermission::COW);
             }
+            let mut mmap_area = MapArea::new(
+                vpn_range,
+                MapType::Filebe,
+                map_perm,
+                Some(file),
+                offset,
+                locked,
+            );
             if flags.contains(MmapFlags::MAP_POPULATE) {
-                memory_set.insert_framed_area(vpn_range, map_perm);
+                // 预先填充页表
+                log::info!("[sys_mmap] populate pages for file mapping");
+                mmap_area.map(&mut memory_set.page_table);
+                memory_set
+                    .areas
+                    .insert(mmap_area.vpn_range.get_start(), mmap_area);
             } else {
-                let mmap_area =
-                    MapArea::new(vpn_range, MapType::Filebe, map_perm, Some(file), offset);
+                // 懒分配
                 memory_set.insert_map_area_lazily(mmap_area);
             }
-            // memory_set.insert_framed_area(vpn_range, map_perm);
             log::error!(
                 "[sys_mmap] file return {:#x}",
                 vpn_range.get_start().0 << PAGE_SIZE_BITS

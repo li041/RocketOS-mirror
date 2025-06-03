@@ -59,6 +59,9 @@ impl InodeOp for Ext4Inode {
     fn truncate<'a>(&'a self, size: usize) {
         self.truncate(size as u64)
     }
+    fn fallocate<'a>(&'a self, mode: i32, offset: usize, len: usize) -> SyscallRet {
+        self.fallocate(mode, offset, len)
+    }
     // 上层调用者应先查找DentryCache, 如果没有才调用该函数
     // 先查找parent_entry的child(child是惰性加载的), 如果还没有则从目录中查找
     // name在parent_entry下的命名空间下, 不是绝对路径, 例如`/a/b/c`中的`c`, parent_entry是`/a/b`

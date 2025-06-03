@@ -273,6 +273,15 @@ impl VPNRange {
     pub fn contains_vpn(self, other: VirtPageNum) -> bool {
         self.get_start() <= other && other < self.get_end()
     }
+    pub fn intersection(&self, other: &Self) -> Option<Self> {
+        let start: VirtPageNum = self.get_start().max(other.get_start());
+        let end: VirtPageNum = self.get_end().min(other.get_end());
+        if start < end {
+            Some(VPNRange::new(start, end))
+        } else {
+            None
+        }
+    }
 }
 
 impl Debug for VPNRange {

@@ -381,12 +381,6 @@ pub fn sys_adjtimex(user_timex: *mut KernelTimex) -> SyscallRet {
     log::error!("[sys_adjtimex] task uid: {:?}", task.euid());
     let mut kernel_timex = KernelTimex::default();
 
-    // let len = size_of::<KernelTime
-    copy_from_user(
-        user_timex as *const KernelTimex,
-        core::ptr::addr_of_mut!(kernel_timex),
-        1,
-    )?;
     //todo
     if kernel_timex.modes != 0 && task.euid() != 0 {
         return Err(Errno::EPERM);
@@ -397,10 +391,14 @@ pub fn sys_adjtimex(user_timex: *mut KernelTimex) -> SyscallRet {
             return Err(Errno::EINVAL);
         }
     }
-    println!("[sys_adjtimex] kernel_timex: {:?}", kernel_timex);
+    copy_from_user(
+        user_timex as *const KernelTimex,
+        core::ptr::addr_of_mut!(kernel_timex),
+        1,
+    )?;
+    log::info!("[sys_adjtimex] kernel_timex: {:?}", kernel_timex);
     let status = do_adjtimex(&mut kernel_timex)?;
-
-    let out_from = (&kernel_timex as *const KernelTimex);
+    let out_from = &kernel_timex as *const KernelTimex;
     copy_to_user(user_timex, out_from, 1)?;
     Ok(status as usize)
 }

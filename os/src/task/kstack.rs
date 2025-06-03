@@ -34,7 +34,7 @@ pub fn kstack_alloc() -> usize {
     );
     KERNEL_SPACE
         .lock()
-        .insert_framed_area(vpn_range, MapPermission::R | MapPermission::W);
+        .insert_framed_area(vpn_range, MapPermission::R | MapPermission::W, false);
     kstack_top
 }
 

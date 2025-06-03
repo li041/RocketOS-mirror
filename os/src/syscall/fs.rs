@@ -3,9 +3,10 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use alloc::string::ToString;
+use virtio_drivers::PAGE_SIZE;
 
 use crate::arch::timer::get_time_ms;
-use crate::fs::dentry::{dentry_check_access, dentry_chown};
+use crate::fs::dentry::{dentry_check_access, dentry_chown, F_OK, R_OK, W_OK, X_OK};
 use crate::fs::fd_set::init_fdset;
 use crate::fs::fdtable::FdFlags;
 use crate::fs::file::OpenFlags;
@@ -14,6 +15,7 @@ use crate::fs::mount::get_mount_by_dentry;
 use crate::fs::namei::lookup_dentry;
 use crate::fs::pipe::make_pipe;
 use crate::fs::uapi::{DevT, PollEvents, PollFd, RenameFlags, StatFs, UtimenatFlags, Whence};
+use crate::mm::{MapType, VPNRange, VirtAddr, VirtPageNum};
 use crate::signal::{Sig, SigSet};
 use crate::syscall::errno::Errno;
 use crate::task::yield_current_task;
@@ -216,6 +218,12 @@ pub fn sys_writev(fd: usize, iov_ptr: *const IoVec, iovcnt: usize) -> SyscallRet
         }
         let mut ker_buf = vec![0u8; iovec.len];
         copy_from_user(iovec.base as *const u8, ker_buf.as_mut_ptr(), iovec.len)?;
+        log::warn!(
+            "[sys_writev] iovec.base: {:#x}, iovec.len: {}, ker_buf: {:?}",
+            iovec.base,
+            iovec.len,
+            ker_buf
+        );
         let written = file.write(&ker_buf)?;
         // 如果写入失败, 则返回已经写入的字节数, 或错误码
         if written == 0 {
@@ -466,7 +474,7 @@ pub fn sys_mknodat(dirfd: i32, pathname: *const u8, mode: usize, dev: u64) -> Sy
 pub fn sys_mkdirat(dirfd: isize, pathname: *const u8, mode: usize) -> SyscallRet {
     let path = c_str_to_string(pathname)?;
     log::info!(
-        "[sys_mkdirat] dirfd: {}, pathname: {:?}, mode: {}",
+        "[sys_mkdirat] dirfd: {}, pathname: {:?}, mode: {:#o}",
         dirfd,
         path,
         mode
@@ -592,6 +600,54 @@ pub fn sys_chdir(pathname: *const u8) -> SyscallRet {
     match filename_lookup(&mut nd, fake_lookup_flags) {
         Ok(dentry) => {
             current_task().set_pwd(Path::new(nd.mnt, dentry));
+            Ok(0)
+        }
+        Err(e) => {
+            log::info!("[sys_chdir] fail to chdir: {}, {:?}", path, e);
+            Err(e)
+        }
+    }
+}
+
+pub fn sys_fchdir(fd: usize) -> SyscallRet {
+    log::info!("[sys_fchdir] fd: {}", fd);
+    let task = current_task();
+    if let Some(file) = task.fd_table().get_file(fd as usize) {
+        let path = file.get_path();
+        current_task().set_pwd(path);
+        Ok(0)
+    } else {
+        log::error!("[sys_fchdir] fd {} not opened", fd);
+        Err(Errno::EBADF)
+    }
+}
+
+pub fn sys_chroot(pathname: *const u8) -> SyscallRet {
+    let path = c_str_to_string(pathname)?;
+    log::info!("[sys_chroot] pathname: {:?}", path);
+    if path.len() > NAME_MAX {
+        log::error!("[sys_chroot] pathname is too long: {}", path.len());
+        return Err(Errno::ENAMETOOLONG);
+    }
+    let task = current_task();
+    let mut nd = Nameidata::new(&path, AT_FDCWD)?;
+    let fake_lookup_flags = 0;
+    match filename_lookup(&mut nd, fake_lookup_flags) {
+        Ok(dentry) => {
+            if !dentry.is_dir() {
+                log::error!("[sys_chroot] chroot path must be a directory");
+                return Err(Errno::ENOTDIR);
+            }
+            // Todo: 权限检查, 目前仅允许root用户执行chroot
+            if !dentry.can_search() {
+                log::error!("[sys_chroot] chroot path must be searchable");
+                return Err(Errno::EACCES);
+            }
+            if task.fsuid() != 0 {
+                log::error!("[sys_chroot] only root can chroot");
+                return Err(Errno::EPERM);
+            }
+            current_task().set_root(Path::new(nd.mnt, dentry));
             Ok(0)
         }
         Err(e) => {
@@ -1566,9 +1622,8 @@ pub fn sys_fallocate(fd: usize, mode: i32, offset: usize, len: usize) -> Syscall
             log::error!("[sys_fallocate] fallocate on a directory");
             return Err(Errno::EISDIR);
         }
-        // return file.fallocate(mode, offset, len);
-        log::warn!("[sys_fallocate] Unimplemented");
-        return Ok(0); // Todo: 目前不支持fallocate, 直接返回成功
+        return file.fallocate(mode, offset, len);
+        // return Ok(0); // Todo: 目前不支持fallocate, 直接返回成功
     }
     Err(Errno::EBADF)
 }
@@ -1624,10 +1679,20 @@ pub const AT_EACCESS: i32 = 0x200;
 /// 检查进程是否可以访问指定的文件
 /// Todo: 目前只检查pathname指定的文件是否存在, 没有检查权限
 pub fn sys_faccessat(fd: usize, pathname: *const u8, mode: i32, flags: i32) -> SyscallRet {
-    log::warn!("[sys_faccessat] Unimplemented");
     let path = c_str_to_string(pathname)?;
     if path.is_empty() {
         log::error!("[sys_faccessat] pathname is empty");
+        return Err(Errno::EINVAL);
+    }
+    // 检查 mode 是否合法：只能包含 F_OK, R_OK, W_OK, X_OK
+    if mode & !(F_OK | R_OK | W_OK | X_OK) != 0 {
+        log::error!("[sys_faccessat] Invalid mode: {}", mode);
+        return Err(Errno::EINVAL);
+    }
+    // 检查 flags 是否只包含支持的标志
+    let supported_flags = AT_EACCESS | AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH;
+    if flags & !supported_flags != 0 {
+        log::error!("[sys_faccessat] Unsupported flags: {:#x}", flags);
         return Err(Errno::EINVAL);
     }
     log::info!(
@@ -1638,8 +1703,7 @@ pub fn sys_faccessat(fd: usize, pathname: *const u8, mode: i32, flags: i32) -> S
         flags
     );
     let mut nd = Nameidata::new(&path, fd as i32)?;
-    let fake_lookup_flags = 0;
-    let dentry = filename_lookup(&mut nd, fake_lookup_flags)?;
+    let dentry = filename_lookup(&mut nd, flags)?;
     if mode == 0 {
         // mode为0表示只检查文件是否存在
         return Ok(0);
@@ -1658,10 +1722,65 @@ pub fn sys_fsync(fd: usize) -> SyscallRet {
     Ok(0)
 }
 
+pub const MS_ASYNC: i32 = 1;
+pub const MS_SYNC: i32 = 4;
+pub const MS_INVALIDATE: i32 = 2;
+
 pub fn sys_msync(addr: usize, len: usize, flags: i32) -> SyscallRet {
-    log::warn!("Unimplemented sys_msync");
     log::info!("[sys_msync] addr: {}, len: {}, flags: {}", addr, len, flags);
-    Ok(0)
+    if addr % PAGE_SIZE != 0 {
+        log::error!("[sys_msync] addr is not page aligned");
+        return Err(Errno::EINVAL);
+    }
+    if flags & !(MS_ASYNC | MS_SYNC | MS_INVALIDATE) != 0 {
+        log::error!("[sys_msync] Invalid flags: {:#x}", flags);
+        return Err(Errno::EINVAL);
+    }
+    if flags & MS_ASYNC != 0 && flags & MS_SYNC != 0 {
+        log::error!("[sys_msync] MS_ASYNC and MS_SYNC cannot be used together");
+        return Err(Errno::EINVAL);
+    }
+    let start_vpn = VirtAddr::from(addr).floor();
+    let end_vpn = VirtAddr::from(addr + len).ceil();
+    let mut covered_vpn: VirtPageNum = end_vpn;
+    let sync_range = VPNRange::new(start_vpn, end_vpn);
+    current_task().op_memory_set_mut(|mm| {
+        for (_vpn, area) in mm.areas.range_mut(..end_vpn).rev() {
+            if let Some(overlap_range) = area.vpn_range.intersection(&sync_range) {
+                // 如果内存区域与同步范围有交集, 则进行同步
+                log::info!(
+                    "[sys_msync] Syncing memory area: {:?} for range: {:?}",
+                    area,
+                    overlap_range
+                );
+                if area.map_type != MapType::Filebe {
+                    log::error!(
+                        "[sys_msync] Only file-backed memory areas can be synced, found: {:?}",
+                        area.map_type
+                    );
+                    return Err(Errno::ENOMEM);
+                }
+                if area.locked {
+                    log::error!("[sys_msync] Memory area is locked, cannot sync");
+                    return Err(Errno::EBUSY);
+                }
+                area.pages
+                    .range_mut(overlap_range.get_start()..overlap_range.get_end())
+                    .for_each(|(_vpn, page)| {
+                        page.sync();
+                    });
+                covered_vpn = overlap_range.get_start();
+            } else {
+                // 如果内存区域与同步范围没有交集, 则可以退出
+                break;
+            }
+        }
+        if covered_vpn == start_vpn {
+            return Ok(0);
+        } else {
+            return Err(Errno::ENOMEM);
+        }
+    })
 }
 
 pub fn sys_fchmod(fd: usize, mode: usize) -> SyscallRet {

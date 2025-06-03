@@ -165,6 +165,7 @@ impl MemorySet {
                 MapPermission::R | MapPermission::X | MapPermission::G,
                 None,
                 0,
+                false,
             ),
             None,
             0,
@@ -180,6 +181,7 @@ impl MemorySet {
                 MapPermission::R | MapPermission::X | MapPermission::U,
                 None,
                 0,
+                false,
             ),
             None,
             0,
@@ -195,6 +197,7 @@ impl MemorySet {
                 MapPermission::R | MapPermission::X | MapPermission::G,
                 None,
                 0,
+                false,
             ),
             None,
             0,
@@ -211,6 +214,7 @@ impl MemorySet {
                 MapPermission::R | MapPermission::G,
                 None,
                 0,
+                false,
             ),
             None,
             0,
@@ -227,6 +231,7 @@ impl MemorySet {
                 // MapPermission::R | MapPermission::W | MapPermission::A | MapPermission::D,
                 None,
                 0,
+                false,
             ),
             None,
             0,
@@ -243,6 +248,7 @@ impl MemorySet {
                 // MapPermission::R | MapPermission::W | MapPermission::A | MapPermission::D,
                 None,
                 0,
+                false,
             ),
             None,
             0,
@@ -259,6 +265,7 @@ impl MemorySet {
                 // MapPermission::R | MapPermission::W | MapPermission::A | MapPermission::D,
                 None,
                 0,
+                false,
             ),
             None,
             0,
@@ -276,6 +283,7 @@ impl MemorySet {
                     // MapPermission::R | MapPermission::W | MapPermission::A | MapPermission::D,
                     None,
                     0,
+                    false,
                 ),
                 None,
                 0,
@@ -295,6 +303,7 @@ impl MemorySet {
                     MapPermission::R | MapPermission::W,
                     None,
                     0,
+                    false,
                 ),
                 None,
                 0,
@@ -382,7 +391,7 @@ impl MemorySet {
                 }
                 let vpn_range = VPNRange::new(start_va.floor(), end_va.ceil());
                 max_end_vpn = vpn_range.get_end();
-                let map_area = MapArea::new(vpn_range, MapType::Framed, map_perm, None, 0);
+                let map_area = MapArea::new(vpn_range, MapType::Framed, map_perm, None, 0, false);
                 // 对齐到页
 
                 let map_offset = start_va.0 - start_va.floor().0 * PAGE_SIZE;
@@ -492,7 +501,7 @@ impl MemorySet {
                             }
                             let vpn_range = VPNRange::new(start_va.floor(), end_va.ceil());
                             let map_area =
-                                MapArea::new(vpn_range, MapType::Framed, map_perm, None, 0);
+                                MapArea::new(vpn_range, MapType::Framed, map_perm, None, 0, false);
 
                             let map_offset = start_va.0 - start_va.floor().0 * PAGE_SIZE;
                             log::info!(
@@ -540,6 +549,7 @@ impl MemorySet {
             MapPermission::R | MapPermission::W | MapPermission::U,
             None,
             0,
+            false,
         );
         memory_set.push_anoymous_area(ustack_map_area);
 
@@ -578,7 +588,7 @@ impl MemorySet {
         if argv.len() > 0 {
             let file_name = &argv[0];
             // 文件后缀是.sh或者file_data是#!开头
-            if file_name.ends_with(".sh") || elf_data.starts_with(b"#!"){
+            if file_name.ends_with(".sh") || elf_data.starts_with(b"#!") {
                 let prepend_args = vec![String::from("/musl/busybox"), String::from("sh")];
                 argv.splice(0..0, prepend_args);
                 if let Ok(busybox) = path_openat("/musl/busybox", OpenFlags::empty(), AT_FDCWD, 0) {
@@ -646,7 +656,7 @@ impl MemorySet {
                 // 如果只读段, 且file_size与mem_size相等(无需填充), 且直接使用页缓存映射
                 if !map_perm.contains(MapPermission::W) && ph.file_size() == ph.mem_size() {
                     let mut map_area =
-                        MapArea::new(vpn_range, MapType::FilebeRO, map_perm, None, 0);
+                        MapArea::new(vpn_range, MapType::FilebeRO, map_perm, None, 0, false);
                     // 直接使用页缓存映射只读段
                     let vpn_start = vpn_range.get_start().0;
                     for vpn in vpn_range {
@@ -658,7 +668,8 @@ impl MemorySet {
                     memory_set.areas.insert(vpn_range.get_start(), map_area);
                 } else {
                     // 采用Framed + 直接拷贝数据到匿名页
-                    let map_area = MapArea::new(vpn_range, MapType::Framed, map_perm, None, 0);
+                    let map_area =
+                        MapArea::new(vpn_range, MapType::Framed, map_perm, None, 0, false);
                     memory_set.push_with_offset(
                         map_area,
                         Some(
@@ -761,7 +772,7 @@ impl MemorySet {
                             }
                             let vpn_range = VPNRange::new(start_va.floor(), end_va.ceil());
                             let map_area =
-                                MapArea::new(vpn_range, MapType::Framed, map_perm, None, 0);
+                                MapArea::new(vpn_range, MapType::Framed, map_perm, None, 0, false);
 
                             let map_offset = start_va.0 - start_va.floor().0 * PAGE_SIZE;
                             log::info!(
@@ -809,6 +820,7 @@ impl MemorySet {
             MapPermission::R | MapPermission::W | MapPermission::U,
             None,
             0,
+            false,
         );
         memory_set.push_anoymous_area(ustack_map_area);
 
@@ -882,8 +894,20 @@ impl MemorySet {
     /// 由caller保证区域没有冲突, 且start_va和end_va是页对齐的
     /// 插入framed的空白区域
     /// used by `kstack_alloc`, `from_elf 用户栈`
-    pub fn insert_framed_area(&mut self, vpn_range: VPNRange, map_perm: MapPermission) {
-        self.push_anoymous_area(MapArea::new(vpn_range, MapType::Framed, map_perm, None, 0));
+    pub fn insert_framed_area(
+        &mut self,
+        vpn_range: VPNRange,
+        map_perm: MapPermission,
+        locked: bool,
+    ) {
+        self.push_anoymous_area(MapArea::new(
+            vpn_range,
+            MapType::Framed,
+            map_perm,
+            None,
+            0,
+            locked,
+        ));
     }
     pub fn insert_map_area_lazily(&mut self, map_area: MapArea) {
         // 这里不需要map, 映射在缺页时处理
@@ -1583,7 +1607,7 @@ impl MemorySet {
                 VirtAddr::from(shmaddr + shm_size).ceil(),
             )
         };
-        let mut map_area = MapArea::new(vpn_range, MapType::Framed, map_perm, None, 0);
+        let mut map_area = MapArea::new(vpn_range, MapType::Framed, map_perm, None, 0, false);
         if shm_segment.pages.is_empty() {
             for vpn in vpn_range {
                 let page = Arc::new(Page::new_framed(None));
