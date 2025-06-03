@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-03 16:40:04
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-01 18:12:20
+ * @LastEditTime: 2025-06-03 17:02:59
  * @FilePath: /RocketOS_netperfright/os/src/net/socket.rs
  * @Description: socket file
  * 
@@ -16,7 +16,7 @@ use alloc::vec;
 use num_enum::TryFromPrimitive;
 use smoltcp::{socket::tcp::{self, State}, wire::{IpAddress, Ipv4Address}};
 use spin::{Mutex, MutexGuard};
-use crate::{arch::{config::SysResult, mm::copy_to_user}, fs::{fdtable::FdFlags, file::OpenFlags, pipe::Pipe, uapi::IoVec}, net::{alg::AlgType, udp::get_ephemeral_port, unix::PasswdEntry}, task::{current_task, yield_current_task}, timer::TimeSpec};
+use crate::{arch::{config::SysResult, mm::copy_to_user}, fs::{fdtable::FdFlags, file::OpenFlags, pipe::Pipe, uapi::IoVec}, net::{alg::{encode_text, AlgType}, udp::get_ephemeral_port, unix::PasswdEntry}, task::{current_task, yield_current_task}, timer::TimeSpec};
 
 use crate::{arch::{mm::copy_from_user}, fs::file::FileOp, mm::VirtPageNum, syscall::errno::{Errno, SyscallRet}};
 
@@ -86,7 +86,10 @@ pub struct Socket{
     isaf_alg:AtomicBool,
     //只有在isaf_alg为true时才有意义
     pub socket_af_alg:Mutex<Option<SockAddrAlg>>,
+    //密文
+    pub socket_af_ciphertext:Mutex<Option<Vec<u8>>>,
     pub socket_nscdrequest:Mutex<Option<NscdRequest>>,
+
 }
 
 unsafe impl Send for Socket {
@@ -141,6 +144,9 @@ impl Socket {
     fn set_congestion(&self,congestion:String) {
         *self.congestion.lock()=congestion;
     }
+    pub fn set_ciphertext(&self,ciphertext:&[u8]){
+        *self.socket_af_ciphertext.lock()=Some(ciphertext.to_vec());
+    }
     pub fn new(domain:Domain,socket_type:SocketType)->Self {
         let inner=match socket_type {
             SocketType::SOCK_STREAM | SocketType::SOCK_SEQPACKET| SocketType::SOCK_RAW => {
@@ -164,7 +170,9 @@ impl Socket {
             buffer: None, 
             isaf_alg: AtomicBool::new(false),
             socket_af_alg: Mutex::new(None),
+            socket_af_ciphertext:Mutex::new(None),
             socket_nscdrequest: Mutex::new(None),
+            
         }
            
     }
@@ -291,6 +299,7 @@ impl Socket {
                         buffer: None,
                         isaf_alg: AtomicBool::new(false),
                         socket_af_alg: Mutex::new(None),
+                        socket_af_ciphertext:Mutex::new(None),
                         socket_nscdrequest: Mutex::new(None),
                     },from_ipendpoint_to_socketaddr(remote_addr)))
                 }
@@ -328,6 +337,7 @@ impl Socket {
             buffer: None,
             isaf_alg: AtomicBool::new(true),
             socket_af_alg: Mutex::new(self.socket_af_alg.lock().clone()),
+            socket_af_ciphertext:Mutex::new(None),
             socket_nscdrequest: Mutex::new(None),
         })
     }
@@ -440,6 +450,7 @@ impl Socket {
         //这里暂时保留unix本地回环网络的接受，需要pipe?
         if self.domain==Domain::AF_UNIX {
             if self.buffer.is_none() {
+                log::error!("[socket_read] buffer is none");
                 let passwd_blob = PasswdEntry::passwd_lookup(self, buf.len())?;
                 log::error!("[socket_read]:len is {:?}",passwd_blob.len());
 
@@ -565,20 +576,18 @@ pub fn check_alg(sa: &SockAddrAlg) -> SyscallRet {
     let raw_type = &sa.salg_type[..ty_end];
     let alg_type_str = match core::str::from_utf8(raw_type) {
         Ok(s) => s,
-        Err(_) => {
-            return Err(Errno::EINVAL);
-        }
+        Err(_) => return Err(Errno::EINVAL),
     };
+
+    let nm_end = sa.salg_name.iter().position(|&b| b == 0).unwrap_or(sa.salg_name.len());
+    let raw_name = &sa.salg_name[..nm_end];
+    let alg_name_str = match core::str::from_utf8(raw_name) {
+        Ok(s) => s,
+        Err(_) => return Err(Errno::EINVAL),
+    };
+
     if alg_type_str == "hash" {
-        let nm_end = sa.salg_name.iter().position(|&b| b == 0).unwrap_or(sa.salg_name.len());
-        let raw_name = &sa.salg_name[..nm_end];
-        let alg_name_str = match core::str::from_utf8(raw_name) {
-            Ok(s) => s,
-            Err(_) => {
-                return Err(Errno::EINVAL);
-            }
-        };
-        // 如果名字就是 "hmac(...)" 这种格式，就取出括号内的 inner 部分来做二次检查
+        // 检查 hmac 嵌套
         if alg_name_str.starts_with("hmac(") && alg_name_str.ends_with(')') {
             let inner_part = &alg_name_str[5 .. alg_name_str.len() - 1];
             if inner_part.starts_with("hmac(") {
@@ -587,6 +596,26 @@ pub fn check_alg(sa: &SockAddrAlg) -> SyscallRet {
             }
         }
     }
+
+    if alg_type_str == "aead" {
+        // 检查 rfc7539 使用非法 digest 算法
+        if alg_name_str.starts_with("rfc7539(") && alg_name_str.ends_with(')') {
+            let inner = &alg_name_str[8 .. alg_name_str.len() - 1];
+            let parts: Vec<&str> = inner.split(',').map(|s| s.trim()).collect();
+            if parts.len() == 2 {
+                let cipher = parts[0];
+                let mac = parts[1];
+                if cipher == "chacha20" && mac != "poly1305" {
+                    log::error!("[check_alg] Invalid rfc7539 combination: {}", alg_name_str);
+                    return Err(Errno::ENOENT);
+                }
+            } else {
+                log::error!("[check_alg] Malformed rfc7539 algorithm name: {}", alg_name_str);
+                return Err(Errno::ENOENT);
+            }
+        }
+    }
+
     // 其它情况都合法
     Ok(0)
 }
@@ -850,6 +879,18 @@ impl FileOp for Socket {
             }
             return self.buffer.as_ref().unwrap().read(buf);
         }
+        if self.domain==Domain::AF_ALG {
+            let mut bind=self.socket_af_ciphertext.lock();
+            let ciphertext=bind.as_mut().unwrap();
+            log::error!("[socket_read] ciphertext is {:?}",ciphertext);
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    ciphertext.as_ptr(), 
+                    buf.as_mut_ptr(),
+                     ciphertext.len());
+            }
+            return Ok(ciphertext.len());
+        }
         if !self.r_ready() {
             log::error!("[scoket_read] is_nonblocking {:?},is_connected is {:?}",self.is_nonblocking(),self.is_connected());
             if !self.is_block() && self.is_connected()  {
@@ -898,6 +939,12 @@ impl FileOp for Socket {
         log::error!("[socket_write]:begin send socket");
         if self.domain==Domain::AF_UNIX {
             return self.buffer.as_ref().unwrap().write(buf);
+        }
+        if self.domain==Domain::AF_ALG {
+            //这里的buf只是纯粹的明文，直接加密
+            log::error!("[socket_write_alg]:buf is {:?},buf len is{:?}",buf,buf.len());
+            encode_text(self,  buf)?;
+            return Ok(buf.len());
         }
         //log::error!("[socket_write]:buf is {:?}",buf);
         if !self.w_ready() {

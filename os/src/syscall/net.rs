@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-02 23:04:54
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-01 16:39:23
+ * @LastEditTime: 2025-06-03 17:07:04
  * @FilePath: /RocketOS_netperfright/os/src/syscall/net.rs
  * @Description: net syscall
  *
@@ -39,6 +39,7 @@ use core::{
 };
 use num_enum::TryFromPrimitive;
 use smoltcp::wire::IpEndpoint;
+use crate::{arch::mm::{copy_from_user, copy_to_user}, fs::{fdtable::FdFlags, file::{FileOp, OpenFlags}, pipe::{self, make_pipe}, uapi::IoVec}, net::{addr::{from_ipendpoint_to_socketaddr, LOOP_BACK_IP}, alg::encode, socket::{check_alg, socket_address_from, socket_address_from_af_alg, socket_address_from_unix, socket_address_to, ALG_Option, Domain, IpOption, Ipv6Option, MessageHeaderRaw, Socket, SocketOption, SocketOptionLevel, SocketType, TcpSocketOption, SOCK_CLOEXEC, SOCK_NONBLOCK}}, syscall::task::sys_nanosleep, task::{current_task, yield_current_task}};
 pub const SOCKET_TYPE_MASK: usize = 0xFF;
 use super::errno::{Errno, SyscallRet};
 ///函数会创建一个socket并返回一个fd,失败返回-1
@@ -143,8 +144,8 @@ pub fn syscall_accept(socketfd: usize, socketaddr: usize, socketlen: usize) -> S
         .as_any()
         .downcast_ref::<Socket>()
         .ok_or(Errno::ENOTSOCK)?;
-    if socket.domain == Domain::AF_ALG {
-        log::error!("[syscall_accept]: unix domain socket supported");
+    if socket.domain==Domain::AF_ALG {
+        log::error!("[syscall_accept]: AF_ALG domain socket supported");
         //需要直接克隆一个fd继承所有socket的所有内容
         let fd_table = task.fd_table();
         let new_socket = socket.accept_alg()?;
@@ -612,68 +613,71 @@ pub fn make_socketpair(sockettype: usize, pipe_flag: OpenFlags) -> (Arc<Socket>,
     fd2.buffer = Some(pipe2);
     (Arc::new(fd1), Arc::new(fd2))
 }
-pub fn syscall_sendmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallRet {
-    log::error!("[syscall_sendmsg]:begin sendmsg");
-    log::error!(
-        "[syscall_sendmsg]:socketfd:{},msg_ptr:{},flag:{}",
-        socketfd,
-        msg_ptr,
-        flag
-    );
+pub fn syscall_sendmsg(socketfd:usize,msg_ptr:usize,flag:usize)->SyscallRet {
+log::error!("[syscall_sendmsg]: begin sendmsg");
+    log::error!("[syscall_sendmsg]: socketfd: {}, msg_ptr: {}, flag: {}", socketfd, msg_ptr, flag);
+
     let task = current_task();
     let file = match task.fd_table().get_file(socketfd) {
         Some(f) => f,
         None => return Err(Errno::EBADF),
     };
-    //向下转型
     let socket = match file.as_any().downcast_ref::<Socket>() {
         Some(s) => s,
         None => return Err(Errno::ENOTSOCK),
     };
+
+    // 1. 从用户空间拷贝一份 MessageHeaderRaw
     let mut user_hdr = MessageHeaderRaw {
-        name: core::ptr::null_mut(),
-        name_len: 0,
-        iovec: core::ptr::null_mut(),
-        iovec_len: 0,
-        control: core::ptr::null_mut(),
+        name:        core::ptr::null_mut(),
+        name_len:    0,
+        iovec:       core::ptr::null_mut(),
+        iovec_len:   0,
+        control:     core::ptr::null_mut(),
         control_len: 0,
-        flags: 0,
+        flags:       0,
     };
     copy_from_user(
         msg_ptr as *const MessageHeaderRaw,
         &mut user_hdr as *mut MessageHeaderRaw,
         1,
     )?;
-    let mut kernel_name = vec![0; user_hdr.name_len as usize];
-    let iovec_ptr = user_hdr.iovec as *const IoVec;
-    let iovec_count = user_hdr.iovec_len as usize;
-    assert!(
-        iovec_count <= 1,
-        "temperrily Only one iovec is supported in sendmsg syscall"
-    );
-    let mut kernel_iovec: Vec<IoVec> = vec![IoVec::default(); iovec_count];
-    let mut kernel_control: Vec<u8> = vec![0; user_hdr.control_len as usize];
-    log::error!("[syscall_sendmsg]:user_hdr:{:?}", user_hdr);
-    //继续复制name,iovec,control内容
+
+    // 2. 准备 name buffer
+    let mut kernel_name = Vec::new();
     if user_hdr.name_len > 0 {
+        kernel_name.resize(user_hdr.name_len as usize, 0);
         copy_from_user(
             user_hdr.name as *const u8,
             kernel_name.as_mut_ptr(),
             user_hdr.name_len as usize,
         )?;
     }
-    if user_hdr.iovec_len > 0 {
-        //iovec_len指向元素个数
-        for i in 0..iovec_count {
-            copy_from_user(iovec_ptr, &mut kernel_iovec[i] as *mut IoVec, 1)?;
+
+    // 3. 从用户空间读取 iovec 数组
+    let iovec_ptr = user_hdr.iovec as *const IoVec;
+    let iovec_count = user_hdr.iovec_len as usize;
+    // 动态分配一个 Vec<IoVec>，大小为 iovec_count
+    let mut kernel_iovecs: Vec<IoVec> = Vec::new();
+    if iovec_count > 0 {
+        // 先给 Vec 分配好空间
+        kernel_iovecs.resize(iovec_count, IoVec::default());
+        // 然后分别从用户空间拷贝每个 IoVec 结构
+        for idx in 0..iovec_count {
+            let src_ptr = unsafe { iovec_ptr.add(idx) };
+            copy_from_user(src_ptr, &mut kernel_iovecs[idx] as *mut IoVec, 1)?;
         }
         log::error!(
-            "[syscall_sendmsg]:kernel_iovec base:{:?} kernel_iovec len:{:?}",
-            kernel_iovec[0].base,
-            kernel_iovec[0].len
+            "[syscall_sendmsg]: read {} iovecs: {:?}",
+            iovec_count,
+            kernel_iovecs
         );
     }
+
+    // 4. 从用户空间复制控制数据（control）
+    let mut kernel_control = Vec::new();
     if user_hdr.control_len > 0 {
+        kernel_control.resize(user_hdr.control_len as usize, 0);
         copy_from_user(
             user_hdr.control as *const u8,
             kernel_control.as_mut_ptr(),
@@ -681,20 +685,45 @@ pub fn syscall_sendmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallR
         )?;
     }
 
-    //todo这里只支持1各iovec
-    let mut kernel_buf = vec![0u8; kernel_iovec[0].len as usize];
-    if kernel_iovec[0].len != 0 {
-        copy_from_user(
-            kernel_iovec[0].base as *const u8,
-            kernel_buf.as_mut_ptr(),
-            kernel_buf.len(),
-        )?;
-        log::error!("[syscall_sendmsg]:kernel_buf:{:?}", kernel_buf);
-    }
-    log::error!("[syscall_sendmsg]:kernel_buf:{:?}", kernel_buf);
+    // 5. 将所有 iovec 指向的用户数据拼接到一个大缓冲区 kernel_buf 中
+    //    先算出所有 iovec 数据的总长度
+    let total_len: usize = kernel_iovecs
+        .iter()
+        .map(|iov| iov.len as usize)
+        .sum();
 
-    if socket.domain == Domain::AF_ALG {
-        //给入加密函数进行加密并存入对于结构体中
+    let mut kernel_buf = Vec::new();
+    if total_len > 0 {
+        // 分配足够大的内核缓冲区
+        kernel_buf.resize(total_len, 0);
+
+        // 依次把每个 iovec 的数据从用户空间拷贝到 kernel_buf 的正确偏移位置
+        let mut offset = 0;
+        for iov in kernel_iovecs.iter() {
+            let len = iov.len as usize;
+            if len > 0 {
+                copy_from_user(
+                    iov.base as *const u8,
+                    unsafe { kernel_buf.as_mut_ptr().add(offset) },
+                    len,
+                )?;
+                log::error!(
+                    "[syscall_sendmsg]: copied {} bytes from user iovec at base={:?} to kernel_buf+{}",
+                    len,
+                    iov.base,
+                    offset
+                );
+                offset += len;
+            }
+        }
+    }
+    log::error!("[syscall_sendmsg]: final kernel_buf (len={}): {:?}", total_len, kernel_buf);
+    log::error!("[syscall_sendmsg]: control_buf (len={}): {:?}", kernel_control.len(), kernel_control);
+
+    if socket.domain==Domain::AF_ALG {
+        //todo
+        //根据给入信息进行加密并在recv时返回加密长度
+        return encode(socket, kernel_name.as_mut_slice(),kernel_iovecs.as_mut_slice(),kernel_control.as_mut_slice());
     }
     let Ok(addr) = socket.peer_name() else {
         log::error!("[syscall_sendmsg]:get peer name error");
@@ -709,14 +738,10 @@ pub fn syscall_sendmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallR
     }
 }
 pub fn syscall_recvmsg(socketfd: usize, msg_ptr: usize, _flags: usize) -> SyscallRet {
-    log::error!("[syscall_recvmsg]: begin recvmsg");
-    log::error!(
-        "[syscall_recvmsg]: socketfd: {}, msg_ptr: {}",
-        socketfd,
-        msg_ptr
-    );
+    log::debug!("[syscall_recvmsg]: begin recvmsg");
+    log::debug!("[syscall_recvmsg]: socketfd: {}, msg_ptr: {}", socketfd, msg_ptr);
 
-    // 1. 获取当前任务并检查 fd
+    // 1. 获取当前任务并检查文件描述符
     let task = current_task();
     let file = match task.fd_table().get_file(socketfd) {
         Some(f) => f,
@@ -727,7 +752,7 @@ pub fn syscall_recvmsg(socketfd: usize, msg_ptr: usize, _flags: usize) -> Syscal
         None => return Err(Errno::ENOTSOCK),
     };
 
-    // 2. 从用户态拷贝 MessageHeaderRaw 结构到内核
+    // 2. 从用户空间拷贝 MessageHeaderRaw 结构到内核
     let mut user_hdr = MessageHeaderRaw {
         name: core::ptr::null_mut(),
         name_len: 0,
@@ -742,33 +767,25 @@ pub fn syscall_recvmsg(socketfd: usize, msg_ptr: usize, _flags: usize) -> Syscal
         &mut user_hdr as *mut MessageHeaderRaw,
         1,
     )?;
-    log::error!("[syscall_recvmsg]: user_hdr: {:?}", user_hdr);
+    log::debug!("[syscall_recvmsg]: user_hdr: {:?}", user_hdr);
 
-    // 3. name/name_len 部分：AF_UNIX 接收通常不需要写回对端地址，这里暂不处理
-    //    如果以后需要 recvmsg 返回对端地址，可以在这里用 user_hdr.name/user_hdr.name_len 填充。
-
-    // 4. 从用户空间拷贝 iovec 数组到内核态
+    // 3. 从用户空间拷贝 iovec 数组到内核
     let iovec_count = user_hdr.iovec_len as usize;
     if iovec_count == 0 {
-        // 必须至少有一个 iovec 才能接收数据
         return Err(Errno::EINVAL);
     }
-    // 在内核中为 iovec 分配 Vec<IoVec>
     let mut kernel_iovecs: Vec<IoVec> = Vec::with_capacity(iovec_count);
-    // 先 push 出 iovec_count 个默认元素占位
     for _ in 0..iovec_count {
-        kernel_iovecs.push(IoVec::default());
+        kernel_iovecs.push(IoVec { base: 0, len: 0 });
     }
-    // 拷贝用户的 IoVec 结构到 kernel_iovecs
     let user_iovec_ptr = user_hdr.iovec as *const IoVec;
     for i in 0..iovec_count {
-        // 每次拷贝一个 IoVec
         copy_from_user(
             unsafe { user_iovec_ptr.add(i) },
             &mut kernel_iovecs[i] as *mut IoVec,
             1,
         )?;
-        log::error!(
+        log::debug!(
             "[syscall_recvmsg]: kernel_iovecs[{}].base = {:?}, len = {}",
             i,
             kernel_iovecs[i].base,
@@ -776,35 +793,36 @@ pub fn syscall_recvmsg(socketfd: usize, msg_ptr: usize, _flags: usize) -> Syscal
         );
     }
 
-    // 5. 根据所有 iovec 的 len 计算总长度 total_len
+    // 4. 计算总长度
     let mut total_len: usize = 0;
     for iov in &kernel_iovecs {
-        total_len = total_len.saturating_add(iov.len as usize);
+        total_len = total_len.saturating_add(iov.len);
     }
     if total_len == 0 {
-        // 如果 iovec 全部 len=0，则什么都不读
         return Ok(0);
     }
 
-    // 6. 为接收数据分配临时内核缓冲区 kernel_buf
-    let mut kernel_buf: Vec<u8> = vec![0u8; total_len];
+    // 5. Allocate kernel buffer with initialized length
+    let mut kernel_buf: Vec<u8> = vec![0; total_len];
 
-    // 7. 调用底层 socket.recv() 接收数据到 kernel_buf
-    let n = match socket.recv_from(&mut kernel_buf) {
-        Ok(sz) => sz.0,
+    // 6. Receive data into kernel buffer
+    let (n, _addr) = match socket.recv_from(&mut kernel_buf[..]) {
+        Ok(sz) => sz,
         Err(e) => {
             log::error!("[syscall_recvmsg]: recv error {:?}", e);
             return Err(e);
         }
     };
-    log::error!("[syscall_recvmsg]: received {} bytes into kernel_buf", n);
+    log::debug!(
+        "[syscall_recvmsg]: received {} bytes into kernel_buf",
+        n
+    );
 
-    // 如果没有收到任何数据，就返回 0
     if n == 0 {
         return Ok(0);
     }
 
-    // 8. 将 kernel_buf[0..n] 拆分（scatter）到每个 iovec 指向的用户缓冲区
+    // 7. Scatter data to user-space iovecs
     let mut copied = 0;
     let mut remaining = n;
     let mut buf_offset = 0;
@@ -814,34 +832,27 @@ pub fn syscall_recvmsg(socketfd: usize, msg_ptr: usize, _flags: usize) -> Syscal
             break;
         }
         let dest_ptr = iov.base as *mut u8;
-        let dest_len = iov.len as usize;
+        let dest_len = iov.len;
         if dest_len == 0 {
             continue;
         }
 
-        // 本次要拷贝到第 iov 的字节数
-        let to_copy = if remaining < dest_len {
-            remaining
-        } else {
-            dest_len
-        };
-
-        // copy_to_user：将 kernel_buf[buf_offset .. buf_offset + to_copy] 写到用户 iov.base
+        let to_copy = if remaining < dest_len { remaining } else { dest_len };
         copy_to_user(
             dest_ptr,
             kernel_buf[buf_offset..buf_offset + to_copy].as_ptr(),
             to_copy,
         )?;
-        log::error!(
+        log::debug!(
             "[syscall_recvmsg]: copied {} bytes into user iovec {}",
             to_copy,
             iov.base
         );
 
-        // 更新计数
-        copied = copied.add(to_copy);
-        buf_offset = buf_offset.saturating_add(to_copy);
-        remaining = remaining.saturating_sub(to_copy);
+        copied += to_copy;
+        buf_offset += to_copy;
+        remaining -= to_copy;
     }
+    // 8. 返回接收的字节数
     Ok(copied)
 }

@@ -9,7 +9,7 @@ use super::socket::Socket;
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-06-01 12:06:27
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-01 17:19:58
+ * @LastEditTime: 2025-06-03 17:03:18
  * @FilePath: /RocketOS_netperfright/os/src/net/unix.rs
  * @Description: 
  * 
@@ -19,9 +19,9 @@ use super::socket::Socket;
 #[derive(Debug, Clone, Copy,TryFromPrimitive,PartialEq, Eq)]
 pub enum RequestType {
     GetpwNam    = 2,   // 按用户名查 passwd 条目
-    GetpwUid    = 3,   // 按 UID 查 passwd 条目（举例）
-    GetgrNam    = 4,   // 按组名查 group 条目（举例）
-    GetgrGid    = 5,   // 按 GID 查 group 条目（举例）
+    GetpwUid    = 3,   // 按 UID 查 passwd 条目
+    GetgrNam    = 4,   // 按组名查 group 条目
+    GetgrGid    = 5,   // 按 GID 查 group 条目
 }
 #[repr(u32)]
 #[derive(Debug, Clone, Copy,TryFromPrimitive)]
@@ -107,24 +107,16 @@ impl PasswdEntry {
 
         buf
     }
-    //根据requesttype和database来寻找具体的文件
-     /// 根据 nscd request，从 /etc/passwd 找到匹配行，并把该行序列化为字节返回
     pub fn passwd_lookup(socket: &Socket, buf_len: usize) -> Result<Vec<u8>, Errno> {
-        // 1. 拿到请求包
         let nscdrequest = socket.socket_nscdrequest.lock().clone().unwrap();
         let key = nscdrequest.key;
-
-        //2. 只支持按名字或按 UID 查
         if nscdrequest.req_type != RequestType::GetpwNam
             && nscdrequest.req_type != RequestType::GetpwUid
         {
             return Err(Errno::EINVAL);
         }
 
-        // 3. 打开 /etc/passwd
         let file = path_openat("/etc/passwd", OpenFlags::O_CLOEXEC, -100, 0)?;
-
-        // 4. 逐行读取（示例用一个较大的缓冲，假设行不会超过 256 字节）
         let mut small_buf = [0u8; 128];
         let mut accu: Vec<u8> = Vec::new();
 
@@ -139,7 +131,7 @@ impl PasswdEntry {
                             // 做匹配
                             if (nscdrequest.req_type == RequestType::GetpwNam)
                                 || (nscdrequest.req_type == RequestType::GetpwUid
-                                    && entry.pw_uid == key.parse::<u32>().unwrap_or(u32::MAX))
+                                    && entry.pw_uid == key.parse::<u32>().unwrap_or(65534))
                             {
                                 let blob = entry.to_bytes();
                                 return Ok(blob);
@@ -173,7 +165,6 @@ impl PasswdEntry {
                         }
                     }
                 }
-                // 如果没匹配，继续看 accu 中是否还有下一个 '\n'
             }
         }
         Err(Errno::ENOENT) // 没找到匹配的行
