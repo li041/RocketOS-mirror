@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-30 16:26:05
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-05-28 18:23:55
+ * @LastEditTime: 2025-06-03 17:02:17
  * @FilePath: /RocketOS_netperfright/os/src/net/mod.rs
  * @Description: net mod for interface wrapper,socketset 
  * 
@@ -29,7 +29,7 @@ mod listentable;
 mod loopback;
 mod udp;
 pub mod socket;
-mod alg;
+pub mod alg;
 pub mod unix;
 
 

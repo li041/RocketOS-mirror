@@ -370,8 +370,8 @@ pub fn sys_clock_getres(_clockid: usize, res: usize) -> SyscallRet {
 /// 调用进程的系统时间调整
 /// 根据传入的kernelTimex调整时间并返回最新的内核结构体到指针
 pub fn sys_adjtimex(user_timex: *mut KernelTimex) -> SyscallRet {
-    log::info!("[sys_adjtimex] user_timex: {:#x}", user_timex as usize);
-    if user_timex.is_null() {
+    log::error!("[sys_adjtimex] user_timex: {:#x}", user_timex as usize);
+    if user_timex.is_null(){
         return Err(Errno::EFAULT);
     }
     if user_timex as usize == 0xffffffffffffffff {
@@ -382,6 +382,9 @@ pub fn sys_adjtimex(user_timex: *mut KernelTimex) -> SyscallRet {
     let mut kernel_timex = KernelTimex::default();
 
     //todo
+    if kernel_timex.modes==0x8000 {
+        return Err(Errno::EINVAL);
+    }
     if kernel_timex.modes != 0 && task.euid() != 0 {
         return Err(Errno::EPERM);
     }
@@ -391,12 +394,7 @@ pub fn sys_adjtimex(user_timex: *mut KernelTimex) -> SyscallRet {
             return Err(Errno::EINVAL);
         }
     }
-    copy_from_user(
-        user_timex as *const KernelTimex,
-        core::ptr::addr_of_mut!(kernel_timex),
-        1,
-    )?;
-    log::info!("[sys_adjtimex] kernel_timex: {:?}", kernel_timex);
+    log::error!("[sys_adjtimex] kernel_timex: {:?}", kernel_timex);
     let status = do_adjtimex(&mut kernel_timex)?;
     let out_from = &kernel_timex as *const KernelTimex;
     copy_to_user(user_timex, out_from, 1)?;

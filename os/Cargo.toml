@@ -21,6 +21,10 @@ bytemuck = { version = "1.14", features = ["derive"] }
 virtio-drivers = { git = "https://github.com/li041/virtio-drivers", branch = 'lxh'}
 memoffset = "0.9.1"
 hashbrown = "0.15.2"
+salsa20 = "0.10.2"
+aes = "0.8.4"
+polyval = "0.6.2"
+universal-hash = "0.5.1"
 fdt = "0.1.5"
 rand = { version = "0.8.3", features = ["small_rng"], default-features = false }
 
