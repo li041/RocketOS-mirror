@@ -113,7 +113,7 @@ pub fn init_net_device(dtb_addr: usize) {
     // ///能到这里必然不是virtionetdevice
     // return None;
 }
-
+#[cfg(target_arch = "loongarch64")]
 pub fn init_net_dev_la<T: Transport + 'static>(transport: T) {
     log::error!(
         "[init_net_dev_la]:the transport device_type is {:?}",

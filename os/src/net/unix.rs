@@ -1,15 +1,16 @@
-use alloc::{string::{String, ToString}, vec::{Vec}};
+use alloc::{format, string::{String, ToString}, vec::Vec};
 use num_enum::TryFromPrimitive;
+use spin::Mutex;
 
 use crate::{fs::{file::{File, FileOp, OpenFlags}, namei::{filename_lookup, path_openat, Nameidata}, path::Path}, syscall::errno::Errno, task::current_task};
 use alloc::vec;
 use super::socket::Socket;
-
+static LAST_DB: Mutex<Option<Database>> = Mutex::new(None);
 /*
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-06-01 12:06:27
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-03 17:03:18
+ * @LastEditTime: 2025-06-04 17:53:26
  * @FilePath: /RocketOS_netperfright/os/src/net/unix.rs
  * @Description: 
  * 
@@ -24,7 +25,7 @@ pub enum RequestType {
     GetgrGid    = 5,   // 按 GID 查 group 条目
 }
 #[repr(u32)]
-#[derive(Debug, Clone, Copy,TryFromPrimitive)]
+#[derive(Debug, Clone, Copy,TryFromPrimitive,PartialEq, Eq)]
 pub enum Database {
     Passwd = 11,   // /etc/passwd 相应的编号
     Group  = 12,   // /etc/group 相应的编号（举例）
@@ -107,15 +108,30 @@ impl PasswdEntry {
 
         buf
     }
-    pub fn passwd_lookup(socket: &Socket, buf_len: usize) -> Result<Vec<u8>, Errno> {
-        let nscdrequest = socket.socket_nscdrequest.lock().clone().unwrap();
-        let key = nscdrequest.key;
-        if nscdrequest.req_type != RequestType::GetpwNam
-            && nscdrequest.req_type != RequestType::GetpwUid
-        {
-            return Err(Errno::EINVAL);
+ pub fn passwd_lookup(socket: &Socket, buf_len: usize) -> Result<Vec<u8>, Errno> {
+    
+    let nscdrequest=socket.socket_nscdrequest.lock().clone().unwrap();
+    let key = nscdrequest.key;
+    // if nscdrequest.req_type != RequestType::GetpwNam
+    //     && nscdrequest.req_type != RequestType::GetpwUid
+    // {
+    //     return Err(Errno::EINVAL);
+    // }
+    let db: Database = {
+        let mut last_db_lock = LAST_DB.lock();
+        if let Some(d) = nscdrequest.db {
+            // 本次请求有 db，就更新“上一次 db”的值
+            *last_db_lock = Some(d);
+            d
+        } else {
+            // 本次请求为 None，则尝试用上一次存的
+            last_db_lock
+                .clone()
+                .ok_or(Errno::EINVAL)?  // 如果上一次也没有，就返回 EINVAL
         }
-
+    };
+    log::error!("[passwd_lookup] database is {:?}",db);
+    if db == Database::Passwd {
         let file = path_openat("/etc/passwd", OpenFlags::O_CLOEXEC, -100, 0)?;
         let mut small_buf = [0u8; 128];
         let mut accu: Vec<u8> = Vec::new();
@@ -169,6 +185,67 @@ impl PasswdEntry {
         }
         Err(Errno::ENOENT) // 没找到匹配的行
     }
+    else if db== Database::Group {
+        let file = path_openat("/etc/group", OpenFlags::O_CLOEXEC, -100, 0)?;
+        let mut small_buf = [0u8; 128];
+        let mut accu: Vec<u8> = Vec::new();
+
+        loop {
+            let n = file.read(&mut small_buf)?;
+            if n == 0 {
+                // 文件读完，检查最后是否还有残余没有 '\n'
+                if !accu.is_empty() {
+                    if let Some(line) = core::str::from_utf8(&accu).ok() {
+                        log::error!("group line: {}", line);
+                        if let Some(entry) = GroupEntry::parse_group_line(line) {
+                            // 做匹配
+                            let matches = if nscdrequest.req_type == RequestType::GetgrNam {
+                                entry.gr_name == key
+                            } else {
+                                entry.gr_gid == key.parse::<u32>().unwrap_or(u32::MAX)
+                            };
+                            if matches {
+                                let blob = entry.to_bytes();
+                                return Ok(blob);
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+
+            // 把读到的 n 字节追加到 accu
+            accu.extend_from_slice(&small_buf[..n]);
+            // 只要 accu 里出现 '\n'，就拆出一行来处理
+            while let Some(pos) = accu.iter().position(|&b| b == b'\n') {
+                // 拆出 [0..pos] 作一行
+                let line_bytes = accu[..pos].to_vec();
+                // 从 accu 中删掉这一行（包含 '\n'）
+                accu.drain(..=pos);
+                if let Ok(line) = core::str::from_utf8(&line_bytes) {
+                    log::error!("group line: {}", line);
+                    if let Some(entry) = GroupEntry::parse_group_line(line) {
+                        // 匹配逻辑
+                        let matches = if nscdrequest.req_type == RequestType::GetpwNam {
+                            entry.gr_name == key
+                        } else {
+                            entry.gr_gid == key.parse::<u32>().unwrap_or(u32::MAX)
+                        };
+                        if matches {
+                            let blob = entry.to_bytes();
+                            return Ok(blob);
+                        }
+                    }
+                }
+            }
+        }
+        Err(Errno::ENOENT) // 没找到匹配的行
+    }
+    else {
+        Err(Errno::ENOENT)
+    }
+}
+
     fn parse_passwd_line(line: &str) -> Option<Self> {
     // 先去掉末尾的 '\n'
     let line = line.trim_end_matches('\n');
@@ -186,4 +263,52 @@ impl PasswdEntry {
     })
 }
 
+}
+struct GroupEntry {
+    gr_name: String,
+    gr_passwd: String,
+    gr_gid: u32,
+    gr_mem: Vec<String>, // 可选，成员列表
+}
+
+impl GroupEntry {
+    /// 将 "/etc/group" 的一行文本解析成 GroupEntry
+    /// 例如 "wheel:x:10:root,alice" -> GroupEntry { gr_name: "wheel", gr_passwd: "x", gr_gid: 10, gr_mem: vec!["root","alice"] }
+    fn parse_group_line(line: &str) -> Option<GroupEntry> {
+        let parts: Vec<&str> = line.splitn(4, ':').collect();
+        if parts.len() < 3 {
+            return None;
+        }
+        let gr_name = parts[0].to_string();
+        let gr_passwd = parts[1].to_string();
+        let gr_gid = parts[2].parse::<u32>().ok()?;
+        let gr_mem = if parts.len() == 4 && !parts[3].is_empty() {
+            parts[3]
+                .split(',')
+                .map(|s| s.to_string())
+                .collect::<Vec<String>>()
+        } else {
+            Vec::new()
+        };
+        Some(GroupEntry {
+            gr_name,
+            gr_passwd,
+            gr_gid,
+            gr_mem,
+        })
+    }
+
+    /// 将 GroupEntry 序列化为字节流，供 NSCD 返回
+    fn to_bytes(&self) -> Vec<u8> {
+        // 这里的格式根据你的 NSCD 协议自行决定，
+        // 比如可以按 struct group 的二进制布局来编码，或者按某种约定的文本格式打包。
+        // 以下仅作示例：ascii 格式化一行，然后转成字节
+        let mut s = format!("{}:{}:{}", self.gr_name, self.gr_passwd, self.gr_gid);
+        if !self.gr_mem.is_empty() {
+            s.push(':');
+            s.push_str(&self.gr_mem.join(","));
+        }
+        s.push('\n');
+        s.into_bytes()
+    }
 }

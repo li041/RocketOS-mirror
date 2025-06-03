@@ -127,7 +127,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
                     // dump_trap_context(&current_task());
                     log::error!(
                         "Unrecoverble page fault in application, bad addr = {:#x}, scause = {:?}, sepc = {:#x}",
-                        stval
+                        stval,
                         scause.cause(),
                         sepc::read()
                     );

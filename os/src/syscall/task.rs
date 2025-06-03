@@ -366,17 +366,15 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: usize, option: i32) -> SyscallRet 
                     tid
                 );
 
+                // 神奇小咒语
+                log::trace!("waitpid");
                 // 如果子进程已经退出，直接回收资源并返回
                 if child.is_zombie() {
                     cur_task.remove_child_task(tid);
                     debug_assert_eq!(Arc::strong_count(&child), 1);
 
                     let code = child.exit_code();
-                    log::warn!(
-                        "[sys_waitpid] child {} exited with code: {}",
-                        tid,
-                        code,
-                    );
+                    log::warn!("[sys_waitpid] child {} exited with code: {}", tid, code,);
 
                     if exit_code_ptr != 0 {
                         // 将 exit_code 写入用户空间

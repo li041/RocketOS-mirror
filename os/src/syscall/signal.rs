@@ -361,6 +361,7 @@ pub fn sys_rt_sigprocmask(how: usize, set: usize, oldset: usize) -> SyscallRet {
     // set不为NULL（为NULL时直接跳过，即忽略how）
     if set != 0 {
         let mut new_mask: SigSet = SigSet::empty();
+        log::error!("[sys_rt_sigprocmask] set_ptr is {:?}",set_ptr);
         copy_from_user(set_ptr, &mut new_mask as *mut SigSet, 1)?;
         // log::info!("[sys_rt_sigprocmask] current mask {:?}", new_mask);
         new_mask.remove(SigSet::SIGKILL | SigSet::SIGCONT);

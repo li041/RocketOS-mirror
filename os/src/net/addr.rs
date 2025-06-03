@@ -16,7 +16,7 @@ use smoltcp::wire::{IpAddress, IpEndpoint, Ipv4Address, Ipv6Address};
 
 pub const UNSPECIFIED_IP: IpAddress = IpAddress::v4(0, 0, 0, 0);
 pub const LOOP_BACK_IP: IpAddress = IpAddress::v4(127, 0, 0, 1);
-pub const LOOP_BACK_ENDPOINT: IpEndpoint = IpEndpoint::new(LOOP_BACK_IP, 49152);
+pub const LOOP_BACK_ENDPOINT: IpEndpoint = IpEndpoint::new(LOOP_BACK_IP, 11111);
 pub const UNSPECIFIED_ENDPOINT: IpEndpoint = IpEndpoint::new(UNSPECIFIED_IP, 0);
 pub fn is_unspecified(ip: IpAddress) -> bool {
     ip.as_bytes() == [0, 0, 0, 0]

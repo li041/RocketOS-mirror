@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-30 16:26:09
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-05-28 20:09:58
+ * @LastEditTime: 2025-06-07 20:16:25
  * @FilePath: /RocketOS_netperfright/os/src/net/tcp.rs
  * @Description: tcp file 
  * 
@@ -16,7 +16,7 @@ use core::{cell::UnsafeCell, net::SocketAddr,sync::atomic::{AtomicBool, AtomicU8
 use smoltcp::{iface::SocketHandle, socket::tcp::{self, ConnectError, RecvError, SendError, State}, wire::{IpEndpoint, IpListenEndpoint, Ipv4Address}};
 use spin::Mutex;
 
-use crate::{arch::timer::get_time, net::{addr::{from_sockaddr_to_ipendpoint, is_unspecified}, ETH0, LOOPBACK}, syscall::errno::Errno, task::{current_task, yield_current_task}};
+use crate::{arch::timer::get_time, net::{addr::{from_sockaddr_to_ipendpoint, is_unspecified, LOOP_BACK_ENDPOINT}, ETH0, LOOPBACK}, syscall::errno::Errno, task::{current_task, yield_current_task}};
 
 use super::{addr::UNSPECIFIED_ENDPOINT, listentable::ListenTable, poll_interfaces, SocketSetWrapper, LISTEN_TABLE, SOCKET_SET};
 pub struct PollState{
@@ -77,8 +77,8 @@ impl TcpSocket {
     /// function change state from current to new if current is true,and do f
     /// if f reture ok then return ok set state to new else set state to current
     /// attention the function f will do in state busy this will make sure only one thread work in busy state
-    fn update_state<F,T>(&self,current:u8,new:u8,f:F)->Result<T,u8>
-    where F:FnOnce()->Result<T,u8>
+    fn update_state<F,T>(&self,current:u8,new:u8,f:F)->Result<T,Errno>
+    where F:FnOnce()->Result<T,Errno>
     {
         //busy状态只可能在这里定义
         match self.state.compare_exchange(current, STATE_BUSY, Ordering::Acquire, Ordering::Acquire) {
@@ -94,7 +94,7 @@ impl TcpSocket {
                 res
             },
             Err(old) => {
-                Err(old)
+                Err(Errno::EISCONN)
             },
         }
         //返回是状态依然为state_busy
@@ -226,6 +226,7 @@ impl TcpSocket {
     pub fn local_addr(&self)->Result<IpEndpoint, Errno> {
         match self.get_state() {
             STATE_CONNECTED|STATE_LISTENING|STATE_CLOSED=>{
+                let local=unsafe { self.loacl_addr.get().read() };
                 Ok(unsafe { self.loacl_addr.get().read() })
             }
             _=>{
@@ -266,7 +267,7 @@ impl TcpSocket {
         //step3 等待synack,yield_task在返回的时候可以继续向下执行，poll_connect检查esocket状态
         //step4 如果状态不对，则继续yield_taska直到得到syn_ack（当然这只是对于某些错误而言）
         // yield_current_task();
-        let res=self.update_state(STATE_CLOSED, STATE_CONNECTING, ||{
+        self.update_state(STATE_CLOSED, STATE_CONNECTING, ||{
             //busy状态
             let handle=unsafe { self.handle.get().read()}.unwrap_or_else(||{
                 SOCKET_SET.add(SocketSetWrapper::new_tcp_socket())
@@ -274,6 +275,9 @@ impl TcpSocket {
             let bound_endpoint=self.bound_endpoint();
             let remote_ipendpoint=from_sockaddr_to_ipendpoint(remote_addr);
             log::error!("[TcpSocket:connect]:connect from {:?} to {:?}",bound_endpoint,remote_ipendpoint);
+            if bound_endpoint.port==remote_ipendpoint.port {
+                return Err(Errno::ECONNREFUSED);
+            }
             //需要判断连接的remote_addr是否是127.0.0.1,这将决定使用什么网卡
             let iface=if remote_ipendpoint.addr.as_bytes()[0]==127 {
                 //使用回环网络todo
@@ -281,25 +285,38 @@ impl TcpSocket {
             }else{
                 &ETH0.iface
             };
-            let (local_endpoint,remote_endpoint)=SOCKET_SET.with_socket_mut::<_,tcp::Socket,_>(handle, |socket|{
-                //发送SYN等待syn ack
-                socket.connect(iface.lock().context(), remote_ipendpoint, bound_endpoint).or_else(|e|match e {
-                    ConnectError::InvalidState=>{
-                        panic!("socket connect() failed");
-                    }
-                    ConnectError::Unaddressable=>{
-                        panic!("socket connect() failed");
-                    }
-                })?;
-                //如果没有错误这里remote_addr应该是remote_endpoint,local_addr:bound_endpoint
-                Ok::<(IpEndpoint, IpEndpoint), ConnectError>((socket.local_endpoint().unwrap(),socket.remote_endpoint().unwrap()))
-            }).unwrap();
-            //需要注意socketset中socket和这里的socketu不一样
+            // let (local_endpoint,remote_endpoint)=SOCKET_SET.with_socket_mut::<_,tcp::Socket,_>(handle, |socket|{
+            //     //发送SYN等待syn ack
+            //     socket.connect(iface.lock().context(), remote_ipendpoint, bound_endpoint).map_err(|e|match e {
+            //         ConnectError::InvalidState=>{
+            //             Err(Errno::ECONNREFUSED);
+            //         }
+            //         ConnectError::Unaddressable=>{
+            //             Err(Errno::ECONNREFUSED);
+            //         }
+            //     })?;
+            //     //如果没有错误这里remote_addr应该是remote_endpoint,local_addr:bound_endpoint
+            //     Ok::<(IpEndpoint, IpEndpoint), Errno>((socket.local_endpoint().unwrap(),socket.remote_endpoint().unwrap()))
+            // }).unwrap();
+            let (local_endpoint, remote_endpoint) =
+                SOCKET_SET.with_socket_mut::<_, tcp::Socket, Result<(IpEndpoint, IpEndpoint), Errno>>(handle, |socket| {
+                    socket
+                        .connect(iface.lock().context(), remote_ipendpoint, bound_endpoint)
+                        .map_err(|e| match e {
+                            ConnectError::InvalidState  => Errno::ECONNREFUSED,
+                            ConnectError::Unaddressable => Errno::ECONNREFUSED,
+                        })?;
+                    Ok::<(IpEndpoint, IpEndpoint), Errno>((
+                        socket.local_endpoint().unwrap(),
+                        socket.remote_endpoint().unwrap(),
+                    ))
+            })?;
+            //需要注意socketset中socket和这里的socket不一样
             unsafe { self.loacl_addr.get().write(local_endpoint) };
             unsafe { self.remote_addr.get().write(remote_endpoint) };
             unsafe { self.handle.get().write(Some(handle)) };
             Ok(())
-        });
+        })?;
         //等待server返回synack
         yield_current_task();
         if false {
@@ -339,9 +356,6 @@ impl TcpSocket {
                 match  SOCKET_SET.bind_check(l.addr, l.port){
                     Ok(_) => {},
                     Err(e) => {
-                        // if e==Errno::EADDRINUSE {
-                        //     local_addr.set_port(get_ephemeral_port());
-                        // }
                     },
                 }
             }
@@ -542,6 +556,9 @@ impl TcpSocket {
                     socket.close();
                     Ok(0)
                 }
+                else if socket.recv_queue()==0{
+                    Ok(0)
+                }
                 else{
                     Err(Errno::EAGAIN)
                 }
@@ -577,7 +594,8 @@ impl TcpSocket {
                     // println!("connecting closed");
                     socket.close();
                     Ok(0)
-                } else {
+                }
+                else {
                     // no more data
                     if get_time() as u64 > expire_at {
                         Err(Errno::ETIMEDOUT)
@@ -603,7 +621,7 @@ impl TcpSocket {
             SOCKET_SET.with_socket_mut::<_,tcp::Socket,_>(handle, |socket|{
                 if !socket.is_active() || !socket.may_send() {
                     // closed by remote
-                    panic!("socket send() failed");
+                    Err(Errno::EPIPE)
                 }
                 else if socket.can_send() {
                     // log::error!("[Tcp_socket]:send_buf:{:?}",buf);

@@ -179,7 +179,7 @@ pub fn sys_readv(fd: usize, iov_ptr: *const IoVec, iovcnt: usize) -> SyscallRet 
             iovec.base,
             ker_buf.as_ptr()
         );
-        copy_to_user(iovec.base as *mut u8, ker_buf.as_ptr(), read).unwrap();
+        copy_to_user(iovec.base as *mut u8, ker_buf.as_ptr(), read)?;
         // 如果读取失败, 则返回已经读取的字节数, 或错误码
 
         if read == 0 {
@@ -911,24 +911,20 @@ pub fn sys_pselect6(
     sigmask: usize,
 ) -> SyscallRet {
     // log::error!("[sys_pselecct6] nfds: {}, readfds: {:?}, writefds: {:?}, exceptfds: {:?}, timeout: {:?}, mask: {}",nfds,readfds,writefds,exceptfds,timeout,mask);
-    log::error!("[sys_pselect6]:begin pselect6");
+    log::error!("[sys_pselect6]:begin pselect6,nfds {:?},readfds {:?},writefds {:?},exceptfds {:?},timeout {:?},sigmask {:?}",nfds,readfds,writefds,exceptfds,timeout,sigmask);
     let timeout = if timeout.is_null() {
         // timeout为负数对于poll来说是无限等待
         -1
     } else {
         let mut tmo: TimeSpec = TimeSpec::default();
         copy_from_user(timeout, &mut tmo as *mut TimeSpec, 1)?;
+        log::error!("[sys_pselect6] tmo sec is {:?},tmo nsec is {:?}",tmo.sec,tmo.nsec);
+        let sec_signed = tmo.sec as isize;
+        if sec_signed < 0 {
+            return Err(Errno::EINVAL);
+        }
         (tmo.sec * 1000 + tmo.nsec / 1000000) as isize
     };
-    // log::error!(
-    //     "nfds: {}, readfds: {}, writefds: {}, exceptfds: {}, timeout: {}, sigmask: {}",
-    //     nfds,
-    //     readfds,
-    //     writefds,
-    //     exceptfds,
-    //     timeout,
-    //     sigmask
-    // );
     let mut readfditer = match init_fdset(readfds, nfds) {
         Ok(rfditer) => rfditer,
         Err(e) => return Err(e),
@@ -1014,7 +1010,7 @@ pub fn sys_pselect6(
             log::error!("[sys_pselect] timeout is 0");
             break;
         } else if timeout > 0 {
-            if get_time_ms() > timeout as usize {
+            if get_time_ms()/1000 > timeout as usize {
                 // 超时了, 返回
                 log::error!("[sys_pselect]:timeout");
                 break;

@@ -102,6 +102,9 @@ impl InodeOp for NullInode {
     fn set_mode(&self, mode: u16) {
         self.inner.write().inode_on_disk.set_mode(mode);
     }
+    fn set_perm(&self, perm: u16) {
+        self.inner.write().inode_on_disk.set_perm(perm);
+    }
 }
 
 pub struct NullFile {
