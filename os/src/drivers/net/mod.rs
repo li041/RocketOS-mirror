@@ -80,6 +80,7 @@ pub fn init_net_device(dtb_addr: usize) {
                             MapPermission::R | MapPermission::W,
                             None,
                             0,
+                            false,
                         ),
                         None,
                         0,

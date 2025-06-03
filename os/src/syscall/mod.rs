@@ -12,13 +12,13 @@
 
 use errno::{Errno, SyscallRet};
 use fs::{
-    sys_chdir, sys_close, sys_copy_file_range, sys_dup, sys_dup3, sys_faccessat, sys_fadvise64,
-    sys_fallocate, sys_fchmod, sys_fchmodat, sys_fchownat, sys_fcntl, sys_fstat, sys_fstatat,
-    sys_fsync, sys_ftruncate, sys_getcwd, sys_getdents64, sys_ioctl, sys_linkat, sys_lseek,
-    sys_mkdirat, sys_mknodat, sys_mount, sys_msync, sys_openat, sys_pipe2, sys_ppoll, sys_pread,
-    sys_pselect6, sys_pwrite, sys_read, sys_readlinkat, sys_readv, sys_renameat2, sys_sendfile,
-    sys_statfs, sys_statx, sys_symlinkat, sys_sync, sys_umask, sys_umount2, sys_unlinkat,
-    sys_utimensat, sys_write, sys_writev,
+    sys_chdir, sys_chroot, sys_close, sys_copy_file_range, sys_dup, sys_dup3, sys_faccessat,
+    sys_fadvise64, sys_fallocate, sys_fchdir, sys_fchmod, sys_fchmodat, sys_fchownat, sys_fcntl,
+    sys_fstat, sys_fstatat, sys_fsync, sys_ftruncate, sys_getcwd, sys_getdents64, sys_ioctl,
+    sys_linkat, sys_lseek, sys_mkdirat, sys_mknodat, sys_mount, sys_msync, sys_openat, sys_pipe2,
+    sys_ppoll, sys_pread, sys_pselect6, sys_pwrite, sys_read, sys_readlinkat, sys_readv,
+    sys_renameat2, sys_sendfile, sys_statfs, sys_statx, sys_symlinkat, sys_sync, sys_umask,
+    sys_umount2, sys_unlinkat, sys_utimensat, sys_write, sys_writev,
 };
 use mm::{
     sys_brk, sys_get_mempolicy, sys_madvise, sys_membarrier, sys_mlock, sys_mmap, sys_mprotect,
@@ -38,7 +38,11 @@ use signal::{
     sys_rt_sigsuspend, sys_rt_sigtimedwait, sys_tgkill, sys_tkill,
 };
 use task::{
-    sys_acct, sys_clock_nansleep, sys_clone, sys_execve, sys_exit_group, sys_futex, sys_get_time, sys_getegid, sys_geteuid, sys_getgid, sys_getgroups, sys_getpgid, sys_getpid, sys_getppid, sys_getresgid, sys_getresuid, sys_gettid, sys_getuid, sys_nanosleep, sys_set_tid_address, sys_setfsgid, sys_setfsuid, sys_setgid, sys_setgroups, sys_setpgid, sys_setregid, sys_setresgid, sys_setresuid, sys_setreuid, sys_setsid, sys_setuid, sys_waitpid, sys_yield
+    sys_acct, sys_clock_nansleep, sys_clone, sys_execve, sys_exit_group, sys_futex, sys_get_time,
+    sys_getegid, sys_geteuid, sys_getgid, sys_getgroups, sys_getpgid, sys_getpid, sys_getppid,
+    sys_getresgid, sys_getresuid, sys_gettid, sys_getuid, sys_nanosleep, sys_set_tid_address,
+    sys_setfsgid, sys_setfsuid, sys_setgid, sys_setgroups, sys_setpgid, sys_setregid,
+    sys_setresgid, sys_setresuid, sys_setreuid, sys_setsid, sys_setuid, sys_waitpid, sys_yield,
 };
 use util::{
     sys_adjtimex, sys_clock_adjtime, sys_clock_getres, sys_clock_gettime, sys_getrusage,
@@ -87,6 +91,8 @@ const SYSCALL_FTRUNCATE: usize = 46;
 const SYSCALL_FALLOCATE: usize = 47;
 const SYSCALL_FACCESSAT: usize = 48;
 const SYSCALL_CHDIR: usize = 49;
+const SYSCALL_FCHDIR: usize = 50;
+const SYSCALL_CHROOT: usize = 51;
 const SYSCALL_FCHMOD: usize = 52;
 const SYSCALL_FCHMODAT: usize = 53;
 const SYSCALL_FCHOWNAT: usize = 54;
@@ -210,6 +216,7 @@ const SYSCALL_PSELECT: usize = 72;
 const SYSCALL_SETSID: usize = 157;
 const SYSCALL_ADJTIMEX: usize = 171;
 const SYSCALL_CLOCKADJTIME: usize = 266;
+pub const SYSCALL_FACCESSAT2: usize = 439;
 
 const CARELESS_SYSCALLS: [usize; 9] = [62, 63, 64, 72, 113, 124, 129, 165, 260];
 // const SYSCALL_NUM_2_NAME: [(&str, usize); 4] = [
@@ -266,6 +273,8 @@ pub fn syscall(
         SYSCALL_FALLOCATE => sys_fallocate(a0, a1 as i32, a2, a3),
         SYSCALL_FACCESSAT => sys_faccessat(a0 as usize, a1 as *const u8, a2 as i32, a3 as i32),
         SYSCALL_CHDIR => sys_chdir(a0 as *const u8),
+        SYSCALL_FCHDIR => sys_fchdir(a0),
+        SYSCALL_CHROOT => sys_chroot(a0 as *const u8),
         SYSCALL_FCHMOD => sys_fchmod(a0, a1),
         SYSCALL_FCHMODAT => sys_fchmodat(a0, a1 as *const u8, a2, a3 as i32),
         SYSCALL_FCHOWNAT => sys_fchownat(a0, a1 as *const u8, a2 as u32, a3 as u32, a4 as i32),
@@ -405,6 +414,7 @@ pub fn syscall(
         SYSCALL_SOCKETPAIR => syscall_socketpair(a0, a1, a2, a3 as *mut usize),
         SYSCALL_SENDMSG => syscall_sendmsg(a0, a1, a2),
         SYSCALL_RECVMSG => syscall_recvmsg(a0, a1, a2),
+        SYSCALL_FACCESSAT2 => sys_faccessat(a0 as usize, a1 as *const u8, a2 as i32, a3 as i32),
         _ => {
             log::warn!(
                 "Unsupported syscall_id: {}, {}",

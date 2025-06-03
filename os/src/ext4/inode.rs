@@ -10,7 +10,7 @@ use spin::RwLock;
 use crate::arch::config::EXT4_MAX_INLINE_DATA;
 use crate::fs::inode::InodeOp;
 use crate::fs::kstat::Kstat;
-use crate::syscall::errno::Errno;
+use crate::syscall::errno::{Errno, SyscallRet};
 use crate::task::current_task;
 use crate::timer::TimeSpec;
 // use crate::fs::inode::InodeMeta;
@@ -1519,6 +1519,27 @@ impl Ext4Inode {
             }
         }
         inode_on_disk.set_size(new_size);
+    }
+    // Todo: 6.3
+    pub fn fallocate(&self, mode: i32, offset: usize, len: usize) -> SyscallRet {
+        log::warn!(
+            "[Ext4Inode::fallocate] mode: {}, offset: {}, len: {}",
+            mode,
+            offset,
+            len
+        );
+        // 目前仅支持FALLOC_FL_KEEP_SIZE, 其他模式未实现
+        // if mode & FALLOC_FL_KEEP_SIZE != 0 {
+        //     // Todo: 预分配空间
+        //     // 保持文件大小不变, 只分配空间
+        //     let new_size = offset + len;
+        //     if new_size > self.get_size() as usize {
+        //         self.set_size(new_size as u64);
+        //     }
+        //     return Ok(0);
+        // }
+        // Err(Errno::ENOSYS)
+        Ok(0)
     }
 }
 

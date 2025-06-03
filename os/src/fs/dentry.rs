@@ -59,7 +59,7 @@ pub fn dentry_check_access(
 ) -> Result<usize, Errno> {
     let task = current_task();
     let (uid, gid) = if use_effective {
-        (task.euid(), task.egid())
+        (task.fsuid(), task.fsgid())
     } else {
         (task.uid(), task.gid())
     };
@@ -108,7 +108,7 @@ pub fn dentry_check_access(
 /// 要修改文件的所有者, 必须具备`CAP_CHOWN`能力(目前只支持root用户)
 pub fn dentry_chown(dentry: &Dentry, new_uid: u32, new_gid: u32) -> SyscallRet {
     let task = current_task();
-    let (euid, egid) = (task.euid(), task.egid());
+    let (euid, egid) = (task.fsuid(), task.fsgid());
     let inode = dentry.get_inode();
     let mut i_mode = inode.get_mode();
     log::info!(
@@ -269,7 +269,7 @@ impl Dentry {
     pub fn can_search(&self) -> bool {
         let (euid, egid) = {
             let task = current_task();
-            (task.euid(), task.egid())
+            (task.fsuid(), task.fsgid())
         };
         if euid == 0 {
             return true; // root用户总是有权限

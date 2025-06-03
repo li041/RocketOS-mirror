@@ -14,6 +14,7 @@ use alloc::sync::Arc;
 use exe::{ExeFile, ExeInode, EXE};
 use meminfo::{MemInfoFile, MEMINFO};
 use mounts::{MountsFile, MOUNTS};
+use tainted::{TaintedFile, TAINTED};
 
 pub mod exe;
 pub mod maps;
@@ -22,6 +23,7 @@ pub mod mounts;
 pub mod pagemap;
 pub mod pid;
 pub mod status;
+pub mod tainted;
 
 pub fn init_procfs(root_path: Arc<Path>) {
     let proc_path = "/proc";
@@ -36,10 +38,71 @@ pub fn init_procfs(root_path: Arc<Path>) {
     match filename_create(&mut nd, 0) {
         Ok(dentry) => {
             let parent_inode = nd.dentry.get_inode();
-            parent_inode.mkdir(dentry, proc_mode);
+            parent_inode.mkdir(dentry.clone(), proc_mode);
+            insert_core_dentry(dentry);
         }
         Err(e) => {
             panic!("create {} failed: {:?}", proc_path, e);
+        }
+    };
+    let sys_path = "/proc/sys";
+    let mut nd = Nameidata {
+        path_segments: parse_path(sys_path),
+        dentry: root_path.dentry.clone(),
+        mnt: root_path.mnt.clone(),
+        depth: 0,
+    };
+    let sys_mode = S_IFDIR as u16 | 0o755;
+    match filename_create(&mut nd, 0) {
+        Ok(dentry) => {
+            let parent_inode = nd.dentry.get_inode();
+            parent_inode.mkdir(dentry.clone(), sys_mode);
+        }
+        Err(e) => {
+            panic!("create {} failed: {:?}", sys_path, e);
+        }
+    };
+    let kernel_path = "/proc/sys/kernel";
+    let mut nd = Nameidata {
+        path_segments: parse_path(kernel_path),
+        dentry: root_path.dentry.clone(),
+        mnt: root_path.mnt.clone(),
+        depth: 0,
+    };
+    let kernel_mode = S_IFDIR as u16 | 0o755;
+    match filename_create(&mut nd, 0) {
+        Ok(dentry) => {
+            let parent_inode = nd.dentry.get_inode();
+            parent_inode.mkdir(dentry.clone(), kernel_mode);
+        }
+        Err(e) => {
+            panic!("create {} failed: {:?}", kernel_path, e);
+        }
+    };
+    let taint_path = "/proc/sys/kernel/tainted";
+    let mut nd = Nameidata {
+        path_segments: parse_path(taint_path),
+        dentry: root_path.dentry.clone(),
+        mnt: root_path.mnt.clone(),
+        depth: 0,
+    };
+    let taint_mode = S_IFREG as u16 | 0o444;
+    match filename_create(&mut nd, 0) {
+        Ok(dentry) => {
+            let parent_inode = nd.dentry.get_inode();
+            parent_inode.create(dentry.clone(), taint_mode);
+            // 现在dentry的inode指向/proc/sys/kernel/tainted
+            let taint_file = TaintedFile::new(
+                Path::new(root_path.mnt.clone(), dentry.clone()),
+                dentry.get_inode().clone(),
+                // ReadOnly
+                OpenFlags::empty(),
+            );
+            TAINTED.call_once(|| taint_file.clone());
+            insert_core_dentry(dentry.clone());
+        }
+        Err(e) => {
+            panic!("create {} failed: {:?}", taint_path, e);
         }
     };
     // /proc/mounts

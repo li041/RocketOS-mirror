@@ -214,7 +214,7 @@ impl Page {
         f(unsafe { &mut *(addr as *mut T) })
     }
 
-    pub fn sync(&mut self) {
+    pub fn sync(&self) {
         match &self.page_kind {
             PageKind::Filebe(info) => {
                 let guard = info.write(); // 加写锁
@@ -230,18 +230,21 @@ impl Page {
             }
             PageKind::Inline(_info) => {
                 // inline page的数据应该在Inode Drop时写回block
+                log::error!(
+                    "[Page::sync]inline page should not be synced directly, vaddr: {:#x}",
+                    self.vaddr
+                );
             }
             _ => {}
         }
-        // 释放内存
-        let ppn = (self.vaddr - KERNEL_BASE) >> PAGE_SIZE_BITS;
-        frame_dealloc(PhysPageNum(ppn));
-        // println!("dealloc page: {:#x}", self.vaddr);
     }
 }
 
 impl Drop for Page {
     fn drop(&mut self) {
-        self.sync()
+        self.sync();
+        // 释放内存
+        let ppn = (self.vaddr - KERNEL_BASE) >> PAGE_SIZE_BITS;
+        frame_dealloc(PhysPageNum(ppn));
     }
 }

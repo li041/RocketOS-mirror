@@ -56,6 +56,9 @@ pub trait FileOp: Any + Send + Sync {
     fn get_inode(&self) -> Arc<dyn InodeOp> {
         unimplemented!();
     }
+    fn get_path(&self) -> Arc<Path> {
+        unimplemented!();
+    }
     /// Write `UserBuffer` to file
     fn write<'a>(&'a self, _buf: &'a [u8]) -> SyscallRet {
         unimplemented!();
@@ -69,6 +72,9 @@ pub trait FileOp: Any + Send + Sync {
     }
     // truncate the file to a given length
     fn truncate(&self, _length: usize) -> SyscallRet {
+        unimplemented!();
+    }
+    fn fallocate(&self, _mode: i32, _offset: usize, _length: usize) -> SyscallRet {
         unimplemented!();
     }
     // Get the file offset
@@ -198,6 +204,9 @@ impl FileOp for File {
     fn get_inode(&self) -> Arc<dyn InodeOp> {
         self.inner_handler(|inner| inner.inode.clone())
     }
+    fn get_path(&self) -> Arc<Path> {
+        self.inner_handler(|inner| inner.path.clone())
+    }
 
     fn write<'a>(&'a self, buf: &'a [u8]) -> SyscallRet {
         let write_size = self.inner_handler(|inner| {
@@ -249,6 +258,9 @@ impl FileOp for File {
         }
         self.inner_handler(|inner| inner.inode.truncate(length));
         Ok(0)
+    }
+    fn fallocate(&self, _mode: i32, _offset: usize, _length: usize) -> SyscallRet {
+        self.inner_handler(|inner| inner.inode.fallocate(_mode, _offset, _length))
     }
     fn get_offset(&self) -> usize {
         self.inner_handler(|inner| inner.offset)
