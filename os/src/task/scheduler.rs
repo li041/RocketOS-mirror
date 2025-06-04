@@ -186,6 +186,9 @@ pub fn yield_current_task() {
             if let Some(next_task) = fetch_task() {
                 let next_task_kernel_stack = next_task.kstack();
                 {
+                    task.set_ready();
+                    // 将当前任务加入就绪队列
+                    add_task(task);
                     log::debug!(
                         "**********************************  task {} end **********************************",
                         current_task().tid()

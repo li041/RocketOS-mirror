@@ -14,6 +14,8 @@ pub struct SigPending {
     pub mask: SigSet,                 // 信号掩码
     pub info: BTreeMap<i32, SigInfo>, // 记录信息 key：信号值， value：信号信息
     pub interrupted: bool,            // 是否被信号中断
+    pub re_start: bool,               // 是否需要重启
+    pub restore_mask: bool,           // 是否需要恢复信号掩码(用于sigsuspend)
 }
 
 impl SigPending {
@@ -23,6 +25,8 @@ impl SigPending {
             mask: SigSet::empty(),
             info: BTreeMap::new(),
             interrupted: false,
+            re_start: true,         // 默认需要重启
+            restore_mask: true,     // 默认需要恢复信号掩码
         }
     }
 
@@ -99,7 +103,7 @@ impl SigPending {
     // 设定当前任务被信号中断
     pub fn set_interrupted(&mut self) {
         self.interrupted = true;
-    }   
+    }
 
     // 设定当前任务没有被信号中断
     pub fn set_uninterrupted(&mut self) {
@@ -109,6 +113,32 @@ impl SigPending {
     // 检查当前任务是否被信号中断
     pub fn is_interrupted(&self) -> bool {
         self.interrupted
+    }
+
+    // 阻止当前任务进行重启
+    pub fn cancel_restart(&mut self) {
+        self.re_start = false; // 设置为取消重启状态
+    }
+
+    // 判断当前任务是否需要重启
+    pub fn need_restart(&mut self) -> bool {
+        if !self.re_start {
+            self.re_start = true; // 如果之前是取消重启的状态，则恢复重启
+            return false;
+        }
+        self.re_start
+    }
+
+    pub fn cancel_restore_mask(&mut self) {
+        self.restore_mask = false; // 设置为不恢复信号掩码状态
+    }
+
+    pub fn need_restore_mask(&mut self) -> bool {
+        if !self.restore_mask {
+            self.restore_mask = true; // 如果之前是不恢复信号掩码的状态，则恢复
+            return false;
+        }
+        self.restore_mask
     }
 }
 
@@ -157,7 +187,7 @@ impl Sig {
     }
 
     pub fn is_valid(&self) -> bool {
-        self.0 >= 0 && self.0 < MAX_SIGNUM as i32
+        self.0 > 0 && self.0 <= MAX_SIGNUM as i32
     }
 
     pub fn raw(&self) -> i32 {
@@ -212,6 +242,38 @@ impl Sig {
             30 => "SIGPWR",
             31 => "SIGSYS",
             32 => "SIGLEGACYMAX",
+            33 => "SIGRT1",
+            34 => "SIGRT2",
+            35 => "SIGRT3",
+            36 => "SIGRT4",
+            37 => "SIGRT5",
+            38 => "SIGRT6",
+            39 => "SIGRT7",
+            40 => "SIGRT8",
+            41 => "SIGRT9",
+            42 => "SIGRT10",
+            43 => "SIGRT11",
+            44 => "SIGRT12",
+            45 => "SIGRT13",
+            46 => "SIGRT14",
+            47 => "SIGRT15",
+            48 => "SIGRT16",
+            49 => "SIGRT17",
+            50 => "SIGRT18",
+            51 => "SIGRT19",
+            52 => "SIGRT20",
+            53 => "SIGRT21",
+            54 => "SIGRT22",
+            55 => "SIGRT23",
+            56 => "SIGRT24",
+            57 => "SIGRT25",
+            58 => "SIGRT26",
+            59 => "SIGRT27",
+            60 => "SIGRT28",
+            61 => "SIGRT29",
+            62 => "SIGRT30",
+            63 => "SIGRT31",
+            64 => "SIGMAX",
             _ => "UNKNOWN",
         }
     }

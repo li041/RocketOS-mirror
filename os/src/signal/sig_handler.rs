@@ -52,11 +52,7 @@ pub struct SigAction {
 
 impl SigAction {
     pub fn new(sig: Sig) -> Self {
-        let atype = ActionType::default(sig);
-        let sa_handler = match atype {
-            ActionType::Ignore => SIG_IGN,
-            ActionType::Term | ActionType::Stop | ActionType::Cont | ActionType::Core => SIG_DFL,
-        };
+        let sa_handler = SIG_DFL; // 默认处理方式
         Self {
             sa_handler,
             flags: Default::default(),
@@ -89,6 +85,7 @@ impl ActionType {
             | Sig::SIGBUS
             | Sig::SIGFPE
             | Sig::SIGILL
+            | Sig::SIGTRAP
             | Sig::SIGQUIT
             | Sig::SIGSEGV
             | Sig::SIGXCPU

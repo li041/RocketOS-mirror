@@ -1,10 +1,9 @@
-use core::{default, mem, str};
+use core::{default, str};
 
 use lazy_static::lazy_static;
 use spin::{lazy, mutex, Once, RwLock};
 
 use crate::{
-    arch::config::PAGE_SIZE_BITS,
     ext4::inode::Ext4InodeDisk,
     fs::{
         file::{FileOp, OpenFlags},
@@ -14,9 +13,7 @@ use crate::{
         uapi::Whence,
         FileOld,
     },
-    mm::{MapPermission, VPNRange, VirtPageNum},
     syscall::errno::{Errno, SyscallRet},
-    task::current_task,
     timer::TimeSpec,
 };
 
@@ -24,27 +21,27 @@ use alloc::{
     format,
     string::{String, ToString},
     sync::Arc,
-    vec::Vec,
 };
 
-pub static STATUS: Once<Arc<dyn FileOp>> = Once::new();
+pub static PIDMAX: Once<Arc<dyn FileOp>> = Once::new();
 
-pub struct StatusInode {
-    pub inner: RwLock<StatusInodeInner>,
+pub struct PidMaxInode {
+    pub inner: RwLock<PidMaxInodeInner>,
 }
-pub struct StatusInodeInner {
+
+pub struct PidMaxInodeInner {
     pub inode_on_disk: Ext4InodeDisk,
 }
 
-impl StatusInode {
+impl PidMaxInode {
     pub fn new(inode_on_disk: Ext4InodeDisk) -> Arc<Self> {
-        Arc::new(StatusInode {
-            inner: RwLock::new(StatusInodeInner { inode_on_disk }),
+        Arc::new(PidMaxInode {
+            inner: RwLock::new(PidMaxInodeInner { inode_on_disk }),
         })
     }
 }
 
-impl InodeOp for StatusInode {
+impl InodeOp for PidMaxInode {
     fn getattr(&self) -> Kstat {
         let mut kstat = Kstat::new();
         let inner_guard = self.inner.read();
@@ -99,26 +96,30 @@ impl InodeOp for StatusInode {
     fn set_ctime(&self, ctime: TimeSpec) {
         self.inner.write().inode_on_disk.set_ctime(ctime);
     }
+    fn set_mode(&self, mode: u16) {
+        self.inner.write().inode_on_disk.set_mode(mode);
+    }
 }
 
-pub struct StatusFile {
+pub struct PidMaxFile {
     pub path: Arc<Path>,
     pub inode: Arc<dyn InodeOp>,
     pub flags: OpenFlags,
-    pub inner: RwLock<StatusFileInner>,
+    pub inner: RwLock<PidMaxFileInner>,
 }
 
-pub struct StatusFileInner {
+#[derive(Default)]
+pub struct PidMaxFileInner {
     pub offset: usize,
 }
 
-impl StatusFile {
+impl PidMaxFile {
     pub fn new(path: Arc<Path>, inode: Arc<dyn InodeOp>, flags: OpenFlags) -> Arc<Self> {
-        Arc::new(StatusFile {
+        Arc::new(PidMaxFile {
             path,
             inode,
             flags,
-            inner: RwLock::new(StatusFileInner { offset: 0 }),
+            inner: RwLock::new(PidMaxFileInner::default()),
         })
     }
     pub fn add_offset(&self, offset: usize) {
@@ -126,58 +127,85 @@ impl StatusFile {
     }
 }
 
-impl FileOp for StatusFile {
-    fn get_inode(&self) -> Arc<dyn InodeOp> {
-        self.inode.clone()
+impl FileOp for PidMaxFile {
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
     }
     fn read(&self, buf: &mut [u8]) -> SyscallRet {
-        let task_info = current_task().info();
-        let info_bytes = task_info.as_bytes();
-        let info_len = info_bytes.len();
-        // 当前偏移
-        let offset = self.inner.read().offset;
-        if offset >= info_len {
+        let info = FAKEPidMax.read().serialize();
+        let len = info.len();
+        if self.inner.read().offset >= len {
             return Ok(0);
         }
-        // 计算还能读多少
-        let remain = info_len - offset;
-        let copy_len = core::cmp::min(buf.len(), remain);
-        // 拷贝从 offset 开始的数据
-        buf[..copy_len].copy_from_slice(&info_bytes[offset..offset + copy_len]);
-        // 更新偏移
-        self.add_offset(copy_len);
-        Ok(copy_len)
+        buf[..len].copy_from_slice(info.as_bytes());
+        self.add_offset(len);
+        Ok(len)
+    }
+    fn readable(&self) -> bool {
+        true
+    }
+    fn write(&self, buf: &[u8]) -> SyscallRet {
+        let mut inner_guard = self.inner.write();
+        let info = str::from_utf8(buf).map_err(|_| Errno::EINVAL)?;
+        if let Ok(pid_max) = info.trim().parse::<usize>() {
+            FAKEPidMax.write().pid_max = pid_max;
+            inner_guard.offset += buf.len();
+            Ok(buf.len())
+        } else {
+            Err(Errno::EINVAL)
+        }
+    }
+    fn writable(&self) -> bool {
+        true
     }
     fn seek(&self, offset: isize, whence: Whence) -> SyscallRet {
         let mut inner_guard = self.inner.write();
         match whence {
             crate::fs::uapi::Whence::SeekSet => {
                 if offset < 0 {
-                    panic!("SeekSet offset < 0");
+                    return Err(Errno::EINVAL);
                 }
                 inner_guard.offset = offset as usize;
             }
             crate::fs::uapi::Whence::SeekCur => {
-                inner_guard.offset = inner_guard.offset.checked_add_signed(offset).unwrap();
+                inner_guard.offset = inner_guard.offset.checked_add_signed(offset).unwrap()
             }
             crate::fs::uapi::Whence::SeekEnd => {
-                inner_guard.offset = current_task()
-                    .info()
+                inner_guard.offset = FAKEPidMax
+                    .read()
+                    .serialize()
                     .len()
                     .checked_add_signed(offset)
                     .unwrap();
             }
             _ => {
-                log::warn!("Unsupported whence: {:?}", whence);
-                return Err(Errno::EINVAL); // Invalid argument
+                log::warn!("Unsupported whence in PidMaxFile::seek: {:?}", whence);
+                return Err(Errno::EINVAL);
             }
         }
         Ok(inner_guard.offset)
     }
-    fn readable(&self) -> bool {
-        true
+    fn get_inode(&self) -> Arc<dyn InodeOp> {
+        self.inode.clone()
     }
     fn get_flags(&self) -> OpenFlags {
         self.flags
+    }
+}
+
+lazy_static! {
+    static ref FAKEPidMax: RwLock<FakePidMax> = RwLock::new(FakePidMax::new());
+}
+struct FakePidMax {
+    pub pid_max: usize,
+}
+impl FakePidMax {
+    pub const fn new() -> Self {
+        Self {
+            pid_max: 32768, // 默认值
+        }
+    }
+    pub fn serialize(&self) -> String {
+        format!("{}\n", self.pid_max)
     }
 }

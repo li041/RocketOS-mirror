@@ -84,7 +84,8 @@ pub fn copy_from_user<'a, T: Copy>(from: *const T, to: *mut T, n: usize) -> Sysc
     let end_vpn = VirtAddr::from(from as usize + n * core::mem::size_of::<T>()).ceil();
     let vpn_range = VPNRange::new(start_vpn, end_vpn);
     current_task().op_memory_set_mut(|memory_set| {
-        memory_set.check_valid_user_vpn_range(vpn_range, MapPermission::R)
+        memory_set.check_valid_user_vpn_range(vpn_range, MapPermission::R)?;
+        memory_set.pre_handle_cow_and_lazy_alloc(vpn_range)
     })?;
     let total_bytes = n * core::mem::size_of::<T>();
     let to_bytes = unsafe { core::slice::from_raw_parts_mut(to as *mut u8, total_bytes) };

@@ -13,16 +13,23 @@ use core::cmp;
 
 use super::{flags::*, queue::FUTEXQUEUES};
 use crate::{
-    arch::{config::PAGE_SIZE_BITS, mm::copy_from_user},
+    arch::{config::{PAGE_SIZE_BITS, USER_MAX}, mm::copy_from_user},
     futex::{
         self,
         queue::{display_futexqueues, futex_hash},
     },
     syscall::errno::{Errno, SyscallRet},
-    task::{current_task, dump_scheduler, dump_wait_queue, wait, wakeup, yield_current_task, Task},
+    task::{
+        current_task, dump_scheduler, dump_wait_queue, wait, wait_timeout, wakeup,
+        yield_current_task, Task, ITIMER_REAL,
+    },
     timer::TimeSpec,
 };
-use alloc::{sync::Arc, sync::Weak};
+use alloc::{
+    collections::vec_deque::VecDeque,
+    sync::{Arc, Weak},
+    task,
+};
 
 pub(crate) type Futex = u32;
 
@@ -160,7 +167,7 @@ pub fn futex_wait(
     uaddr: usize,
     flags: i32,
     expected_val: u32,
-    deadline: Option<TimeSpec>,
+    wait_time: Option<TimeSpec>,
     bitset: u32,
 ) -> SyscallRet {
     log::error!(
@@ -169,9 +176,8 @@ pub fn futex_wait(
         uaddr,
         flags,
         expected_val,
-        deadline
+        wait_time
     );
-    let mut is_timeout = false;
 
     // we may be victim of spurious wakeups, so we need to loop
     let key = get_futex_key(uaddr, flags)?;
@@ -195,44 +201,40 @@ pub fn futex_wait(
         drop(hash_bucket);
     }
     loop {
-        // Todo: 超时等待暂且使用yield来代替
-        if let Some(deadline) = deadline {
-            let now = if flags & FLAGS_CLOCKRT != 0 {
-                TimeSpec::new_wall_time()
-            } else {
-                TimeSpec::new_machine_time()
-            };
-            is_timeout = deadline < now;
-            if !is_timeout {
-                yield_current_task(); // 返回时状态会变成running
-                current_task().set_interruptable();
-            }
-            if current_task().check_interrupt() {
-                log::error!("[futex_wait] task{} wakeup by signal", current_task().tid());
-                return Err(Errno::EINTR);
-            }
-
-            let mut hash_bucket = FUTEXQUEUES.buckets[futex_hash(&key)].lock();
-            // 神奇小咒语
-            log::trace!("[futex_wait] hash_bucket len: {:?}", hash_bucket.len());
-            let cur_id = current_task().tid();
-            // 查看自己是否在队列中
-            hash_bucket.retain(|futex_q| futex_q.task.upgrade().is_some());
-            if let Some(idx) = hash_bucket
-                .iter()
-                .position(|futex_q| futex_q.task.upgrade().unwrap().tid() == cur_id)
-            {
-                if is_timeout {
-                    hash_bucket.remove(idx);
+        if let Some(mut wait_time) = wait_time {
+            let clock_id = if flags & FLAGS_CLOCKRT != 0 {
+                let now = TimeSpec::new_wall_time();
+                if wait_time < now {
+                    log::error!("[futex_wait] wait_time is in the past, returning ETIMEDOUT");
+                    let mut hash_bucket = FUTEXQUEUES.buckets[futex_hash(&key)].lock();
+                    hash_bucket.retain(|futex_q| futex_q.task.upgrade().unwrap().tid() != current_task().tid());
                     return Err(Errno::ETIMEDOUT);
                 }
+                wait_time = wait_time - now;
+                ITIMER_REAL
             } else {
-                // the task is woken up anyway, and finds itself unqueued
-                return Ok(0);
+                -1
+            };
+            let ret = wait_timeout(wait_time, clock_id);
+            let task = current_task();
+            if ret == -1 {
+                // 被信号唤醒
+                log::error!("[futex_wait] task{} wakeup by signal", task.tid());
+                let mut hash_bucket = FUTEXQUEUES.buckets[futex_hash(&key)].lock();
+                hash_bucket.retain(|futex_q| futex_q.task.upgrade().unwrap().tid() != task.tid());
+                return Err(Errno::EINTR);
+            } else if ret == -2 {
+                // 超时
+                log::error!("[futex_wait] task{} wakeup by timeout", task.tid());
+                let mut hash_bucket = FUTEXQUEUES.buckets[futex_hash(&key)].lock();
+                hash_bucket.retain(|futex_q| futex_q.task.upgrade().unwrap().tid() != task.tid());
+                return Err(Errno::ETIMEDOUT);
             }
+            return Ok(0);
         }
+
         // 无计时情况
-        if deadline.is_none() {
+        if wait_time.is_none() {
             if wait() == -1 {
                 let mut hash_bucket = FUTEXQUEUES.buckets[futex_hash(&key)].lock();
                 hash_bucket.retain(|futex_q| {
@@ -263,6 +265,7 @@ pub fn futex_wake(uaddr: usize, flags: i32, nr_waken: u32) -> SyscallRet {
             log::info!("[futex_wake] hash_bucket is empty");
             return Ok(0);
         } else {
+            log::error!("[futex_wake] hash_bucket is not empty, len: {}", hash_bucket.len());
             hash_bucket.retain(|futex_q| {
                 if futex_q.task.upgrade().is_none() {
                     return false;
@@ -281,7 +284,6 @@ pub fn futex_wake(uaddr: usize, flags: i32, nr_waken: u32) -> SyscallRet {
         }
         // drop hash_bucket to avoid deadlock
     }
-    yield_current_task();
     log::info!("[futex_wake] wake up {:?} tasks", ret);
     Ok(ret as usize)
 }
@@ -329,10 +331,17 @@ pub fn futex_requeue(
     uaddr2: usize,
     nr_requeue: u32,
 ) -> SyscallRet {
+    // 对应的是 val或val2 为-1的情况
+    if nr_waken == 4294967295 || nr_requeue == 4294967295 {
+        return Err(Errno::EINVAL);
+    }
+
     let mut ret = 0;
     let mut requeued = 0;
     let key = get_futex_key(uaddr, flags)?;
     let req_key = get_futex_key(uaddr2, flags)?;
+    let hash_src = futex_hash(&key);
+    let hash_req = futex_hash(&req_key);
 
     if key == req_key {
         return futex_wake(uaddr, flags, nr_waken);
@@ -343,31 +352,62 @@ pub fn futex_requeue(
         if hash_bucket.is_empty() {
             return Ok(0);
         } else {
-            while let Some(futex_q) = hash_bucket.pop_front() {
-                if futex_q.key == key {
-                    //WAIT_FOR_FUTEX.notify_task(&futex_q.task);
-                    ret += 1;
-                    wakeup(futex_q.task.upgrade().unwrap().tid());
-                    if ret == nr_waken {
-                        break;
+            // 先唤醒nr_waken个任务
+            let mut temp_hash_bucket: VecDeque<FutexQ> = VecDeque::new();
+            while ret < nr_waken {
+                if let Some(futex_q) = hash_bucket.pop_front() {
+                    if futex_q.key == key {
+                        log::error!(
+                            "[futex_requeue] wake up task {:?} from key {:?}",
+                            futex_q.task.upgrade().unwrap().tid(),
+                            key
+                        );
+                        ret += 1;
+                        wakeup(futex_q.task.upgrade().unwrap().tid());
+                    } else {
+                        // 不是要唤醒的futex，放入临时队列
+                        temp_hash_bucket.push_back(futex_q);
                     }
                 }
             }
-            if hash_bucket.is_empty() {
-                return Ok(ret as usize);
+
+            // 把误拿的futex_q放回原来的队列
+            while let Some(futex_q) = temp_hash_bucket.pop_front() {
+                hash_bucket.push_back(futex_q);
             }
-            // requeue the rest of the waiters
-            let mut req_bucket = FUTEXQUEUES.buckets[futex_hash(&req_key)].lock();
-            while let Some(futex_q) = hash_bucket.pop_front() {
-                req_bucket.push_back(futex_q);
-                requeued += 1;
-                if requeued == nr_requeue {
-                    break;
+
+            if hash_src == hash_req {
+                // 如果源桶和请求桶是同一个桶，直接返回
+                log::error!("[futex_requeue] source bucket and request bucket are the same, returning");
+                while let Some(mut futex_q) = hash_bucket.pop_front() {
+                    futex_q.key = req_key; // update the key to the new one
+                    log::error!("[futex_requeue] requeue task {:?} to key {:?}",
+                                futex_q.task.upgrade().unwrap().tid(), req_key);
+                    hash_bucket.push_back(futex_q);
+                    requeued += 1;
+                    ret += 1;
+                    if requeued == nr_requeue {
+                        break;
+                    }
                 }
+            } else {
+                // 将桶中其余的futex_q重新排队到请求的桶中
+                let mut req_bucket = FUTEXQUEUES.buckets[futex_hash(&req_key)].lock();
+                while let Some(mut futex_q) = hash_bucket.pop_front() {
+                    futex_q.key = req_key; // update the key to the new one
+                    log::error!("[futex_requeue] requeue task {:?} to key {:?}",
+                                futex_q.task.upgrade().unwrap().tid(), req_key);
+                    req_bucket.push_back(futex_q);
+                    requeued += 1;
+                    ret += 1;
+                    if requeued == nr_requeue {
+                        break;
+                    }
+                }
+                log::error!("[futex_requeue] target bucket len: {:?}", req_bucket.len());
             }
         }
     }
-    yield_current_task();
     Ok(ret as usize)
 }
 
@@ -380,7 +420,7 @@ pub fn futex_cmp_requeue(
     val3: u32,
 ) -> SyscallRet {
     // 对应的是 val或val2 为-1的情况
-    if nr_waken == 4294967295 || nr_requeue == 4294967295 {
+    if nr_waken >= USER_MAX as u32 || nr_requeue == USER_MAX as u32 {
         return Err(Errno::EINVAL);
     }
 
@@ -393,6 +433,8 @@ pub fn futex_cmp_requeue(
     let mut requeued = 0;
     let key = get_futex_key(uaddr, flags)?;
     let req_key = get_futex_key(uaddr2, flags)?;
+    let hash_src = futex_hash(&key);
+    let hash_req = futex_hash(&req_key);
 
     if key == req_key {
         return futex_wake(uaddr, flags, nr_waken);
@@ -403,30 +445,56 @@ pub fn futex_cmp_requeue(
         if hash_bucket.is_empty() {
             return Ok(0);
         } else {
-            while let Some(futex_q) = hash_bucket.pop_front() {
-                if futex_q.key == key {
-                    //WAIT_FOR_FUTEX.notify_task(&futex_q.task);
-                    ret += 1;
-                    wakeup(futex_q.task.upgrade().unwrap().tid());
-                    if ret == nr_waken {
-                        break;
+            // 先唤醒nr_waken个任务
+            let mut temp_hash_bucket: VecDeque<FutexQ> = VecDeque::new();
+            while ret < nr_waken {
+                if let Some(futex_q) = hash_bucket.pop_front() {
+                    if futex_q.key == key {
+                        ret += 1;
+                        wakeup(futex_q.task.upgrade().unwrap().tid());
+                    } else {
+                        // 不是要唤醒的futex，放入临时队列
+                        temp_hash_bucket.push_back(futex_q);
                     }
                 }
             }
-            if hash_bucket.is_empty() {
-                return Ok(ret as usize);
+
+            // 把误拿的futex_q放回原来的队列
+            while let Some(futex_q) = temp_hash_bucket.pop_front() {
+                hash_bucket.push_back(futex_q);
             }
-            // requeue the rest of the waiters
-            let mut req_bucket = FUTEXQUEUES.buckets[futex_hash(&req_key)].lock();
-            while let Some(futex_q) = hash_bucket.pop_front() {
-                req_bucket.push_back(futex_q);
-                requeued += 1;
-                if requeued == nr_requeue {
-                    break;
+
+            if hash_src == hash_req {
+                // 如果源桶和请求桶是同一个桶，直接返回
+                log::error!("[futex_requeue] source bucket and request bucket are the same, returning");
+                while let Some(mut futex_q) = hash_bucket.pop_front() {
+                    futex_q.key = req_key; // update the key to the new one
+                    log::error!("[futex_requeue] requeue task {:?} to key {:?}",
+                                futex_q.task.upgrade().unwrap().tid(), req_key);
+                    hash_bucket.push_back(futex_q);
+                    requeued += 1;
+                    ret += 1;
+                    if requeued == nr_requeue {
+                        break;
+                    }
                 }
+            } else {
+                // 将桶中其余的futex_q重新排队到请求的桶中
+                let mut req_bucket = FUTEXQUEUES.buckets[futex_hash(&req_key)].lock();
+                while let Some(mut futex_q) = hash_bucket.pop_front() {
+                    futex_q.key = req_key; // update the key to the new one
+                    log::error!("[futex_requeue] requeue task {:?} to key {:?}",
+                                futex_q.task.upgrade().unwrap().tid(), req_key);
+                    req_bucket.push_back(futex_q);
+                    requeued += 1;
+                    ret += 1;
+                    if requeued == nr_requeue {
+                        break;
+                    }
+                }
+                log::error!("[futex_requeue] target bucket len: {:?}", req_bucket.len());
             }
         }
     }
-    yield_current_task();
     Ok(ret as usize)
 }

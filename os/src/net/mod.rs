@@ -43,8 +43,8 @@ pub mod alg;
 mod listentable;
 mod loopback;
 pub mod socket;
-mod tcp;
-mod udp;
+pub mod tcp;
+pub mod udp;
 pub mod unix;
 
 ///用于在使用函数返回错误时返回，如果是true可以yield_now,反之必须退出，可能等待没有意义

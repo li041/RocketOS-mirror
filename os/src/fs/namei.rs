@@ -35,8 +35,10 @@ use crate::{
         },
         fdtable::{FdEntry, FdFlags},
         proc::{
+            cpuinfo::CPUINFO,
             fd::{record_fd, FD_FILE},
             pid::{record_target_pid, TARGERT_PID},
+            pid_max::PIDMAX,
             tainted::TAINTED,
         },
         AT_FDCWD,
@@ -294,6 +296,17 @@ fn create_file_from_dentry(
             // /proc/sys/kernel/tainted
             let tainted_file = TAINTED.get().unwrap().clone();
             return Ok(tainted_file);
+        }
+        if dentry.absolute_path == "/proc/sys/kernel/pid_max" {
+            // /proc/sys/kernel/pid_max
+            let pid_max: Arc<dyn FileOp> = PIDMAX.get().unwrap().clone();
+            pid_max.seek(0, super::uapi::Whence::SeekSet).unwrap();
+            return Ok(pid_max);
+        }
+        if dentry.absolute_path == "/proc/cpuinfo" {
+            let cpuinfo: Arc<dyn FileOp> = CPUINFO.get().unwrap().clone();
+            cpuinfo.seek(0, super::uapi::Whence::SeekSet).unwrap();
+            return Ok(cpuinfo);
         }
     }
 

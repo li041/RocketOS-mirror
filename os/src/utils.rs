@@ -20,7 +20,8 @@ pub fn c_str_to_string(ptr: *const u8) -> Result<String, Errno> {
     let vpn_range = crate::mm::VPNRange::new(start_vpn, end_vpn);
     // 检查 ptr 是否在用户空间
     current_task().op_memory_set_mut(|memory_set| {
-        memory_set.check_valid_user_vpn_range(vpn_range, crate::mm::MapPermission::R)
+        memory_set.check_valid_user_vpn_range(vpn_range, crate::mm::MapPermission::R)?;
+        memory_set.pre_handle_cow_and_lazy_alloc(vpn_range)
     })?;
 
     let mut ptr = ptr as usize;

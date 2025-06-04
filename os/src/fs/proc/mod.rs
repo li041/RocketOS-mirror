@@ -1,4 +1,7 @@
-use crate::ext4::inode::{Ext4InodeDisk, S_IFCHR, S_IFDIR, S_IFLNK, S_IFREG};
+use crate::{
+    ext4::inode::{Ext4InodeDisk, S_IFCHR, S_IFDIR, S_IFLNK, S_IFREG},
+    fs::proc::{cpuinfo::{CPUInfoFile, CPUINFO}, pid_max::{PidMaxFile, PIDMAX}},
+};
 
 use super::{
     dentry::{self, insert_core_dentry, Dentry},
@@ -17,6 +20,7 @@ use meminfo::{MemInfoFile, MEMINFO};
 use mounts::{MountsFile, MOUNTS};
 use tainted::{TaintedFile, TAINTED};
 
+pub mod cpuinfo;
 pub mod exe;
 pub mod fd;
 pub mod maps;
@@ -26,6 +30,7 @@ pub mod pagemap;
 pub mod pid;
 pub mod status;
 pub mod tainted;
+pub mod pid_max;
 
 pub fn init_procfs(root_path: Arc<Path>) {
     let proc_path = "/proc";
@@ -107,6 +112,32 @@ pub fn init_procfs(root_path: Arc<Path>) {
             panic!("create {} failed: {:?}", taint_path, e);
         }
     };
+    let pid_max_path = "/proc/sys/kernel/pid_max";
+    let pid_max_mode = S_IFREG as u16 | 0o444;
+    nd = Nameidata {
+        path_segments: parse_path(pid_max_path),
+        dentry: root_path.dentry.clone(),
+        mnt: root_path.mnt.clone(),
+        depth: 0,
+    };
+    match filename_create(&mut nd, 0) {
+        Ok(dentry) => {
+            let parent_inode = nd.dentry.get_inode();
+            parent_inode.create(dentry.clone(), pid_max_mode);
+            // 现在dentry的inode指向/proc/sys/kernel/pid_max
+            let pid_max_file = PidMaxFile::new(
+                Path::new(root_path.mnt.clone(), dentry.clone()),
+                dentry.get_inode().clone(),
+                // ReadOnly
+                OpenFlags::empty(),
+            );
+            PIDMAX.call_once(|| pid_max_file.clone());
+            insert_core_dentry(dentry.clone());
+        }
+        Err(e) => {
+            panic!("create {} failed: {:?}", pid_max_path, e);
+        }
+    };
     // /proc/mounts
     // 只读, 虚拟文件
     let mounts_path = "/proc/mounts";
@@ -160,7 +191,7 @@ pub fn init_procfs(root_path: Arc<Path>) {
             insert_core_dentry(dentry.clone());
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", mounts_path, e);
+            panic!("create {} failed: {:?}", meminfo_path, e);
         }
     };
     // /proc/self/exe
@@ -369,4 +400,32 @@ pub fn init_procfs(root_path: Arc<Path>) {
             panic!("create {} failed: {:?}", pid_stat_path, e);
         }
     }
+    // /proc/cpuinfo
+    // 只读, 虚拟文件
+    let cpuinfo_path = "/proc/cpuinfo";
+    let cpuinfo_mode = S_IFREG as u16 | 0o444;
+    nd = Nameidata {
+        path_segments: parse_path(cpuinfo_path),
+        dentry: root_path.dentry.clone(),
+        mnt: root_path.mnt.clone(),
+        depth: 0,
+    };
+    match filename_create(&mut nd, 0) {
+        Ok(dentry) => {
+            let parent_inode = nd.dentry.get_inode();
+            parent_inode.create(dentry.clone(), cpuinfo_mode);
+            // 现在dentry的inode指向/proc/cpuinfo
+            let cpuinfo_file = CPUInfoFile::new(
+                Path::new(root_path.mnt.clone(), dentry.clone()),
+                dentry.get_inode().clone(),
+                // ReadOnly
+                OpenFlags::empty(),
+            );
+            CPUINFO.call_once(|| cpuinfo_file.clone());
+            insert_core_dentry(dentry.clone());
+        }
+        Err(e) => {
+            panic!("create {} failed: {:?}", mounts_path, e);
+        }
+    };
 }
