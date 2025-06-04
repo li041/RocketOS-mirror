@@ -17,7 +17,7 @@ use crate::{
     task::current_task,
 };
 
-use super::inode::InodeOp;
+use super::{file::OpenFlags, inode::InodeOp};
 
 bitflags::bitflags! {
     /// 目前只支持type
@@ -99,6 +99,67 @@ pub fn dentry_check_access(
         || mode & X_OK != 0 && perm & 0o1 == 0
     {
         return Err(Errno::EACCES);
+    }
+    Ok(0)
+}
+
+// 由调用者保证:
+//    1. dentry不是负目录项
+/// mode是inode的mode
+pub fn dentry_check_open(dentry: &Dentry, flags: OpenFlags, mode: u16) -> Result<usize, Errno> {
+    let task = current_task();
+    let (uid, gid) = (task.fsuid(), task.fsgid());
+    if uid == 0 {
+        return Ok(0); // root用户总是有权限
+    }
+    if flags.contains(OpenFlags::O_NOATIME) {
+        // 检查文件的所有者是否是当前用户
+        if uid != dentry.get_inode().get_uid() {
+            log::error!(
+                "[dentry_check_open] O_NOATIME flag set, but current user {} is not the owner of {}",
+                uid,
+                dentry.absolute_path
+            );
+            return Err(Errno::EPERM);
+        }
+    }
+    if flags.contains(OpenFlags::O_CREAT) && flags.contains(OpenFlags::O_EXCL) {
+        // O_CREAT | O_EXCL: 文件已存在返回 EEXIST
+        log::error!(
+            "[dentry_check_open] O_CREAT | O_EXCL flags set, but {} already exists",
+            dentry.absolute_path
+        );
+        return Err(Errno::EEXIST);
+    }
+    if flags.contains(OpenFlags::O_DIRECTORY) {
+        // O_DIRECTORY: 只能打开目录
+        if !dentry.is_dir() {
+            log::error!(
+                "[dentry_check_open] O_DIRECTORY flag set, but {} is not a directory",
+                dentry.absolute_path
+            );
+            return Err(Errno::ENOTDIR);
+        }
+    }
+    if flags.contains(OpenFlags::O_WRONLY) || flags.contains(OpenFlags::O_RDWR) {
+        // O_WRONLY 或 O_RDWR: 需要写权限
+        if dentry.is_dir() {
+            log::error!(
+                "[dentry_check_open] O_WRONLY or O_RDWR flags set, but {} is a directory",
+                dentry.absolute_path
+            );
+            return Err(Errno::EISDIR);
+        }
+        if dentry_check_access(dentry, W_OK, true).is_err() {
+            log::error!(
+                "[dentry_check_open] Write access denied for {}, mode: {:o}, uid: {}, gid: {}",
+                dentry.absolute_path,
+                mode,
+                uid,
+                gid
+            );
+            return Err(Errno::EACCES);
+        }
     }
     Ok(0)
 }
@@ -265,6 +326,8 @@ impl Dentry {
     pub fn is_negative(&self) -> bool {
         self.inner.lock().inode.is_none()
     }
+    // pub fn check_perm(&self, mode: i32) -> Result<usize, Errno> {
+    // }
     // 由上层调用者保证: 负目录项不能调用该函数
     pub fn can_search(&self) -> bool {
         let (euid, egid) = {

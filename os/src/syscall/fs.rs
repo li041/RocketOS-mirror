@@ -6,6 +6,7 @@ use alloc::string::ToString;
 use virtio_drivers::PAGE_SIZE;
 
 use crate::arch::timer::get_time_ms;
+use crate::ext4::dentry;
 use crate::fs::dentry::{dentry_check_access, dentry_chown, F_OK, R_OK, W_OK, X_OK};
 use crate::fs::fd_set::init_fdset;
 use crate::fs::fdtable::FdFlags;
@@ -14,7 +15,10 @@ use crate::fs::kstat::Statx;
 use crate::fs::mount::get_mount_by_dentry;
 use crate::fs::namei::lookup_dentry;
 use crate::fs::pipe::make_pipe;
-use crate::fs::uapi::{DevT, PollEvents, PollFd, RenameFlags, StatFs, UtimenatFlags, Whence};
+use crate::fs::uapi::{
+    DevT, FallocFlags, PollEvents, PollFd, RenameFlags, StatFs, UtimenatFlags, Whence,
+};
+use crate::fs::EXT4_MAX_FILE_SIZE;
 use crate::mm::{MapType, VPNRange, VirtAddr, VirtPageNum};
 use crate::signal::{Sig, SigSet};
 use crate::syscall::errno::Errno;
@@ -218,12 +222,12 @@ pub fn sys_writev(fd: usize, iov_ptr: *const IoVec, iovcnt: usize) -> SyscallRet
         }
         let mut ker_buf = vec![0u8; iovec.len];
         copy_from_user(iovec.base as *const u8, ker_buf.as_mut_ptr(), iovec.len)?;
-        log::warn!(
-            "[sys_writev] iovec.base: {:#x}, iovec.len: {}, ker_buf: {:?}",
-            iovec.base,
-            iovec.len,
-            ker_buf
-        );
+        // log::warn!(
+        //     "[sys_writev] iovec.base: {:#x}, iovec.len: {}, ker_buf: {:?}",
+        //     iovec.base,
+        //     iovec.len,
+        //     ker_buf
+        // );
         let written = file.write(&ker_buf)?;
         // 如果写入失败, 则返回已经写入的字节数, 或错误码
         if written == 0 {
@@ -427,9 +431,13 @@ pub fn sys_symlinkat(target: *const u8, newdirfd: i32, linkpath: *const u8) -> S
 /// mode是直接传递给ext4_create, 由其处理(仅当O_CREAT设置时有效, 指定inode的权限)
 /// flags影响文件的打开, 在flags中指定O_CREAT, 则创建文件
 pub fn sys_openat(dirfd: i32, pathname: *const u8, flags: i32, mode: usize) -> SyscallRet {
-    let flags = OpenFlags::from_bits(flags).unwrap();
+    let flags = OpenFlags::from_bits(flags).ok_or(Errno::EINVAL)?;
     let task = current_task();
     let path = c_str_to_string(pathname)?;
+    if path.len() > NAME_MAX {
+        log::error!("[sys_openat] pathname is too long: {}", path.len());
+        return Err(Errno::ENAMETOOLONG);
+    }
     log::info!(
         "[sys_openat] dirfd: {}, pathname: {:?}, flags: {:?}, mode: 0o{:o}",
         dirfd,
@@ -437,13 +445,9 @@ pub fn sys_openat(dirfd: i32, pathname: *const u8, flags: i32, mode: usize) -> S
         flags,
         mode
     );
-    if let Ok(file) = path_openat(&path, flags, dirfd, mode) {
-        let fd_flags = FdFlags::from(&flags);
-        task.fd_table().alloc_fd(file, fd_flags)
-    } else {
-        log::info!("[sys_openat] fail to open file: {}", path);
-        return Err(Errno::ENOENT);
-    }
+    let file = path_openat(&path, flags, dirfd, mode)?;
+    let fd_flags = FdFlags::from(&flags);
+    task.fd_table().alloc_fd(file, fd_flags)
 }
 
 /// mode是inode类型+文件权限
@@ -1563,35 +1567,41 @@ pub fn sys_copy_file_range(
         }
 
         // 分配缓冲区并读取数据
-        let mut buf = vec![0u8; len];
-        let read_len = if in_off_ptr == 0 {
-            in_file.read(&mut buf)?
+        if len > EXT4_MAX_FILE_SIZE {
+            // Todo: 应该分块
+            log::error!("[sys_copy_file_range] length exceeds max file size");
+            return Err(Errno::EINVAL);
         } else {
-            in_file.pread(&mut buf, in_off)?
-        };
+            let mut buf = vec![0u8; len];
+            let read_len = if in_off_ptr == 0 {
+                in_file.read(&mut buf)?
+            } else {
+                in_file.pread(&mut buf, in_off)?
+            };
 
-        if read_len == 0 {
-            log::info!("[sys_copy_file_range] reached end of file, nothing copied");
-            return Ok(0);
+            if read_len == 0 {
+                log::info!("[sys_copy_file_range] reached end of file, nothing copied");
+                return Ok(0);
+            }
+
+            let write_len = if out_off_ptr == 0 {
+                out_file.write(&buf[..read_len])?
+            } else {
+                out_file.pwrite(&buf[..read_len], out_off)?
+            };
+
+            // 更新偏移值并写回用户空间
+            if in_off_ptr != 0 {
+                let new_in_off = in_off + read_len;
+                copy_to_user(in_off_ptr as *mut usize, &new_in_off, 1)?;
+            }
+            if out_off_ptr != 0 {
+                let new_out_off = out_off + write_len;
+                copy_to_user(out_off_ptr as *mut usize, &new_out_off, 1)?;
+            }
+
+            Ok(write_len)
         }
-
-        let write_len = if out_off_ptr == 0 {
-            out_file.write(&buf[..read_len])?
-        } else {
-            out_file.pwrite(&buf[..read_len], out_off)?
-        };
-
-        // 更新偏移值并写回用户空间
-        if in_off_ptr != 0 {
-            let new_in_off = in_off + read_len;
-            copy_to_user(in_off_ptr as *mut usize, &new_in_off, 1)?;
-        }
-        if out_off_ptr != 0 {
-            let new_out_off = out_off + write_len;
-            copy_to_user(out_off_ptr as *mut usize, &new_out_off, 1)?;
-        }
-
-        Ok(write_len)
     } else {
         Err(Errno::EBADF)
     }
@@ -1608,7 +1618,7 @@ pub fn sys_umask(mask: usize) -> SyscallRet {
 }
 
 /* Todo: fake start  */
-pub fn sys_fallocate(fd: usize, mode: i32, offset: usize, len: usize) -> SyscallRet {
+pub fn sys_fallocate(fd: usize, mode: i32, offset: isize, len: isize) -> SyscallRet {
     log::info!(
         "[sys_fallocate] fd: {}, mode: {}, offset: {}, len: {}",
         fd,
@@ -1616,14 +1626,30 @@ pub fn sys_fallocate(fd: usize, mode: i32, offset: usize, len: usize) -> Syscall
         offset,
         len
     );
+    if offset < 0 || len <= 0 {
+        log::error!("[sys_fallocate] offset or len is negative");
+        return Err(Errno::EINVAL);
+    }
+    if offset as usize + len as usize > EXT4_MAX_FILE_SIZE {
+        log::error!("[sys_fallocate] offset + len exceeds max file size");
+        return Err(Errno::EFBIG);
+    }
+    let mode = FallocFlags::from_bits(mode).ok_or(Errno::EINVAL)?;
     let task = current_task();
     if let Some(file) = task.fd_table().get_file(fd) {
+        // let dentry = file.get_path().dentry.clone();
         if file.get_inode().get_mode() & S_IFDIR != 0 {
             log::error!("[sys_fallocate] fallocate on a directory");
             return Err(Errno::EISDIR);
         }
-        return file.fallocate(mode, offset, len);
-        // return Ok(0); // Todo: 目前不支持fallocate, 直接返回成功
+        if file.get_flags().contains(OpenFlags::O_WRONLY)
+            || file.get_flags().contains(OpenFlags::O_RDWR)
+        {
+            return file.fallocate(mode, offset as usize, len as usize);
+        } else {
+            log::error!("[sys_fallocate] fd is not writable");
+            return Err(Errno::EBADF);
+        }
     }
     Err(Errno::EBADF)
 }

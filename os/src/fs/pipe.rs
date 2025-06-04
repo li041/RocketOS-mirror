@@ -4,7 +4,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::any::Any;
 use core::ptr::copy_nonoverlapping;
-use core::sync::atomic::{AtomicBool, AtomicUsize};
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize};
 use spin::{Mutex, RwLock};
 
 use crate::ext4::inode::{self, Ext4InodeDisk, S_IFIFO};
@@ -117,17 +117,21 @@ pub struct Pipe {
     readable: bool,
     writable: bool,
     inode: Arc<PipeInode>,
-    flags: OpenFlags,
+    flags: AtomicI32,
     is_named_pipe: bool,
 }
 
 impl Pipe {
-    pub fn read_end(inode: Arc<PipeInode>, flags: OpenFlags, is_named_pipe: bool) -> Arc<Self> {
+    pub fn read_end(
+        inode: Arc<PipeInode>,
+        flags: OpenFlags,
+        is_named_pipe: bool,
+    ) -> Result<Arc<Self>, Errno> {
         let read_end = Arc::new(Self {
             readable: true,
             writable: false,
             inode: inode.clone(),
-            flags,
+            flags: AtomicI32::new(flags.bits()),
             is_named_pipe,
         });
         let mut buffer = inode.buffer.lock();
@@ -138,16 +142,27 @@ impl Pipe {
                 let waiter = buffer.get_waiter();
                 buffer.set_waiter(0);
                 wakeup(waiter);
+            } else {
+                if flags.contains(OpenFlags::O_NONBLOCK) {
+                    log::error!(
+                        "[Pipe::read_end] named pipe read end not ready, non-blocking mode"
+                    );
+                    return Err(Errno::ENXIO);
+                }
             }
         }
-        read_end
+        Ok(read_end)
     }
-    pub fn write_end(inode: Arc<PipeInode>, flags: OpenFlags, is_named_pipe: bool) -> Arc<Self> {
+    pub fn write_end(
+        inode: Arc<PipeInode>,
+        flags: OpenFlags,
+        is_named_pipe: bool,
+    ) -> Result<Arc<Self>, Errno> {
         let write_end = Arc::new(Self {
             readable: false,
             writable: true,
             inode: inode.clone(),
-            flags,
+            flags: AtomicI32::new(flags.bits()),
             is_named_pipe,
         });
         let mut buffer = inode.buffer.lock();
@@ -159,9 +174,37 @@ impl Pipe {
                 let waiter = buffer.get_waiter();
                 buffer.set_waiter(0);
                 wakeup(waiter);
+            } else {
+                if flags.contains(OpenFlags::O_NONBLOCK) {
+                    log::error!(
+                        "[Pipe::write_end] named pipe read end not ready, non-blocking mode"
+                    );
+                    return Err(Errno::ENXIO);
+                }
             }
         }
-        write_end
+        Ok(write_end)
+    }
+    /// 创建匿名管道的读写端
+    pub fn read_write_end(inode: Arc<PipeInode>, flags: OpenFlags) -> (Arc<Self>, Arc<Self>) {
+        let read_end = Arc::new(Self {
+            readable: true,
+            writable: false,
+            inode: inode.clone(),
+            flags: AtomicI32::new(flags.bits()),
+            is_named_pipe: false,
+        });
+        let write_end = Arc::new(Self {
+            readable: false,
+            writable: true,
+            inode: inode.clone(),
+            flags: AtomicI32::new(flags.bits()),
+            is_named_pipe: false,
+        });
+        let mut buffer = inode.buffer.lock();
+        buffer.set_read_end(&read_end);
+        buffer.set_write_end(&write_end);
+        (read_end, write_end)
     }
 }
 
@@ -288,8 +331,7 @@ pub fn make_pipe(flags: OpenFlags) -> (Arc<Pipe>, Arc<Pipe>) {
     // let buffer = Arc::new(Mutex::new(PipeRingBuffer::new()));
     let inode = PipeInode::new(0);
     // buffer仅剩两个强引用，这样读写端关闭后就会被释放
-    let read_end = Pipe::read_end(inode.clone(), flags, false);
-    let write_end = Pipe::write_end(inode.clone(), flags, false);
+    let (read_end, write_end) = Pipe::read_write_end(inode.clone(), flags);
     (read_end, write_end)
 }
 
@@ -300,10 +342,17 @@ impl FileOp for Pipe {
     fn read<'a>(&'a self, buf: &'a mut [u8]) -> SyscallRet {
         debug_assert!(self.readable);
         let mut read_size = 0usize;
+        let nonblock = self.flags.load(core::sync::atomic::Ordering::Relaxed)
+            & OpenFlags::O_NONBLOCK.bits()
+            != 0;
         if self.is_named_pipe {
             let mut guard = self.inode.buffer.lock();
             // 命名管道对端还没打开, 需阻塞
             if guard.write_end.is_none() {
+                if nonblock {
+                    log::error!("[Pipe::read] named pipe read end not ready, non-blocking mode");
+                    return Err(Errno::EAGAIN);
+                }
                 guard.set_waiter(current_task().tid());
                 drop(guard);
                 if wait() == -1 {
@@ -322,6 +371,10 @@ impl FileOp for Pipe {
                 if buffer.all_write_ends_closed() {
                     log::error!("all write ends closed");
                     return Ok(read_size);
+                }
+                if nonblock {
+                    log::error!("[Pipe::read] pipe read end not ready, non-blocking mode");
+                    return Err(Errno::EAGAIN);
                 }
                 // wait for data, 注意释放锁
                 buffer.set_waiter(current_task().tid());
@@ -356,10 +409,17 @@ impl FileOp for Pipe {
     fn write<'a>(&'a self, buf: &'a [u8]) -> SyscallRet {
         assert!(self.writable);
         let mut write_size = 0;
+        let nonblock = self.flags.load(core::sync::atomic::Ordering::Relaxed)
+            & OpenFlags::O_NONBLOCK.bits()
+            != 0;
         if self.is_named_pipe {
             let mut guard = self.inode.buffer.lock();
             // 命名管道对端还没打开, 需阻塞
             if guard.read_end.is_none() {
+                if nonblock {
+                    log::error!("[Pipe::write] named pipe write end not ready, non-blocking mode");
+                    return Err(Errno::EAGAIN);
+                }
                 guard.set_waiter(current_task().tid());
                 drop(guard);
                 if wait() == -1 {
@@ -388,6 +448,10 @@ impl FileOp for Pipe {
                 return Err(Errno::EPIPE);
             }
             if buffer.status == RingBufferStatus::FULL {
+                if nonblock {
+                    log::error!("[Pipe::write] pipe write end not ready, non-blocking mode");
+                    return Err(Errno::EAGAIN);
+                }
                 // wait for space, 注意释放锁
                 buffer.set_waiter(current_task().tid());
                 drop(buffer);
@@ -455,7 +519,7 @@ impl FileOp for Pipe {
         self.inode.clone() as Arc<dyn InodeOp>
     }
     fn get_flags(&self) -> OpenFlags {
-        self.flags
+        OpenFlags::from_bits(self.flags.load(core::sync::atomic::Ordering::Relaxed)).unwrap()
     }
 }
 

@@ -121,7 +121,7 @@ pub enum Whence {
     SeekEnd = 2,
     // Todo:
     // SeekData = 3,
-    // SeekHold = 4,
+    // SeekHole = 4,
 }
 
 impl TryFrom<usize> for Whence {
@@ -246,5 +246,31 @@ impl TryFrom<i32> for Resource {
             15 => Ok(Resource::RTTIME),
             _ => Err("invalid resource"),
         }
+    }
+}
+
+/* linux/include/uapi/linux/falloc.h */
+// /// 保持文件大小不变
+// pub const FALLOC_FL_KEEP_SIZE: i32 = 0x01;
+// /// 打孔操作，释放文件中的空间, 但文件的大小不变, 必须与`FALLOC_FL_KEEP_SIZE`一起使用
+// pub const FALLOC_FL_PUNCH_HOLE: i32 = 0x02;
+// /// 预留的标志位, 暂未使用
+// pub const FALLOC_FL_NO_HIDE_STALE: i32 = 0x04; // 不隐藏旧数据
+// /// 折叠文件中的一段区域，相当于将该范围删除，然后将该区域后面的内容往前“搬”，覆盖被删区域，并缩小文件大小。不能跨越文件末尾（EOF），否则操作非法。
+// pub const FALLOC_FL_COLLAPSE_RANGE: i32 = 0x08; // 压缩范围，将指定范围内的数据删除并将后面的数据向前移动
+// pub const FALLOC_FL_ZERO_RANGE: i32 = 0x10; // 将指定范围内的数据清零
+// pub const FALLOC_FL_INSERT_RANGE: i32 = 0x20; // 插入范围，将指定范围内的数据向后移动
+// pub const FALLOC_FL_UNSHARE_RANGE: i32 = 0x40; // 取消共享范围，将指定范围内的数据从共享中分离出来
+
+bitflags::bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub struct FallocFlags: i32 {
+        const KEEP_SIZE = 0x1;
+        const PUNCH_HOLE = 0x2;
+        const NO_HIDE_STALE = 0x4;
+        const COLLAPSE_RANGE = 0x8;
+        const ZERO_RANGE = 0x10;
+        const INSERT_RANGE = 0x20;
+        const UNSHARE_RANGE = 0x40;
     }
 }

@@ -6,7 +6,7 @@ use crate::timer::TimeSpec;
 
 use super::dentry::Dentry;
 use super::kstat::Kstat;
-use super::uapi::{DevT, RenameFlags};
+use super::uapi::{DevT, FallocFlags, RenameFlags};
 use alloc::string::String;
 use alloc::sync::Arc;
 use core::any::Any;
@@ -33,10 +33,10 @@ pub trait InodeOp: Any + Send + Sync {
     fn write_dio<'a>(&'a self, _page_offset: usize, _buf: &'a [u8]) -> usize {
         unimplemented!();
     }
-    fn truncate<'a>(&'a self, _size: usize) {
+    fn truncate<'a>(&'a self, _size: usize) -> SyscallRet {
         unimplemented!();
     }
-    fn fallocate<'a>(&'a self, _mode: i32, _offset: usize, _len: usize) -> SyscallRet {
+    fn fallocate<'a>(&'a self, _mode: FallocFlags, _offset: usize, _len: usize) -> SyscallRet {
         unimplemented!();
     }
     // 返回目录项

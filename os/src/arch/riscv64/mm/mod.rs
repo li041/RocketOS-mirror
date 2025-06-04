@@ -33,7 +33,7 @@ pub fn check_va_mapping(va: usize) {
 /// 一般T是u8, 但是也可以是其他类型,
 pub fn copy_to_user<T: Copy>(to: *mut T, from: *const T, n: usize) -> SyscallRet {
     if to.is_null() || from.is_null() {
-        return Err(Errno::EINVAL);
+        return Err(Errno::EFAULT);
     }
     // 没有数据复制
     if n == 0 {

@@ -117,24 +117,76 @@ impl Ext4FileSystem {
     pub fn add_orphan_inode(&self, inode_num: usize) {
         self.super_block.orphan_inodes.write().push(inode_num);
     }
-    pub fn alloc_block(&self, block_device: Arc<dyn BlockDevice>, block_count: usize) -> usize {
+    // pub fn alloc_block(&self, block_device: Arc<dyn BlockDevice>, block_count: usize) -> usize {
+    //     let block_bitmap_size = self.super_block.blocks_per_group as usize / 8;
+    //     for (i, group) in self.block_groups.iter().enumerate() {
+    //         if let Some(local_block_num) = group.alloc_block(
+    //             block_device.clone(),
+    //             self.block_size(),
+    //             block_bitmap_size,
+    //             block_count,
+    //         ) {
+    //             // 修改super_block的free_blocks_count
+    //             self.super_block.inner.write().free_blocks_count -= 1;
+    //             let global_block_num =
+    //                 local_block_num + self.super_block.blocks_per_group as usize * i;
+    //             return global_block_num;
+    //         }
+    //     }
+    //     panic!("No available block!");
+    // }
+    pub fn alloc_one_block(&self, block_device: Arc<dyn BlockDevice>) -> usize {
         let block_bitmap_size = self.super_block.blocks_per_group as usize / 8;
         for (i, group) in self.block_groups.iter().enumerate() {
-            if let Some(local_block_num) = group.alloc_block(
+            if let Some(local_start) =
+                group.alloc_one_block(block_device.clone(), self.block_size(), block_bitmap_size)
+            {
+                // 修改super_block的free_blocks_count
+                self.super_block.inner.write().free_blocks_count -= 1;
+                let global_start = local_start + self.super_block.blocks_per_group as usize * i;
+                return global_start;
+            }
+        }
+        panic!("No available block in any block group!");
+    }
+    pub fn alloc_block(
+        &self,
+        block_device: Arc<dyn BlockDevice>,
+        block_count: usize,
+    ) -> Vec<(usize, u32)> {
+        let block_bitmap_size = self.super_block.blocks_per_group as usize / 8;
+        let mut result = Vec::new();
+        let mut remaining = block_count;
+
+        for (i, group) in self.block_groups.iter().enumerate() {
+            if remaining == 0 {
+                break;
+            }
+
+            let allocated_blocks = group.alloc_block(
                 block_device.clone(),
                 self.block_size(),
                 block_bitmap_size,
-                block_count,
-            ) {
-                // 修改super_block的free_blocks_count
-                self.super_block.inner.write().free_blocks_count -= 1;
-                let global_block_num =
-                    local_block_num + self.super_block.blocks_per_group as usize * i;
-                return global_block_num;
+                remaining,
+            );
+
+            for (local_start, count) in allocated_blocks {
+                let global_start = local_start + self.super_block.blocks_per_group as usize * i;
+
+                result.push((global_start, count));
+
+                // 减去已经分配的块数
+                remaining -= count as usize;
+                self.super_block.inner.write().free_blocks_count -= count as u64;
+
+                if remaining == 0 {
+                    break;
+                }
             }
         }
-        panic!("No available block!");
+        result
     }
+
     pub fn dealloc_block(&self, block_device: Arc<dyn BlockDevice>, block_num: usize) {
         let group_id = block_num / self.super_block.blocks_per_group as usize;
         let local_block_num = block_num % self.super_block.blocks_per_group as usize;

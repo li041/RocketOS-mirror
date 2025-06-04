@@ -1,4 +1,4 @@
-use alloc::sync::Arc;
+use alloc::{sync::Arc, vec::Vec};
 use spin::RwLock;
 
 use crate::drivers::block::{block_cache::get_block_cache, block_dev::BlockDevice};
@@ -176,18 +176,16 @@ impl GroupDesc {
             inner.used_dirs_count -= 1;
         }
     }
-    /// 上层调用者需要转换为文件系统的全局块号(block_num + block_group_num * blocks_per_group)
-    pub fn alloc_block(
+    pub fn alloc_one_block(
         &self,
         block_device: Arc<dyn BlockDevice>,
         ext4_block_size: usize,
         block_bitmap_size: usize,
-        block_count: usize,
     ) -> Option<usize> {
         let mut inner = self.inner.write();
         let num_blocks = block_bitmap_size / ext4_block_size;
         // 检查是否有足够的空闲块
-        if inner.free_blocks_count < block_count as u32 {
+        if inner.free_blocks_count < 1 as u32 {
             return None;
         }
         for i in 0..num_blocks {
@@ -198,15 +196,56 @@ impl GroupDesc {
                     .get_mut(0),
             )
             // .alloc(block_bitmap_size)
-            .alloc_contiguous(block_bitmap_size, block_count)
+            .alloc(block_bitmap_size)
             // 修改bg的free_blocks_count, checksum
             {
-                inner.free_blocks_count -= block_count as u32;
+                inner.free_blocks_count -= 1 as u32;
                 return Some(block_num + (i * ext4_block_size * 8));
             }
         }
         return None;
     }
+
+    /// 上层调用者需要转换为文件系统的全局块号(block_num + block_group_num * blocks_per_group)
+    pub fn alloc_block(
+        &self,
+        block_device: Arc<dyn BlockDevice>,
+        ext4_block_size: usize,
+        block_bitmap_size: usize,
+        mut block_count: usize,
+    ) -> Vec<(usize, u32)> {
+        let mut inner = self.inner.write();
+        let mut result = Vec::new();
+        let num_blocks = block_bitmap_size / ext4_block_size;
+        // let mut total_allocated = 0;
+
+        for i in 0..num_blocks {
+            if block_count == 0 {
+                break;
+            }
+
+            let block_id = self.block_bitmap as usize + i;
+            let block_cahce = get_block_cache(block_id, block_device.clone(), ext4_block_size);
+            let mut block_cache_guard = block_cahce.lock();
+            let mut bitmap = Ext4Bitmap::new(block_cache_guard.get_mut(0));
+
+            while block_count > 0 {
+                if let Some((local_block_start, allocated)) =
+                    bitmap.alloc_contiguous(block_bitmap_size, block_count)
+                {
+                    inner.free_blocks_count -= allocated as u32;
+                    let global_block_start = local_block_start + (i * ext4_block_size * 8);
+                    result.push((global_block_start, allocated));
+                    block_count -= allocated as usize;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        result
+    }
+
     pub fn dealloc_block(
         &self,
         block_device: Arc<dyn BlockDevice>,

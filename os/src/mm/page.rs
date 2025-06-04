@@ -9,6 +9,7 @@ use virtio_drivers::PAGE_SIZE;
 use crate::{
     arch::config::KERNEL_BASE,
     drivers::block::{block_dev::BlockDevice, VIRTIO_BLOCK_SIZE},
+    ext4::MAX_FS_BLOCK_ID,
     fs::{inode::InodeOp, FS_BLOCK_SIZE},
 };
 
@@ -61,17 +62,17 @@ impl Page {
         block_device: Arc<dyn BlockDevice>,
         inode: Weak<dyn InodeOp>,
     ) -> Self {
-        let start_block_id = if fs_block_id != usize::MAX {
+        let start_block_id = if fs_block_id < MAX_FS_BLOCK_ID {
             fs_block_id * (*FS_BLOCK_SIZE / VIRTIO_BLOCK_SIZE)
         } else {
-            usize::MAX
+            fs_block_id
         };
         unsafe {
             let ppn = frame_alloc_ppn();
             let vaddr = (ppn.0 << PAGE_SIZE_BITS) + KERNEL_BASE;
             let buf = core::slice::from_raw_parts_mut(vaddr as *mut u8, PAGE_SIZE);
             // 从块设备中读取数据到缓存中
-            if fs_block_id != usize::MAX {
+            if fs_block_id < MAX_FS_BLOCK_ID {
                 block_device.read_blocks(start_block_id, buf);
             } else {
                 // 如果fs_block_id为usize::MAX, 则不需要读取数据, 是稀疏文件的空洞
@@ -224,7 +225,11 @@ impl Page {
                         let cache = unsafe {
                             core::slice::from_raw_parts_mut(self.vaddr as *mut u8, PAGE_SIZE)
                         };
-                        block_device.write_blocks(guard.start_block_id, cache);
+                        if guard.start_block_id >= MAX_FS_BLOCK_ID {
+                            log::warn!("[Page::sync] Unimplemented sparse file, not writing to block device");
+                        } else {
+                            block_device.write_blocks(guard.start_block_id, cache);
+                        }
                     }
                 }
             }
