@@ -45,8 +45,8 @@ impl TrapContext {
     pub fn set_a2(&mut self, a2: usize) {
         self.r[6] = a2;
     }
-    pub fn set_pc(&mut self, pc: usize) {
-        self.era = pc;
+    pub fn set_sepc(&mut self, sepc: usize) {
+        self.era = sepc;
     }
     pub fn set_kernel_tp(&mut self, kernel_tp: usize) {
         self.kernel_tp = kernel_tp;

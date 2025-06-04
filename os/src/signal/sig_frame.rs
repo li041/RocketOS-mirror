@@ -76,13 +76,28 @@ impl SigInfo {
             fields: field,
         }
     }
+
+    pub fn prepare_kill(tid: Tid, sig: Sig) -> Self {
+        Self {
+            signo: sig.raw(),
+            code: SigInfo::USER,
+            fields: SiField::Kill { tid },
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub enum SiField {
-    None,
     Kill { tid: Tid },
+}
+
+impl SiField {
+    pub fn parse_pid(&self) -> Option<Tid> {
+        match self {
+            SiField::Kill { tid } => Some(*tid),
+        }
+    }
 }
 
 #[allow(unused)]
@@ -131,16 +146,20 @@ pub struct LinuxSigInfo {
     pub si_signo: i32,
     pub si_errno: i32,
     pub si_code: i32,
-    pub _pad: [i32; 29],
+    pub si_trapno: i32,
+    pub si_pid: i32, // 发送信号的进程ID
+    pub _pad: [i32; 27], // 填充以对齐
 }
 
 impl LinuxSigInfo {
-    pub fn new(signo: i32, code: i32) -> Self {
+    pub fn new(signo: i32, code: i32, pid: i32) -> Self {
         Self {
             si_signo: signo,
             si_errno: 0,
             si_code: code,
-            _pad: [0; 29],
+            si_trapno: 0,
+            si_pid: pid,
+            _pad: [0; 27],
         }
     }
 }

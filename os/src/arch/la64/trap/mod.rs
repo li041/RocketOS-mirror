@@ -119,7 +119,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
                             ERA::read().get_pc()
                         );
                         task.receive_siginfo(
-                            SigInfo::new(Sig::SIGSEGV.raw(), SigInfo::KERNEL, SiField::None),
+                            SigInfo::new(Sig::SIGSEGV.raw(), SigInfo::KERNEL, SiField::Kill { tid: current_task().tid() }),
                             false,
                         );
                 }

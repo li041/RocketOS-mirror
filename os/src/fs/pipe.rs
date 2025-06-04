@@ -148,6 +148,8 @@ impl Pipe {
                         "[Pipe::read_end] named pipe write end not ready, non-blocking mode, block"
                     );
                     buffer.add_waiter(current_task().tid());
+                    drop(buffer);
+                    wait();
                 }
             }
         }
@@ -495,7 +497,7 @@ impl FileOp for Pipe {
                     SigInfo::new(
                         Sig::SIGPIPE.raw(),
                         SigInfo::KERNEL,
-                        crate::signal::SiField::None,
+                        crate::signal::SiField::Kill { tid: current_task().tid() },
                     ),
                     false,
                 );

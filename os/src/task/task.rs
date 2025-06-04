@@ -39,7 +39,9 @@ use crate::{
         self, add_task,
         context::write_task_cx,
         current_task, dump_scheduler, dump_wait_queue,
-        manager::{add_group, cancel_wait_alarm, delete_wait, new_group, register_task},
+        manager::{
+            add_group, cancel_wait_alarm, delete_wait, new_group, register_task, remove_group,
+        },
         wakeup, INITPROC,
     },
     timer::{ITimerVal, TimeVal},
@@ -449,11 +451,13 @@ impl Task {
 
         // 向任务管理器注册新任务（不是调度器）
         register_task(&task);
-        // 向父进程添加子进程
+
         if task.is_process() {
+            // 向父进程中记录子进程，向父进程组中添加子进程
             self.add_child(task.clone());
+            add_group(task.pgid(), &task);
         } else {
-            // 线程的父进程为当前任务的父进程
+            // 线程的父进程为当前任务的父进程，对于线程任务不加入进程组
             self.op_parent(|parent| {
                 if let Some(parent) = parent {
                     parent.upgrade().unwrap().add_child(task.clone());
@@ -463,8 +467,6 @@ impl Task {
 
         // 向线程组添加子进程 （包括当前任务为进程的情况）
         task.op_thread_group_mut(|tg| tg.add(task.tid(), Arc::downgrade(&task)));
-        // 向父进程组添加子进程
-        add_group(task.pgid(), &task);
 
         // 更新子进程的trap_cx
         let mut trap_cx = get_trap_context(&task);
@@ -495,16 +497,6 @@ impl Task {
         log::info!("[kernel_clone] task{}-sp:\t{:x}", task.tid(), task.kstack());
         log::info!("[kernel_clone] task{}-tgid:\t{:x}", task.tid(), task.tgid());
         log::info!("[kernel_clone] task{}-pgid:\t{:x}", task.tid(), task.pgid());
-
-        // ToOptimize: 把这边输出删了
-        let strong_count = Arc::strong_count(&task);
-        if strong_count == 2 {
-            log::info!("[kernel_clone] strong_count:\t{}", strong_count);
-        } else
-        // 未加入调度器理论引用计数为 2
-        {
-            log::error!("[kernel_clone] strong_count:\t{}", strong_count);
-        }
         log::info!("[kernel_clone] task{} clone complete!", self.tid());
 
         Ok(task)
@@ -606,15 +598,6 @@ impl Task {
             self.tid(),
             self.kstack()
         );
-
-        let strong_count = Arc::strong_count(&self);
-        if strong_count == 3 {
-            log::info!("[kernel_execve] strong_count:\t{}", strong_count);
-        } else
-        // 理论为3(sys_exec一个，children一个， processor一个)
-        {
-            log::error!("[kernel_execve] strong_count:\t{}", strong_count)
-        }
     }
 
     pub fn kernel_execve_lazily(
@@ -714,15 +697,6 @@ impl Task {
             self.tid(),
             self.kstack()
         );
-
-        let strong_count = Arc::strong_count(&self);
-        if strong_count == 3 {
-            log::info!("[kernel_execve] strong_count:\t{}", strong_count);
-        } else
-        // 理论为3(sys_exec一个，children一个， processor一个)
-        {
-            log::error!("[kernel_execve] strong_count:\t{}", strong_count)
-        }
     }
 
     // 判断当前任务是否为进程
@@ -863,9 +837,38 @@ impl Task {
         }
     }
 
-    // pub fn alloc_fd(&mut self, file: Arc<dyn FileOp + Send + Sync>) -> usize {
-    //     self.fd_table.alloc_fd(file)
-    // }
+    pub fn compare_permision(&self, task: &Arc<Task>) -> SyscallRet {
+        // 如果是root用户，直接返回
+        if self.euid() == 0 {
+            return Ok(0);
+        }
+
+        // 同一线程组，直接返回
+        if self.tgid() == task.tgid() {
+            return Ok(0);
+        }
+
+        // 非root用户，检查权限
+        let uid = self.uid();
+        let gid = self.gid();
+        if uid == task.uid()
+            && uid == task.euid()
+            && uid == task.suid()
+            && gid == task.gid()
+            && gid == task.egid()
+            && gid == task.sgid()
+        {
+            return Ok(0);
+        }
+
+        // 权限检查不通过
+        return Err(Errno::EPERM);
+    }
+
+    pub fn same_thread_group(&self, task: &Arc<Task>) -> bool {
+        self.tgid() == task.tgid()
+    }
+
     /*********************************** getter *************************************/
 
     pub fn kstack(&self) -> usize {
@@ -1510,7 +1513,9 @@ pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
                     SigInfo {
                         signo: Sig::SIGCHLD.raw(),
                         code: SigInfo::CLD_EXITED,
-                        fields: SiField::None,
+                        fields: SiField::Kill {
+                            tid: current_task().tid(),
+                        },
                     },
                     false,
                 );
@@ -1522,6 +1527,7 @@ pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
                 wakeup(parent.tid());
             }
         });
+        remove_group(&task);
     }
     // 注销任务
     unregister_task(task.tid());

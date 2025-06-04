@@ -10,7 +10,7 @@ use crate::{arch::config::PAGE_SIZE_BITS, arch::mm::map_temp};
 
 /// Trap Context
 /// 内核栈对齐到16字节
-/// 2025-04-11 向trap_context中添加了kernel_tp字段, 为保持对齐, 顺便塞了一个last-a0来帮助signal实现SA_RESTART 
+/// 2025-04-11 向trap_context中添加了kernel_tp字段, 为保持对齐, 顺便塞了一个last-a0来帮助signal实现SA_RESTART
 #[repr(C)]
 #[repr(align(16))]
 pub struct TrapContext {
@@ -25,17 +25,19 @@ pub struct TrapContext {
     /// 用于保存当前的异常指令地址. 在la中时ERA
     pub sepc: usize,
     pub last_a0: usize,
-    pub kernel_tp: usize,  // 将内核tp放在栈顶，也许会有助于debug
+    pub kernel_tp: usize, // 将内核tp放在栈顶，也许会有助于debug
 }
 
 impl TrapContext {
-
     /* getter */
     pub fn get_sp(&self) -> usize {
         self.x[2]
     }
     pub fn get_a0(&self) -> usize {
         self.x[10]
+    }
+    pub fn get_sepc(&self) -> usize {
+        self.sepc
     }
 
     /* setter */
@@ -58,8 +60,8 @@ impl TrapContext {
     pub fn set_a2(&mut self, a2: usize) {
         self.x[12] = a2;
     }
-    pub fn set_pc(&mut self, pc: usize) {
-        self.sepc = pc;
+    pub fn set_sepc(&mut self, sepc: usize) {
+        self.sepc = sepc;
     }
     pub fn set_kernel_tp(&mut self, kernel_tp: usize) {
         self.kernel_tp = kernel_tp;
@@ -116,7 +118,10 @@ pub fn save_trap_context(task: &Arc<Task>, cx: TrapContext) {
     log::trace!("[save_trap_context] kstack top: {:#x}", task_kstack_top);
     let trap_cx_ptr = task_kstack_top - core::mem::size_of::<TrapContext>();
     let trap_cx_ptr = trap_cx_ptr as *mut TrapContext;
-    log::trace!("[save_trap_context] trap_cx_ptr: {:#x}", trap_cx_ptr as usize);
+    log::trace!(
+        "[save_trap_context] trap_cx_ptr: {:#x}",
+        trap_cx_ptr as usize
+    );
     unsafe { trap_cx_ptr.write_volatile(cx) }
 }
 
@@ -143,16 +148,16 @@ pub fn dump_trap_context(task: &Arc<Task>) {
 
 pub fn reg_name(i: usize) -> &'static str {
     match i {
-        0  => "zero",
-        1  => "ra",
-        2  => "sp",
-        3  => "gp",
-        4  => "tp",
-        5  => "t0",
-        6  => "t1",
-        7  => "t2",
-        8  => "s0/fp",
-        9  => "s1",
+        0 => "zero",
+        1 => "ra",
+        2 => "sp",
+        3 => "gp",
+        4 => "tp",
+        5 => "t0",
+        6 => "t1",
+        7 => "t2",
+        8 => "s0/fp",
+        9 => "s1",
         10 => "a0",
         11 => "a1",
         12 => "a2",

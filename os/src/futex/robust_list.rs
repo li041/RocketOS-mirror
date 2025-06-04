@@ -67,6 +67,8 @@ pub fn sys_get_robust_list(pid: usize, head_ptr: usize, len_ptr: usize) -> Sysca
             None => return Err(Errno::ESRCH),
         }
     };
+    // 检查权限
+    current_task().compare_permision(&task)?;
     let robust_list_head = task.robust_list_head();
     copy_to_user(head_ptr as *mut usize, &robust_list_head as *const usize, 1)?;
     copy_to_user(

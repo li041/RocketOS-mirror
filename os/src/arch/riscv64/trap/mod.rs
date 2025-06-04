@@ -127,12 +127,12 @@ pub fn trap_handler(cx: &mut TrapContext) {
                     // dump_trap_context(&current_task());
                     log::error!(
                         "Unrecoverble page fault in application, bad addr = {:#x}, scause = {:?}, sepc = {:#x}",
-                        stval,
+                        stval
                         scause.cause(),
                         sepc::read()
                     );
                     task.receive_siginfo(
-                        SigInfo::new(sig.raw(), SigInfo::KERNEL, SiField::None),
+                        SigInfo::new(sig.raw(), SigInfo::KERNEL, SiField::Kill { tid: current_task().tid() }),
                         false,
                     );
                 }
