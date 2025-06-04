@@ -136,7 +136,10 @@ impl FileOp for TaintedFile {
                 inner_guard.offset = offset as usize;
             }
             crate::fs::uapi::Whence::SeekCur => {
-                inner_guard.offset = inner_guard.offset.checked_add_signed(offset).unwrap()
+                inner_guard.offset = inner_guard
+                    .offset
+                    .checked_add_signed(offset)
+                    .ok_or(Errno::EINVAL)?;
             }
             crate::fs::uapi::Whence::SeekEnd => {
                 unimplemented!("SeekEnd is not supported for pagemap");

@@ -864,20 +864,6 @@ impl Task {
     // pub fn alloc_fd(&mut self, file: Arc<dyn FileOp + Send + Sync>) -> usize {
     //     self.fd_table.alloc_fd(file)
     // }
-    /*********************************** 权限检查 *************************************/
-    // Todo: 还没有支持uid和euid
-    /// 现在检查can_write, 只检查拥有者的写权限
-    pub fn can_write(&self, inode: &Arc<dyn InodeOp>) -> bool {
-        let mode = inode.get_mode();
-        log::warn!("[can_write] Unimplemented, inode mode: {:o}", mode);
-        // 现在只检查拥有者的写权限
-        if mode & S_IWUSR != 0 {
-            return true;
-        }
-        // 其他情况不允许写
-        false
-    }
-
     /*********************************** getter *************************************/
 
     pub fn kstack(&self) -> usize {

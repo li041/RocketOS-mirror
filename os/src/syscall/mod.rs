@@ -270,7 +270,7 @@ pub fn syscall(
         SYSCALL_SETSID => sys_setsid(),
         SYSCALL_STATFS => sys_statfs(a0 as *const u8, a1 as *mut StatFs),
         SYSCALL_FTRUNCATE => sys_ftruncate(a0, a1),
-        SYSCALL_FALLOCATE => sys_fallocate(a0, a1 as i32, a2, a3),
+        SYSCALL_FALLOCATE => sys_fallocate(a0, a1 as i32, a2 as isize, a3 as isize),
         SYSCALL_FACCESSAT => sys_faccessat(a0 as usize, a1 as *const u8, a2 as i32, a3 as i32),
         SYSCALL_CHDIR => sys_chdir(a0 as *const u8),
         SYSCALL_FCHDIR => sys_fchdir(a0),

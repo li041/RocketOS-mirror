@@ -8,7 +8,7 @@ use crate::{
         inode::InodeOp,
         kstat::Kstat,
         pipe::PipeInode,
-        uapi::{DevT, RenameFlags},
+        uapi::{DevT, FallocFlags, RenameFlags},
     },
     mm::Page,
     syscall::errno::{Errno, SyscallRet},
@@ -38,6 +38,8 @@ pub mod fs;
 pub mod inode;
 pub mod super_block;
 
+pub const MAX_FS_BLOCK_ID: usize = 0x100000000; // 文件系统块号的最大值, 用于表示稀疏文件中的空洞
+
 impl InodeOp for Ext4Inode {
     fn as_any(&self) -> &dyn Any {
         self
@@ -56,10 +58,10 @@ impl InodeOp for Ext4Inode {
     fn write_dio<'a>(&'a self, page_offset: usize, buf: &'a [u8]) -> usize {
         self.write_direct(page_offset, buf)
     }
-    fn truncate<'a>(&'a self, size: usize) {
+    fn truncate<'a>(&'a self, size: usize) -> SyscallRet {
         self.truncate(size as u64)
     }
-    fn fallocate<'a>(&'a self, mode: i32, offset: usize, len: usize) -> SyscallRet {
+    fn fallocate<'a>(&'a self, mode: FallocFlags, offset: usize, len: usize) -> SyscallRet {
         self.fallocate(mode, offset, len)
     }
     // 上层调用者应先查找DentryCache, 如果没有才调用该函数
@@ -428,7 +430,7 @@ impl InodeOp for Ext4Inode {
             .ext4_fs
             .upgrade()
             .unwrap()
-            .alloc_block(self.block_device.clone(), 1);
+            .alloc_one_block(self.block_device.clone());
         // 初始化目录的第一个块, 添加`.`, `..`
         let mut buffer = vec![0u8; ext4_block_size];
         Ext4DirContentWE::new(&mut buffer).init_dot_dotdot(

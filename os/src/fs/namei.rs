@@ -25,7 +25,7 @@ use crate::{
         inode::{self, S_IFCHR, S_IFDIR, S_IFIFO, S_IFMT, S_IFREG},
     },
     fs::{
-        dentry::DentryFlags,
+        dentry::{dentry_check_open, DentryFlags},
         dev::{
             loop_device::{get_loop_device, LOOP_CONTROL},
             null::NULL,
@@ -209,6 +209,8 @@ pub fn open_last_lookups(
                     continue;
                 }
 
+                dentry_check_open(&dentry, flags, mode as u16)?;
+
                 dentry
             } else {
                 // 文件不存在
@@ -291,10 +293,10 @@ fn create_file_from_dentry(
             // 根据flags创建读/写端
             let inode = Arc::downcast(inode).unwrap();
             if flags.contains(OpenFlags::O_WRONLY) || flags.contains(OpenFlags::O_RDWR) {
-                Pipe::write_end(inode, flags, true)
+                Pipe::write_end(inode, flags, true)?
             } else {
                 // O_RDONLY = 0
-                Pipe::read_end(inode, flags, true)
+                Pipe::read_end(inode, flags, true)?
             }
         }
         S_IFCHR => {
@@ -356,7 +358,7 @@ fn create_file_from_dentry(
 // Todo: 增加权限检查
 /// 根据路径查找inode, 如果不存在, 则根据flags创建
 /// path可以是绝对路径或相对路径
-/// mode只在flags包含O_CREAT时有效
+/// mode在open时用于检查打开权限, 在create时用于设置文件的权限
 pub fn path_openat(
     path: &str,
     flags: OpenFlags,

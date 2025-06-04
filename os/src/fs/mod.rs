@@ -47,3 +47,6 @@ use crate::drivers::block::VIRTIO_BLOCK_SIZE;
 // 指示在当前工作目录下打开文件
 pub const AT_FDCWD: i32 = -100;
 pub const AT_REMOVEDIR: u32 = 0x200;
+
+// ext4文件系统的最大文件大小: 16TB
+pub const EXT4_MAX_FILE_SIZE: usize = 0x1000000000000;
