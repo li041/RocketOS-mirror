@@ -13,10 +13,10 @@
 use errno::{Errno, SyscallRet};
 use fs::{
     sys_chdir, sys_chroot, sys_close, sys_copy_file_range, sys_dup, sys_dup3, sys_faccessat,
-    sys_fadvise64, sys_fallocate, sys_fchdir, sys_fchmod, sys_fchmodat, sys_fchownat, sys_fcntl,
-    sys_fstat, sys_fstatat, sys_fsync, sys_ftruncate, sys_getcwd, sys_getdents64, sys_ioctl,
-    sys_linkat, sys_lseek, sys_mkdirat, sys_mknodat, sys_mount, sys_msync, sys_openat, sys_pipe2,
-    sys_ppoll, sys_pread, sys_pselect6, sys_pwrite, sys_read, sys_readlinkat, sys_readv,
+    sys_fadvise64, sys_fallocate, sys_fchdir, sys_fchmod, sys_fchmodat, sys_fchown, sys_fchownat,
+    sys_fcntl, sys_fstat, sys_fstatat, sys_fsync, sys_ftruncate, sys_getcwd, sys_getdents64,
+    sys_ioctl, sys_linkat, sys_lseek, sys_mkdirat, sys_mknodat, sys_mount, sys_msync, sys_openat,
+    sys_pipe2, sys_ppoll, sys_pread, sys_pselect6, sys_pwrite, sys_read, sys_readlinkat, sys_readv,
     sys_renameat2, sys_sendfile, sys_statfs, sys_statx, sys_symlinkat, sys_sync, sys_umask,
     sys_umount2, sys_unlinkat, sys_utimensat, sys_write, sys_writev,
 };
@@ -74,6 +74,7 @@ mod task;
 mod util;
 // mod time;
 
+const SYSCALL_FGETXATTR: usize = 10;
 const SYSCALL_GETCWD: usize = 17;
 const SYSCALL_DUP: usize = 23;
 const SYSCALL_DUP3: usize = 24;
@@ -96,6 +97,7 @@ const SYSCALL_CHROOT: usize = 51;
 const SYSCALL_FCHMOD: usize = 52;
 const SYSCALL_FCHMODAT: usize = 53;
 const SYSCALL_FCHOWNAT: usize = 54;
+const SYSCALL_FCHOWN: usize = 55;
 const SYSCALL_OPENAT: usize = 56;
 const SYSCALL_CLOSE: usize = 57;
 const SYSCALL_PIPE2: usize = 59;
@@ -277,6 +279,7 @@ pub fn syscall(
         SYSCALL_CHROOT => sys_chroot(a0 as *const u8),
         SYSCALL_FCHMOD => sys_fchmod(a0, a1),
         SYSCALL_FCHMODAT => sys_fchmodat(a0, a1 as *const u8, a2, a3 as i32),
+        SYSCALL_FCHOWN => sys_fchown(a0, a1 as u32, a2 as u32),
         SYSCALL_FCHOWNAT => sys_fchownat(a0, a1 as *const u8, a2 as u32, a3 as u32, a4 as i32),
         SYSCALL_OPENAT => sys_openat(a0 as i32, a1 as *const u8, a2 as i32, a3),
         SYSCALL_CLOSE => sys_close(a0),

@@ -129,6 +129,7 @@ impl FdTable {
         for fd in 0..table_len {
             if table[fd].is_none() {
                 table[fd] = Some(FdEntry::new(file, fd_flags));
+                log::info!("[FdTable::alloc_fd] alloc fd: {}", fd);
                 return Ok(fd);
             }
         }

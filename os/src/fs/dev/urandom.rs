@@ -57,7 +57,7 @@ impl InodeOp for UrandomInode {
         kstat.ino = self.inode_num as u64;
         kstat.dev = 0;
         let (major, minor) = inode_on_disk.get_devt();
-        let devt = DevT::makedev(major, minor);
+        let devt = DevT::new_encode_dev(major, minor);
         kstat.rdev = u64::from(devt);
 
         kstat.mode = inode_on_disk.get_mode();

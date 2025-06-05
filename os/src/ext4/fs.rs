@@ -2,17 +2,19 @@ use super::super_block::Ext4SuperBlockDisk;
 use alloc::{sync::Arc, vec::Vec};
 
 use crate::{
-    drivers::block::{block_cache::get_block_cache, block_dev::BlockDevice},
+    drivers::block::{block_cache::get_block_cache, block_dev::BlockDevice, VIRTIO_BLOCK_SIZE},
     ext4::{
         block_group::{self, Ext4GroupDescDisk, GroupDesc},
         super_block::Ext4SuperBlock,
     },
+    fs::FS_BLOCK_SIZE,
 };
 
 // 减小锁粒度
 pub struct Ext4FileSystem {
     pub super_block: Arc<Ext4SuperBlock>,
     pub block_groups: Vec<Arc<GroupDesc>>,
+    pub block_device: Arc<dyn BlockDevice>,
 }
 
 const EXT4_SUPERBLOCK_OFFSET: usize = 1024;
@@ -65,6 +67,7 @@ impl Ext4FileSystem {
         let ext4_fs = Arc::new(Self {
             super_block,
             block_groups,
+            block_device,
         });
         return ext4_fs;
     }
@@ -144,6 +147,10 @@ impl Ext4FileSystem {
                 // 修改super_block的free_blocks_count
                 self.super_block.inner.write().free_blocks_count -= 1;
                 let global_start = local_start + self.super_block.blocks_per_group as usize * i;
+                // 清空对应数据块
+                let block_id = global_start * (*FS_BLOCK_SIZE / VIRTIO_BLOCK_SIZE);
+                self.block_device
+                    .write_blocks(block_id, &[0; EXT4_BLOCK_SIZE]);
                 return global_start;
             }
         }
@@ -178,6 +185,12 @@ impl Ext4FileSystem {
                 // 减去已经分配的块数
                 remaining -= count as usize;
                 self.super_block.inner.write().free_blocks_count -= count as u64;
+                // 清空对应数据块
+                for _ in 0..count {
+                    let block_id = global_start * (*FS_BLOCK_SIZE / VIRTIO_BLOCK_SIZE);
+                    self.block_device
+                        .write_blocks(block_id, &[0; EXT4_BLOCK_SIZE]);
+                }
 
                 if remaining == 0 {
                     break;
@@ -187,17 +200,23 @@ impl Ext4FileSystem {
         result
     }
 
-    pub fn dealloc_block(&self, block_device: Arc<dyn BlockDevice>, block_num: usize) {
+    pub fn dealloc_block(
+        &self,
+        block_device: Arc<dyn BlockDevice>,
+        block_num: usize,
+        block_count: usize,
+    ) {
         let group_id = block_num / self.super_block.blocks_per_group as usize;
         let local_block_num = block_num % self.super_block.blocks_per_group as usize;
         let block_bitmap_size = self.super_block.blocks_per_group as usize / 8;
         self.block_groups[group_id].dealloc_block(
             block_device.clone(),
             local_block_num,
+            block_count,
             self.super_block.block_size as usize,
             block_bitmap_size,
         );
-        self.super_block.inner.write().free_blocks_count += 1;
+        self.super_block.inner.write().free_blocks_count += block_count as u64;
     }
 }
 

@@ -19,6 +19,7 @@ use crate::{
     },
     net::{
         addr::{from_ipendpoint_to_socketaddr, LOOP_BACK_IP},
+        alg::encode,
         socket::{
             check_alg, socket_address_from, socket_address_from_af_alg, socket_address_from_unix,
             socket_address_to, ALG_Option, Domain, IpOption, Ipv6Option, MessageHeaderRaw, Socket,
@@ -39,7 +40,6 @@ use core::{
 };
 use num_enum::TryFromPrimitive;
 use smoltcp::wire::IpEndpoint;
-use crate::{arch::mm::{copy_from_user, copy_to_user}, fs::{fdtable::FdFlags, file::{FileOp, OpenFlags}, pipe::{self, make_pipe}, uapi::IoVec}, net::{addr::{from_ipendpoint_to_socketaddr, LOOP_BACK_IP}, alg::encode, socket::{check_alg, socket_address_from, socket_address_from_af_alg, socket_address_from_unix, socket_address_to, ALG_Option, Domain, IpOption, Ipv6Option, MessageHeaderRaw, Socket, SocketOption, SocketOptionLevel, SocketType, TcpSocketOption, SOCK_CLOEXEC, SOCK_NONBLOCK}}, syscall::task::sys_nanosleep, task::{current_task, yield_current_task}};
 pub const SOCKET_TYPE_MASK: usize = 0xFF;
 use super::errno::{Errno, SyscallRet};
 ///函数会创建一个socket并返回一个fd,失败返回-1
@@ -144,7 +144,7 @@ pub fn syscall_accept(socketfd: usize, socketaddr: usize, socketlen: usize) -> S
         .as_any()
         .downcast_ref::<Socket>()
         .ok_or(Errno::ENOTSOCK)?;
-    if socket.domain==Domain::AF_ALG {
+    if socket.domain == Domain::AF_ALG {
         log::error!("[syscall_accept]: AF_ALG domain socket supported");
         //需要直接克隆一个fd继承所有socket的所有内容
         let fd_table = task.fd_table();
@@ -613,9 +613,14 @@ pub fn make_socketpair(sockettype: usize, pipe_flag: OpenFlags) -> (Arc<Socket>,
     fd2.buffer = Some(pipe2);
     (Arc::new(fd1), Arc::new(fd2))
 }
-pub fn syscall_sendmsg(socketfd:usize,msg_ptr:usize,flag:usize)->SyscallRet {
-log::error!("[syscall_sendmsg]: begin sendmsg");
-    log::error!("[syscall_sendmsg]: socketfd: {}, msg_ptr: {}, flag: {}", socketfd, msg_ptr, flag);
+pub fn syscall_sendmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallRet {
+    log::error!("[syscall_sendmsg]: begin sendmsg");
+    log::error!(
+        "[syscall_sendmsg]: socketfd: {}, msg_ptr: {}, flag: {}",
+        socketfd,
+        msg_ptr,
+        flag
+    );
 
     let task = current_task();
     let file = match task.fd_table().get_file(socketfd) {
@@ -629,13 +634,13 @@ log::error!("[syscall_sendmsg]: begin sendmsg");
 
     // 1. 从用户空间拷贝一份 MessageHeaderRaw
     let mut user_hdr = MessageHeaderRaw {
-        name:        core::ptr::null_mut(),
-        name_len:    0,
-        iovec:       core::ptr::null_mut(),
-        iovec_len:   0,
-        control:     core::ptr::null_mut(),
+        name: core::ptr::null_mut(),
+        name_len: 0,
+        iovec: core::ptr::null_mut(),
+        iovec_len: 0,
+        control: core::ptr::null_mut(),
         control_len: 0,
-        flags:       0,
+        flags: 0,
     };
     copy_from_user(
         msg_ptr as *const MessageHeaderRaw,
@@ -687,10 +692,7 @@ log::error!("[syscall_sendmsg]: begin sendmsg");
 
     // 5. 将所有 iovec 指向的用户数据拼接到一个大缓冲区 kernel_buf 中
     //    先算出所有 iovec 数据的总长度
-    let total_len: usize = kernel_iovecs
-        .iter()
-        .map(|iov| iov.len as usize)
-        .sum();
+    let total_len: usize = kernel_iovecs.iter().map(|iov| iov.len as usize).sum();
 
     let mut kernel_buf = Vec::new();
     if total_len > 0 {
@@ -717,17 +719,32 @@ log::error!("[syscall_sendmsg]: begin sendmsg");
             }
         }
     }
-    log::error!("[syscall_sendmsg]: final kernel_buf (len={}): {:?}", total_len, kernel_buf);
-    log::error!("[syscall_sendmsg]: control_buf (len={}): {:?}", kernel_control.len(), kernel_control);
+    log::error!(
+        "[syscall_sendmsg]: final kernel_buf (len={}): {:?}",
+        total_len,
+        kernel_buf
+    );
+    log::error!(
+        "[syscall_sendmsg]: control_buf (len={}): {:?}",
+        kernel_control.len(),
+        kernel_control
+    );
 
-    if socket.domain==Domain::AF_ALG {
+    if socket.domain == Domain::AF_ALG {
         //todo
         //根据给入信息进行加密并在recv时返回加密长度
-        return encode(socket, kernel_name.as_mut_slice(),kernel_iovecs.as_mut_slice(),kernel_control.as_mut_slice());
+        return encode(
+            socket,
+            kernel_name.as_mut_slice(),
+            kernel_iovecs.as_mut_slice(),
+            kernel_control.as_mut_slice(),
+        );
     }
     let Ok(addr) = socket.peer_name() else {
         log::error!("[syscall_sendmsg]:get peer name error");
-        return Err(Errno::ENOTCONN);
+        // return Err(Errno::ENOTCONN);
+        // 出于/etc/passwd的要求, 改为返回ENOENT
+        return Err(Errno::ENOENT);
     };
     match socket.send(kernel_buf.as_slice(), addr) {
         Ok(size) => Ok(size),
@@ -739,7 +756,11 @@ log::error!("[syscall_sendmsg]: begin sendmsg");
 }
 pub fn syscall_recvmsg(socketfd: usize, msg_ptr: usize, _flags: usize) -> SyscallRet {
     log::debug!("[syscall_recvmsg]: begin recvmsg");
-    log::debug!("[syscall_recvmsg]: socketfd: {}, msg_ptr: {}", socketfd, msg_ptr);
+    log::debug!(
+        "[syscall_recvmsg]: socketfd: {}, msg_ptr: {}",
+        socketfd,
+        msg_ptr
+    );
 
     // 1. 获取当前任务并检查文件描述符
     let task = current_task();
@@ -813,10 +834,7 @@ pub fn syscall_recvmsg(socketfd: usize, msg_ptr: usize, _flags: usize) -> Syscal
             return Err(e);
         }
     };
-    log::debug!(
-        "[syscall_recvmsg]: received {} bytes into kernel_buf",
-        n
-    );
+    log::debug!("[syscall_recvmsg]: received {} bytes into kernel_buf", n);
 
     if n == 0 {
         return Ok(0);
@@ -837,7 +855,11 @@ pub fn syscall_recvmsg(socketfd: usize, msg_ptr: usize, _flags: usize) -> Syscal
             continue;
         }
 
-        let to_copy = if remaining < dest_len { remaining } else { dest_len };
+        let to_copy = if remaining < dest_len {
+            remaining
+        } else {
+            dest_len
+        };
         copy_to_user(
             dest_ptr,
             kernel_buf[buf_offset..buf_offset + to_copy].as_ptr(),

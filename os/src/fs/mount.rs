@@ -184,13 +184,13 @@ pub fn do_ext4_mount(block_device: Arc<dyn BlockDevice>) -> Arc<Path> {
         ext4_fs.clone(),
         &ext4_fs.block_groups[0],
     );
-    let root_dentry = Dentry::new(
+    let mut root_dentry = Dentry::new(
         "".to_string(),
         None,
         DentryFlags::DCACHE_DIRECTORY_TYPE,
         root_inode.clone(),
     );
-    root_dentry.inner.lock().parent = Some(Arc::downgrade(&root_dentry));
+    root_dentry.inner.lock().parent = Some(root_dentry.clone());
     insert_dentry(root_dentry.clone());
     // 创建根目录的Mount, 并加入全局Mount表
     let fake_mount_flag = 0;

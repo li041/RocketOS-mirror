@@ -12,11 +12,13 @@ use super::{
 };
 use alloc::sync::Arc;
 use exe::{ExeFile, ExeInode, EXE};
+use fd::FdDirInode;
 use meminfo::{MemInfoFile, MEMINFO};
 use mounts::{MountsFile, MOUNTS};
 use tainted::{TaintedFile, TAINTED};
 
 pub mod exe;
+pub mod fd;
 pub mod maps;
 pub mod meminfo;
 pub mod mounts;
@@ -210,6 +212,34 @@ pub fn init_procfs(root_path: Arc<Path>) {
             panic!("create {} failed: {:?}", exe_path, e);
         }
     }
+    // /proc/self/fd
+    let fd_path = "/proc/self/fd";
+    let fd_mode = S_IFDIR as u16 | 0o755;
+    nd = Nameidata {
+        path_segments: parse_path(fd_path),
+        dentry: root_path.dentry.clone(),
+        mnt: root_path.mnt.clone(),
+        depth: 0,
+    };
+    match filename_create(&mut nd, 0) {
+        Ok(dentry) => {
+            let parent_inode = nd.dentry.get_inode();
+            parent_inode.create(dentry.clone(), fd_mode);
+            // 现在dentry的inode指向/proc/self/fd
+            let fd_inode = FdDirInode::new(Ext4InodeDisk::default());
+            dentry.inner.lock().inode.replace(fd_inode.clone());
+            let fd_file = fd::FdFile::new(
+                Path::new(root_path.mnt.clone(), dentry.clone()),
+                fd_inode,
+                OpenFlags::empty(),
+            );
+            fd::FD_FILE.call_once(|| fd_file.clone());
+            insert_core_dentry(dentry);
+        }
+        Err(e) => {
+            panic!("create {} failed: {:?}", fd_path, e);
+        }
+    };
     // /proc/self/maps
     let maps_path = "/proc/self/maps";
     let maps_mode = S_IFREG as u16 | 0o444;

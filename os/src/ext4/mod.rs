@@ -24,8 +24,8 @@ use block_op::Ext4DirContentWE;
 use dentry::{EXT4_DT_CHR, EXT4_DT_DIR, EXT4_DT_FIFO, EXT4_DT_LNK};
 use fs::EXT4_BLOCK_SIZE;
 use inode::{
-    load_inode, write_inode, Ext4Inode, EXT4_EXTENTS_FL, EXT4_INLINE_DATA_FL, S_IALLUGO, S_IFBLK,
-    S_IFCHR, S_IFDIR, S_IFIFO, S_IFLNK, S_IFMT, S_IFREG,
+    load_inode, write_inode, write_inode_on_disk, Ext4Inode, EXT4_EXTENTS_FL, EXT4_INLINE_DATA_FL,
+    S_IALLUGO, S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFLNK, S_IFMT, S_IFREG,
 };
 
 use core::any::Any;
@@ -199,6 +199,7 @@ impl InodeOp for Ext4Inode {
             .upgrade()
             .unwrap()
             .alloc_inode(self.block_device.clone(), false);
+        let (child_uid, child_gid) = self.child_uid_gid();
         // 初始化新的inode结构
         let new_inode = Ext4Inode::new(
             (mode & S_IALLUGO) as u16 | S_IFREG,
@@ -206,6 +207,8 @@ impl InodeOp for Ext4Inode {
             self.ext4_fs.clone(),
             new_inode_num,
             self.block_device.clone(),
+            child_uid as u16,
+            child_gid as u16,
         );
         // 将inode写入block_cache
         write_inode(&new_inode, new_inode_num, self.block_device.clone());
@@ -315,8 +318,6 @@ impl InodeOp for Ext4Inode {
                 .parent
                 .as_ref()
                 .unwrap()
-                .upgrade()
-                .unwrap()
                 .get_inode()
                 .get_inode_num()
                 == self.inode_num
@@ -346,6 +347,7 @@ impl InodeOp for Ext4Inode {
             .upgrade()
             .unwrap()
             .alloc_inode(self.block_device.clone(), false);
+        let (child_uid, child_gid) = { self.child_uid_gid() };
         // 初始化新的inode结构
         let new_inode = Ext4Inode::new(
             (S_IALLUGO | S_IFLNK) as u16,
@@ -353,6 +355,8 @@ impl InodeOp for Ext4Inode {
             self.ext4_fs.clone(),
             new_inode_num,
             self.block_device.clone(),
+            child_uid as u16,
+            child_gid as u16,
         );
         // 设置符号链接目标路径
         new_inode.write_inline_data_dio(0, target.as_bytes());
@@ -394,6 +398,7 @@ impl InodeOp for Ext4Inode {
             .upgrade()
             .unwrap()
             .alloc_inode(self.block_device.clone(), false);
+        let (child_uid, child_gid) = self.child_uid_gid();
         // 2. 初始化新的inode结构
         let new_inode = Ext4Inode::new(
             (mode & S_IALLUGO) as u16 | S_IFREG,
@@ -401,6 +406,8 @@ impl InodeOp for Ext4Inode {
             self.ext4_fs.clone(),
             new_inode_num,
             self.block_device.clone(),
+            child_uid as u16,
+            child_gid as u16,
         );
         // 3. 将inode写入block_cache
         write_inode(&new_inode, new_inode_num, self.block_device.clone());
@@ -417,6 +424,7 @@ impl InodeOp for Ext4Inode {
             .upgrade()
             .unwrap()
             .alloc_inode(self.block_device.clone(), true);
+        let (child_uid, child_gid) = self.child_uid_gid();
         // 初始化新的inode结构
         let new_inode = Ext4Inode::new(
             (mode & S_IALLUGO) | S_IFDIR as u16,
@@ -424,6 +432,8 @@ impl InodeOp for Ext4Inode {
             self.ext4_fs.clone(),
             new_inode_num,
             self.block_device.clone(),
+            child_uid as u16,
+            child_gid as u16,
         );
         // 分配数据块
         let new_block_num = self
@@ -481,25 +491,22 @@ impl InodeOp for Ext4Inode {
                     .upgrade()
                     .unwrap()
                     .alloc_inode(self.block_device.clone(), true);
-                // ToOptimize: 为了写回创建的冗余inode
-                let ext4_inode = Ext4Inode::new(
-                    (mode & S_IALLUGO) as u16 | S_IFIFO,
-                    EXT4_INLINE_DATA_FL,
-                    self.ext4_fs.clone(),
+                let pipe_inode = PipeInode::new(new_inode_num);
+                // 写回inode
+                write_inode_on_disk(
+                    self,
+                    &pipe_inode.inner.read().inode_on_disk,
                     new_inode_num,
                     self.block_device.clone(),
                 );
-                let pipe_inode = PipeInode::new(new_inode_num);
                 // 在父目录中添加对应项
                 self.add_entry(dentry.clone(), new_inode_num as u32, EXT4_DT_FIFO);
                 // 关联到dentry
                 dentry.inner.lock().inode = Some(pipe_inode);
-                // 写回inode
-                write_inode(&ext4_inode, new_inode_num, self.block_device.clone());
             }
             S_IFCHR => {
                 // 提取主,次设备号
-                let (major, minor) = dev.unpack();
+                let (major, minor) = dev.new_decode_dev();
                 // 主设备号1表示mem
                 match (major, minor) {
                     (1, 3) => {
@@ -514,15 +521,22 @@ impl InodeOp for Ext4Inode {
                         self.add_entry(dentry.clone(), new_inode_num as u32, EXT4_DT_CHR);
                         // 关联到dentry
                         dentry.inner.lock().inode = Some(null_inode);
-                    } // /dev/null
+                    } // /dev/null等
                     (1, 5) => {
-                        assert!(dentry.absolute_path == "/dev/zero");
+                        // assert!(dentry.absolute_path == "/dev/zero");
                         let new_inode_num = self
                             .ext4_fs
                             .upgrade()
                             .unwrap()
                             .alloc_inode(self.block_device.clone(), true);
                         let zero_inode = NullInode::new(new_inode_num, mode, 1, 5);
+                        // 写回inode
+                        write_inode_on_disk(
+                            self,
+                            &zero_inode.inner.read().inode_on_disk,
+                            new_inode_num,
+                            self.block_device.clone(),
+                        );
                         // 在父目录中添加对应项
                         self.add_entry(dentry.clone(), new_inode_num as u32, EXT4_DT_CHR);
                         // 关联到dentry
@@ -587,7 +601,7 @@ impl InodeOp for Ext4Inode {
             }
             S_IFBLK => {
                 // 提取主,次设备号
-                let (major, minor) = dev.unpack();
+                let (major, minor) = dev.new_decode_dev();
                 match (major, minor) {
                     (7, id) => {
                         // /dev/loopX, X是设备号

@@ -1,4 +1,5 @@
 use alloc::{sync::Arc, vec::Vec};
+use hmac::digest::block_buffer;
 use spin::RwLock;
 
 use crate::drivers::block::{block_cache::get_block_cache, block_dev::BlockDevice};
@@ -250,6 +251,7 @@ impl GroupDesc {
         &self,
         block_device: Arc<dyn BlockDevice>,
         local_block_num: usize,
+        block_count: usize,
         ext4_block_size: usize,
         block_bitmap_size: usize,
     ) {
@@ -261,8 +263,8 @@ impl GroupDesc {
                 .lock()
                 .get_mut(0),
         )
-        .dealloc(block_offset, block_bitmap_size);
-        inner.free_blocks_count += 1;
+        .dealloc_contiguous(block_offset, block_count, block_bitmap_size);
+        inner.free_blocks_count += block_count as u32;
     }
 }
 
