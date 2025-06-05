@@ -98,6 +98,7 @@ impl Page {
             let buf = core::slice::from_raw_parts_mut(vaddr as *mut u8, PAGE_SIZE);
             if let Some(data) = data {
                 // 复制数据到页中
+                // buf.fill(0);
                 buf.copy_from_slice(data);
             } else {
                 // 如果没有数据, 则清空页

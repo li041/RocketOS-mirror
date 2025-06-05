@@ -452,6 +452,32 @@ impl Ext4InodeDisk {
         }
         return None;
     }
+    // 获取所有的extents
+    fn iter_all_extents(
+        &self,
+        block_device: Arc<dyn BlockDevice>,
+        ext4_block_size: usize,
+        result: &mut Vec<Ext4Extent>,
+    ) {
+        let header = self.extent_header();
+
+        if header.depth > 0 {
+            // 内部节点
+            for idx in self.extent_idxs(&header) {
+                let child_block = idx.physical_leaf_block();
+                let mut child_node = Ext4ExtentBlock::new(
+                    get_block_cache(child_block, block_device.clone(), ext4_block_size)
+                        .lock()
+                        .get_mut(0),
+                )
+                .iter_all_extents(block_device.clone(), ext4_block_size, result);
+            }
+        } else {
+            // 叶子节点，直接收集所有 extent
+            result.extend(self.extents(&header).iter().cloned());
+        }
+    }
+
     // Todo: 未实现根节点非叶子节点的情况
     pub fn truncate_extents(&mut self, new_block_count: u64) -> Result<usize, Errno> {
         let mut extent_header = self.extent_header();
@@ -679,16 +705,51 @@ impl Drop for Ext4Inode {
                 log::error!("[Ext4Inode::drop] inline data not found in page cache");
             }
         }
-        drop(inner);
         // 写回inode到磁盘
-        write_inode(&self, self.inode_num, self.block_device.clone());
-        // 释放inode bitmap和inode table
-        // self.ext4_fs.upgrade().unwrap().dealloc_inode(
-        //     self.block_device.clone(),
-        //     self.inode_num,
-        //     self.inner.read().inode_on_disk.is_dir(),
-        // );
-        // Todo: 释放extent_tree
+        // write_inode(&self, self.inode_num, self.block_device.clone());
+        write_inode_on_disk(
+            &self,
+            &inner.inode_on_disk,
+            self.inode_num,
+            self.block_device.clone(),
+        );
+        // 如果硬链接数为0, 释放磁盘上分配的空间
+        if inner.inode_on_disk.get_nlinks() == 0 {
+            log::warn!("[Ext4Inode::drop] nlinks is 0, dealloc blocks");
+            // 释放inode bitmap和inode table
+            // self.ext4_fs.upgrade().unwrap().dealloc_inode(
+            //     self.block_device.clone(),
+            //     self.inode_num,
+            //     self.inner.read().inode_on_disk.is_dir(),
+            // );
+            // 释放extent_tree, 如果有的话
+            if inner.inode_on_disk.use_extent_tree() {
+                let mut extents = Vec::new();
+                let ext4_fs = self.ext4_fs.upgrade().unwrap();
+                inner.inode_on_disk.iter_all_extents(
+                    self.block_device.clone(),
+                    ext4_fs.block_size(),
+                    &mut extents,
+                );
+                for extent in extents {
+                    self.ext4_fs.upgrade().unwrap().dealloc_block(
+                        self.block_device.clone(),
+                        extent.physical_start_block() as usize,
+                        extent.len as usize,
+                    );
+                }
+            } else {
+                log::warn!(
+                    "[Ext4Inode::drop] inode {} not use extent tree",
+                    self.inode_num
+                );
+            }
+        } else {
+            log::warn!(
+                "[Ext4Inode::drop] nlinks is {}, not dealloc blocks",
+                inner.inode_on_disk.get_nlinks()
+            );
+        }
     }
 }
 
@@ -711,6 +772,8 @@ impl Ext4Inode {
         ext4_fs: Weak<Ext4FileSystem>,
         ino: usize,
         block_device: Arc<dyn BlockDevice>,
+        uid: u16,
+        gid: u16,
     ) -> Arc<Self> {
         // Todo: 1. init_owner(): 设置mode, uid, gid
         // Todo: 2. 时间戳: atime, mtime, ctime
@@ -720,12 +783,10 @@ impl Ext4Inode {
         let time = current_time.sec as u32;
         let time_extra = (current_time.nsec as u32) << 2 | ((current_time.sec >> 32) as u32 & 0x3);
         let task = current_task();
-        let uid = task.euid();
-        let gid = task.egid();
         let mut new_inode_disk = Ext4InodeDisk {
             mode: inode_mode,
-            uid: uid as u16,
-            gid: gid as u16,
+            uid,
+            gid,
             flags,
             change_inode_time: time,
             change_inode_time_extra: time_extra,
@@ -1406,6 +1467,16 @@ impl Ext4Inode {
     pub fn can_lookup(&self) -> bool {
         self.inner.read().inode_on_disk.is_dir() && self.inner.read().inode_on_disk.get_size() > 0
     }
+    pub fn child_uid_gid(&self) -> (u32, u32) {
+        let inner = self.inner.read();
+        let task = current_task();
+        let uid = task.uid();
+        if inner.inode_on_disk.mode & S_ISGID != 0 {
+            (uid, inner.inode_on_disk.gid as u32)
+        } else {
+            (uid, task.gid())
+        }
+    }
 }
 
 // Truncate
@@ -1452,18 +1523,29 @@ impl Ext4Inode {
         let block_size = self.get_block_size() as u64;
         let new_block_count = (new_size + block_size - 1) / block_size;
         let current_block_count = (current_size + block_size - 1) / block_size;
-        for logical_block_num in new_block_count..current_block_count {
+        let mut logical_start_block = new_block_count as u32;
+        // for logical_block_num in new_block_count..current_block_count {
+        while logical_start_block < current_block_count as u32 {
             if let Some(extent) = inner.inode_on_disk.lookup_extent(
-                logical_block_num as u32,
+                logical_start_block as u32,
                 self.block_device.clone(),
                 block_size as usize,
             ) {
                 self.ext4_fs.upgrade().unwrap().dealloc_block(
                     self.block_device.clone(),
                     extent.physical_start_block() as usize,
+                    extent.len as usize,
+                );
+                logical_start_block += extent.len as u32;
+            } else {
+                panic!(
+                    "[Ext4Inode::shrink_size] No extent found for logical block {}",
+                    logical_start_block
                 );
             }
         }
+        // 更新inode的size
+        inner.inode_on_disk.set_size(new_size);
         // 更新extent tree
         inner.inode_on_disk.truncate_extents(new_block_count)
     }
@@ -1570,6 +1652,7 @@ impl Ext4Inode {
                 self.address_space.remove_page_cache(page_num);
             }
             // 释放数据块
+            let mut block_num = start_block as usize;
             for block_num in start_block..end_block {
                 if let Some(extent) = inode_on_disk.lookup_extent(
                     block_num as u32,
@@ -1577,15 +1660,16 @@ impl Ext4Inode {
                     self.ext4_fs.upgrade().unwrap().block_size(),
                 ) {
                     // 清除数据块内容
-                    let fs_block_id = extent.physical_start_block() + block_num as usize
+                    let phsical_block_id = extent.physical_start_block() + block_num as usize
                         - extent.logical_block as usize;
                     self.block_device
-                        .write_blocks(fs_block_id, &[0u8; PAGE_SIZE]);
+                        .write_blocks(phsical_block_id, &[0u8; PAGE_SIZE]);
                     // 释放block
-                    self.ext4_fs
-                        .upgrade()
-                        .unwrap()
-                        .dealloc_block(self.block_device.clone(), fs_block_id);
+                    self.ext4_fs.upgrade().unwrap().dealloc_block(
+                        self.block_device.clone(),
+                        phsical_block_id,
+                        1,
+                    );
                 }
             }
             return Ok(0);
@@ -1867,7 +1951,7 @@ pub fn write_inode(inode: &Ext4Inode, inode_num: usize, block_device: Arc<dyn Bl
         index * ext4_fs.super_block.inode_size as usize / ext4_fs.super_block.block_size as usize;
     let inner_offset =
         index * ext4_fs.super_block.inode_size as usize % ext4_fs.super_block.block_size as usize;
-    let inode_on_disk = &inode.inner.read().inode_on_disk.clone();
+    let inode_on_disk = &inode.inner.read().inode_on_disk;
     get_block_cache(
         inode_table_block_id + outer_offset,
         block_device.clone(),
@@ -1876,5 +1960,38 @@ pub fn write_inode(inode: &Ext4Inode, inode_num: usize, block_device: Arc<dyn Bl
     .lock()
     .modify(inner_offset, |inode_disk: &mut Ext4InodeDisk| {
         *inode_disk = *inode_on_disk
+    });
+}
+
+pub fn write_inode_on_disk(
+    dir_inode: &Ext4Inode,
+    inode_on_disk: &Ext4InodeDisk,
+    inode_num: usize,
+    block_device: Arc<dyn BlockDevice>,
+) {
+    log::warn!(
+        "[write_inode_on_disk] inode_num: {}, size: {}",
+        inode_num,
+        inode_on_disk.get_size()
+    );
+    let ext4_fs = dir_inode.ext4_fs.upgrade().unwrap();
+    let inodes_per_group = ext4_fs.super_block.inodes_per_group as usize;
+    let bg = (inode_num - 1) / inodes_per_group;
+    let index = (inode_num - 1) % inodes_per_group;
+    let inode_table_block_id = ext4_fs.block_groups[bg].inode_table() as usize;
+    let outer_offset =
+        index * ext4_fs.super_block.inode_size as usize / ext4_fs.super_block.block_size as usize;
+    let inner_offset =
+        index * ext4_fs.super_block.inode_size as usize % ext4_fs.super_block.block_size as usize;
+
+    // 写入inode到block_cache
+    get_block_cache(
+        inode_table_block_id + outer_offset,
+        block_device.clone(),
+        ext4_fs.super_block.block_size as usize,
+    )
+    .lock()
+    .modify(inner_offset, |inode_disk: &mut Ext4InodeDisk| {
+        *inode_disk = inode_on_disk.clone();
     });
 }

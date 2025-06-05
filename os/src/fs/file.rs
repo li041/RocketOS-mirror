@@ -273,11 +273,13 @@ impl FileOp for File {
     fn readable(&self) -> bool {
         let inner_guard = self.inner.lock();
         !inner_guard.flags.contains(OpenFlags::O_WRONLY)
+            && !inner_guard.flags.contains(OpenFlags::O_PATH)
     }
     fn writable(&self) -> bool {
         let inner_guard = self.inner.lock();
-        inner_guard.flags.contains(OpenFlags::O_WRONLY)
-            || inner_guard.flags.contains(OpenFlags::O_RDWR)
+        (inner_guard.flags.contains(OpenFlags::O_WRONLY)
+            || inner_guard.flags.contains(OpenFlags::O_RDWR))
+            && !inner_guard.flags.contains(OpenFlags::O_PATH)
     }
     fn r_ready(&self) -> bool {
         true
@@ -337,6 +339,7 @@ bitflags::bitflags! {
         const O_LARGEFILE   = 0o100000;
         // 不更新访问时间, 调用进程需要有`CAP_FOWNER`权限或euid匹配file的Owner id
         const O_NOATIME     = 0o1000000;
+        // 打开一个文件但不获取对该文件的读写权限，而是仅获取对文件路径本身的一个引用
         const O_PATH        = 0o10000000;
         const O_TMPFILE     = 0o20200000;
     }

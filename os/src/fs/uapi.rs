@@ -39,41 +39,31 @@ pub struct PollFd {
     pub revents: PollEvents,
 }
 
-/// sys_utimensat
-bitflags::bitflags! {
-    #[derive(Debug, Clone, Copy)]
-    pub struct UtimenatFlags: i32 {
-        // 如果路径是空字符串, 直接操作dirfd指向的file
-        const AT_EMPTY_PATH = 0x1000;
-        // 不跟随符号链接, 如果路径是符号链接，则操作会在链接本身上进行，而不是链接指向的目标。
-        const AT_SYMLINK_NOFOLLOW = 0x100;
-    }
-}
 
 /// sys_mknod
 pub struct DevT(pub u64);
 
 impl DevT {
     pub fn tty_devt() -> Self {
-        Self::makedev(5, 0)
+        Self::new_encode_dev(5, 0)
     }
     pub fn rtc_devt() -> Self {
-        Self::makedev(10, 0)
+        Self::new_encode_dev(10, 0)
     }
     pub fn null_devt() -> Self {
-        Self::makedev(1, 3)
+        Self::new_encode_dev(1, 3)
     }
     pub fn zero_devt() -> Self {
-        Self::makedev(1, 5)
+        Self::new_encode_dev(1, 5)
     }
     pub fn urandom_devt() -> Self {
-        Self::makedev(1, 9)
+        Self::new_encode_dev(1, 9)
     }
     pub fn loop_control_devt() -> Self {
-        Self::makedev(10, 237)
+        Self::new_encode_dev(10, 237)
     }
     pub fn loopx_devt(id: usize) -> Self {
-        Self::makedev(7, id as u32)
+        Self::new_encode_dev(7, id as u32)
     }
 }
 
@@ -81,20 +71,35 @@ impl DevT {
     pub fn new(dev: u64) -> Self {
         Self(dev)
     }
-    pub fn makedev(major: u32, minor: u32) -> Self {
+    pub fn new_encode_dev(major: u32, minor: u32) -> Self {
         Self(((major as u64) << 20) | (minor as u64 & 0xFFFFF))
     }
     /// 从dev_t中获取设备号
-    pub fn major(&self) -> u32 {
-        ((self.0 >> 20) & 0xfff) as u32
+    // pub fn major(&self) -> u32 {
+    //     ((self.0 >> 20) & 0xfff) as u32
+    // }
+    // pub fn minor(&self) -> u32 {
+    //     (self.0 & 0xfffff) as u32
+    // }
+    pub fn new_decode_dev(&self) -> (u32, u32) {
+        let major = ((self.0 >> 20) & 0xfff) as u32;
+        let minor = (self.0 & 0xfffff) as u32;
+        (major, minor)
     }
-    pub fn minor(&self) -> u32 {
-        (self.0 & 0xfffff) as u32
-    }
-    pub fn unpack(&self) -> (u32, u32) {
-        (self.major(), self.minor())
+    pub fn old_decode_dev(&self) -> (u32, u32) {
+        let major = ((self.0 >> 8) & 0xff) as u32;
+        let minor = (self.0 & 0xff) as u32;
+        (major, minor)
     }
 }
+
+pub fn convert_old_dev_to_new(dev: u64) -> DevT {
+    // 旧的设备号格式是 8 位主设备号和 8 位次设备号
+    let major = (dev >> 8) as u32 & 0xff;
+    let minor = (dev & 0xff) as u32;
+    DevT::new_encode_dev(major, minor)
+}
+
 impl From<DevT> for u64 {
     fn from(dev: DevT) -> Self {
         dev.0
