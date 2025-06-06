@@ -23,8 +23,11 @@ pub trait InodeOp: Any + Send + Sync {
     fn read<'a>(&'a self, _offset: usize, _buf: &'a mut [u8]) -> usize {
         unimplemented!();
     }
-    // 先查找页缓存, 如果没有则从块设备中读取
-    fn get_page(self: Arc<Self>, _page_index: usize) -> Option<Arc<Page>> {
+    // 先查找页缓存, 如果没有则从块设备中读取, 如果磁盘中没有extent, 则是hole, 分配block
+    fn get_page<'a>(&'a self, _page_index: usize) -> Option<Arc<Page>> {
+        unimplemented!();
+    }
+    fn lookup_extent<'a>(&'a self, _page_index: usize) -> Option<(usize, usize)> {
         unimplemented!();
     }
     fn write<'a>(&'a self, _page_offset: usize, _buf: &'a [u8]) -> usize {
@@ -37,6 +40,9 @@ pub trait InodeOp: Any + Send + Sync {
         unimplemented!();
     }
     fn fallocate<'a>(&'a self, _mode: FallocFlags, _offset: usize, _len: usize) -> SyscallRet {
+        unimplemented!();
+    }
+    fn fsync<'a>(&'a self) -> SyscallRet {
         unimplemented!();
     }
     // 返回目录项

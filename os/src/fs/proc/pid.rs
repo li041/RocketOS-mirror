@@ -190,6 +190,10 @@ impl FileOp for PidStatFile {
                     return Err(Errno::ENOENT);
                 }
             }
+            _ => {
+                log::warn!("Unsupported whence: {:?}", whence);
+                return Err(Errno::EINVAL); // Invalid argument
+            }
         }
         Ok(inner_guard.offset)
     }

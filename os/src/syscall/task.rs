@@ -5,6 +5,7 @@ use core::time;
 use crate::arch::mm::copy_from_user;
 use crate::arch::trap::context::{dump_trap_context, get_trap_context, save_trap_context};
 use crate::ext4::fs;
+use crate::fs::dentry::X_OK;
 use crate::fs::file::OpenFlags;
 use crate::futex::do_futex;
 use crate::syscall::errno::Errno;
@@ -138,7 +139,7 @@ pub fn sys_clone(
     Ok(new_task_tid)
 }
 
-pub const IGNOER_TEST: [&str; 21] = [
+pub const IGNOER_TEST: [&str; 20] = [
     /* 本身就不应该单独运行的 */
     "ltp/testcases/bin/ask_password.sh",
     "ltp/testcases/bin/assign_password.sh",
@@ -161,7 +162,6 @@ pub const IGNOER_TEST: [&str; 21] = [
     "ltp/testcases/bin/mmap1",
     "ltp/testcases/bin/mmap2",
     "ltp/testcases/bin/mmap3",
-    "ltp/testcases/bin/copy_file_range01",
 ];
 
 pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> SyscallRet {
@@ -183,23 +183,27 @@ pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> Sy
     let envs_vec = extract_cstrings(envs)?;
     let task = current_task();
     // OpenFlags::empty() = RDONLY = 0, 以只读方式打开文件
-    if let Ok(file) = path_openat(&path, OpenFlags::empty(), AT_FDCWD, 0) {
-        let all_data = file.read_all();
-        task.kernel_execve_lazily(path, file, all_data.as_slice(), args_vec, envs_vec);
-        Ok(0)
-    } else if !path.starts_with("/") {
-        // 从内核中加载的应用程序
-        if let Some(elf_data) = get_app_data_by_name(&path) {
-            args_vec.insert(0, path);
-            task.kernel_execve(elf_data, args_vec, envs_vec);
+    match path_openat(&path, OpenFlags::empty(), AT_FDCWD, X_OK) {
+        Ok(file) => {
+            let all_data = file.read_all();
+            task.kernel_execve_lazily(path, file, all_data.as_slice(), args_vec, envs_vec);
             Ok(0)
-        } else {
-            log::error!("[sys_execve] path: {} not found", path);
-            Err(Errno::ENOENT)
         }
-    } else {
-        log::error!("[sys_execve] path: {} not found", path);
-        Err(Errno::ENOENT)
+        Err(err) if err == Errno::ENOENT && !path.starts_with("/") => {
+            // 从内核中加载的应用程序
+            if let Some(elf_data) = get_app_data_by_name(&path) {
+                args_vec.insert(0, path);
+                task.kernel_execve(elf_data, args_vec, envs_vec);
+                Ok(0)
+            } else {
+                log::error!("[sys_execve] path: {} not found", path);
+                Err(Errno::ENOENT)
+            }
+        }
+        Err(err) => {
+            log::error!("[sys_execve] path: {} err: {:?}", path, err);
+            Err(err)
+        }
     }
 }
 

@@ -199,6 +199,10 @@ impl FileOp for PageMapFile {
                 // let len = content.len();
                 // inner_guard.offset = len.checked_add_signed(offset).unwrap();
             }
+            _ => {
+                log::warn!("Unsupported whence: {:?}", whence);
+                return Err(Errno::EINVAL); // Invalid argument
+            }
         }
         Ok(inner_guard.offset)
     }

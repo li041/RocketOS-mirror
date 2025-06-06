@@ -7,10 +7,9 @@
 #![feature(trait_upcasting)]
 #![feature(ip_from)]
 #![allow(static_mut_refs)]
-
-// #![allow(non_snake_case)]
-// #![allow(non_camel_case_types)]
-// #![allow(unused)]
+#![allow(non_snake_case)]
+#![allow(non_camel_case_types)]
+#![allow(unused)]
 
 extern crate alloc;
 

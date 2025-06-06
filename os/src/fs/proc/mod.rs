@@ -224,9 +224,15 @@ pub fn init_procfs(root_path: Arc<Path>) {
     match filename_create(&mut nd, 0) {
         Ok(dentry) => {
             let parent_inode = nd.dentry.get_inode();
-            parent_inode.create(dentry.clone(), fd_mode);
-            // 现在dentry的inode指向/proc/self/fd
-            let fd_inode = FdDirInode::new(Ext4InodeDisk::default());
+            parent_inode.mkdir(dentry.clone(), fd_mode);
+            let mut inode_on_disk = Ext4InodeDisk::default();
+            inode_on_disk.set_mode(fd_mode);
+            dentry
+                .flags
+                .write()
+                .insert(dentry::DentryFlags::DCACHE_DIRECTORY_TYPE); // 设置为目录类型
+                                                                     // 现在dentry的inode指向/proc/self/fd
+            let fd_inode = FdDirInode::new(inode_on_disk);
             dentry.inner.lock().inode.replace(fd_inode.clone());
             let fd_file = fd::FdFile::new(
                 Path::new(root_path.mnt.clone(), dentry.clone()),
@@ -242,7 +248,7 @@ pub fn init_procfs(root_path: Arc<Path>) {
     };
     // /proc/self/maps
     let maps_path = "/proc/self/maps";
-    let maps_mode = S_IFREG as u16 | 0o444;
+    let maps_mode = S_IFREG as u16 | 0o744;
     nd = Nameidata {
         path_segments: parse_path(maps_path),
         dentry: root_path.dentry.clone(),

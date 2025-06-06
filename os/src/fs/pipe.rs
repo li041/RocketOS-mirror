@@ -7,6 +7,7 @@ use core::ptr::copy_nonoverlapping;
 use core::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize};
 use spin::{Mutex, RwLock};
 
+use crate::arch::mm::copy_to_user;
 use crate::ext4::inode::{self, Ext4InodeDisk, S_IFIFO};
 use crate::signal::{Sig, SigInfo};
 use crate::syscall::errno::{Errno, SyscallRet};
@@ -137,17 +138,16 @@ impl Pipe {
         let mut buffer = inode.buffer.lock();
         buffer.set_read_end(&read_end);
         if is_named_pipe {
-            if buffer.get_waiter() != 0 {
+            if buffer.get_one_waiter() != 0 {
                 // wake up writer
-                let waiter = buffer.get_waiter();
-                buffer.set_waiter(0);
+                let waiter = buffer.get_one_waiter();
                 wakeup(waiter);
             } else {
                 if flags.contains(OpenFlags::O_NONBLOCK) {
                     log::error!(
-                        "[Pipe::read_end] named pipe read end not ready, non-blocking mode"
+                        "[Pipe::read_end] named pipe write end not ready, non-blocking mode, block"
                     );
-                    return Err(Errno::ENXIO);
+                    buffer.add_waiter(current_task().tid());
                 }
             }
         }
@@ -168,16 +168,15 @@ impl Pipe {
         let mut buffer = inode.buffer.lock();
         buffer.set_write_end(&write_end);
         if is_named_pipe {
-            if buffer.get_waiter() != 0 {
-                // wake up writer
+            if buffer.get_one_waiter() != 0 {
+                // wake up reader
                 log::info!("[Pipe::write_end] wake up reader");
-                let waiter = buffer.get_waiter();
-                buffer.set_waiter(0);
+                let waiter = buffer.get_one_waiter();
                 wakeup(waiter);
             } else {
                 if flags.contains(OpenFlags::O_NONBLOCK) {
                     log::error!(
-                        "[Pipe::write_end] named pipe read end not ready, non-blocking mode"
+                        "[Pipe::write_end] named pipe read end not ready, non-blocking mode, return ENXIO"
                     );
                     return Err(Errno::ENXIO);
                 }
@@ -206,6 +205,15 @@ impl Pipe {
         buffer.set_write_end(&write_end);
         (read_end, write_end)
     }
+    pub fn get_size(&self) -> usize {
+        self.inode.buffer.lock().size
+    }
+    /// 调整管道大小, 成功返回新大小, 失败返回Errno
+    pub fn resize(&self, new_size: usize) -> Result<usize, Errno> {
+        assert!(new_size > 0);
+        let mut buffer = self.inode.buffer.lock();
+        buffer.resize(new_size)
+    }
 }
 
 pub const RING_DEFAULT_BUFFER_SIZE: usize = 65536;
@@ -225,15 +233,12 @@ pub struct PipeRingBuffer {
     status: RingBufferStatus,
     write_end: Option<Weak<Pipe>>,
     read_end: Option<Weak<Pipe>>,
-    waiter: Tid,
+    pub(crate) waiter: Vec<Tid>,
+    size: usize, // 用于记录管道的大小
 }
 
 impl PipeRingBuffer {
     fn new() -> Self {
-        // let mut vec = Vec::<u8>::with_capacity(RING_DEFAULT_BUFFER_SIZE);
-        // unsafe {
-        //     vec.set_len(RING_DEFAULT_BUFFER_SIZE);
-        // }
         Self {
             arr: vec![0u8; RING_DEFAULT_BUFFER_SIZE],
             head: 0,
@@ -241,7 +246,8 @@ impl PipeRingBuffer {
             status: RingBufferStatus::EMPTY,
             write_end: None,
             read_end: None,
-            waiter: 0,
+            waiter: Vec::new(),
+            size: RING_DEFAULT_BUFFER_SIZE,
         }
     }
     #[allow(unused)]
@@ -264,7 +270,7 @@ impl PipeRingBuffer {
         // get range
         let begin = self.head;
         let end = if self.tail <= self.head {
-            RING_DEFAULT_BUFFER_SIZE
+            self.size
         } else {
             self.tail
         };
@@ -274,7 +280,7 @@ impl PipeRingBuffer {
             copy_nonoverlapping(self.arr.as_ptr().add(begin), buf.as_mut_ptr(), read_bytes);
         };
         // update head
-        self.head = if begin + read_bytes == RING_DEFAULT_BUFFER_SIZE {
+        self.head = if begin + read_bytes == self.size {
             0
         } else {
             begin + read_bytes
@@ -288,7 +294,7 @@ impl PipeRingBuffer {
         let end = if self.tail < self.head {
             self.head
         } else {
-            RING_DEFAULT_BUFFER_SIZE
+            self.size
         };
         // write
         let write_bytes = buf.len().min(end - begin);
@@ -296,7 +302,7 @@ impl PipeRingBuffer {
             copy_nonoverlapping(buf.as_ptr(), self.arr.as_mut_ptr().add(begin), write_bytes);
         };
         // update tail
-        self.tail = if begin + write_bytes == RING_DEFAULT_BUFFER_SIZE {
+        self.tail = if begin + write_bytes == self.size {
             0
         } else {
             begin + write_bytes
@@ -317,11 +323,53 @@ impl PipeRingBuffer {
         log::trace!("[all_read_ends_closed]");
         self.read_end.as_ref().unwrap().upgrade().is_none()
     }
-    fn get_waiter(&self) -> Tid {
-        self.waiter
+    fn get_one_waiter(&mut self) -> Tid {
+        log::warn!("[PipeRingBuffer::get_one_waiter] get one waiter");
+        self.waiter.pop().unwrap_or(0) // 如果没有等待者，返回0
     }
-    fn set_waiter(&mut self, waiter: Tid) {
-        self.waiter = waiter;
+    fn add_waiter(&mut self, waiter: Tid) {
+        // 6.7 Debug
+        log::warn!("[PipeRingBuffer::add_waiter] add waiter: {}", waiter);
+        log::warn!("[PipeRingBuffer::get_one_waiter] get one waiter");
+        self.waiter.push(waiter);
+    }
+    // 成功返回新大小, 失败返回Errno
+    fn resize(&mut self, new_size: usize) -> Result<usize, Errno> {
+        log::warn!("[PipeRingBuffer::resize] resize to {}", new_size);
+        let used = self.get_used_size();
+        if used > new_size {
+            log::error!(
+                "[PipeRingBuffer::resize] new size is smaller than used size, resizing failed"
+            );
+            return Err(Errno::EBUSY); // 不允许缩小
+        }
+        let mut new_arr = vec![0u8; new_size];
+        if self.status != RingBufferStatus::EMPTY {
+            if self.head < self.tail {
+                // 正常情况
+                new_arr[..used].copy_from_slice(&self.arr[self.head..self.tail]);
+            } else {
+                // 环形情况
+                let first_part = &self.arr[self.head..self.size];
+                let second_part = &self.arr[..self.tail];
+                let first_part_len = first_part.len();
+                new_arr[..first_part_len].copy_from_slice(first_part);
+                new_arr[first_part_len..used].copy_from_slice(second_part);
+            }
+        }
+        self.arr = new_arr;
+        self.head = 0;
+        self.tail = used;
+        self.size = new_size;
+        // 更新状态
+        self.status = if used == 0 {
+            RingBufferStatus::EMPTY
+        } else if used == new_size {
+            RingBufferStatus::FULL
+        } else {
+            RingBufferStatus::NORMAL
+        };
+        return Ok(new_size);
     }
 }
 
@@ -333,6 +381,13 @@ pub fn make_pipe(flags: OpenFlags) -> (Arc<Pipe>, Arc<Pipe>) {
     // buffer仅剩两个强引用，这样读写端关闭后就会被释放
     let (read_end, write_end) = Pipe::read_write_end(inode.clone(), flags);
     (read_end, write_end)
+}
+
+/// Pipe IOCTL 命令
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(usize)]
+pub enum PipeIoctlCmd {
+    FIONREAD = 0x541B, // 获取管道中可读字节数
 }
 
 impl FileOp for Pipe {
@@ -353,7 +408,7 @@ impl FileOp for Pipe {
                     log::error!("[Pipe::read] named pipe read end not ready, non-blocking mode");
                     return Err(Errno::EAGAIN);
                 }
-                guard.set_waiter(current_task().tid());
+                guard.add_waiter(current_task().tid());
                 drop(guard);
                 if wait() == -1 {
                     // log::error!("[Pipe::read] wait failed");
@@ -377,7 +432,7 @@ impl FileOp for Pipe {
                     return Err(Errno::EAGAIN);
                 }
                 // wait for data, 注意释放锁
-                buffer.set_waiter(current_task().tid());
+                buffer.add_waiter(current_task().tid());
                 drop(buffer);
                 // log::error!("[Pipe::read] set waiter: {}", current_task().tid());
                 if wait() == -1 {
@@ -388,11 +443,10 @@ impl FileOp for Pipe {
             }
             while read_size < buf.len() {
                 let read_bytes = buffer.buffer_read(&mut buf[read_size..]);
-                if buffer.get_waiter() != 0 {
+                let waiter = buffer.get_one_waiter();
+                if waiter != 0 {
                     // log::info!("[Pipe::read] wake up waiter");
                     // wake up writer
-                    let waiter = buffer.get_waiter();
-                    buffer.set_waiter(0);
                     wakeup(waiter);
                 }
                 // log::error!("[Pipe::read] read_bytes: {}", read_bytes);
@@ -417,10 +471,10 @@ impl FileOp for Pipe {
             // 命名管道对端还没打开, 需阻塞
             if guard.read_end.is_none() {
                 if nonblock {
-                    log::error!("[Pipe::write] named pipe write end not ready, non-blocking mode");
+                    log::error!("[Pipe::write] named pipe read end not ready, non-blocking mode");
                     return Err(Errno::EAGAIN);
                 }
-                guard.set_waiter(current_task().tid());
+                guard.add_waiter(current_task().tid());
                 drop(guard);
                 if wait() == -1 {
                     // log::error!("[Pipe::read] wait failed");
@@ -449,11 +503,11 @@ impl FileOp for Pipe {
             }
             if buffer.status == RingBufferStatus::FULL {
                 if nonblock {
-                    log::error!("[Pipe::write] pipe write end not ready, non-blocking mode");
+                    log::error!("[Pipe::write] buffer is full, non-blocking mode, return EAGAIN");
                     return Err(Errno::EAGAIN);
                 }
                 // wait for space, 注意释放锁
-                buffer.set_waiter(current_task().tid());
+                buffer.add_waiter(current_task().tid());
                 drop(buffer);
                 // yield_current_task();
                 if wait() == -1 {
@@ -464,23 +518,50 @@ impl FileOp for Pipe {
             }
             while write_size < buf.len() {
                 let write_bytes = buffer.buffer_write(&buf[write_size..]);
-                if buffer.get_waiter() != 0 {
+                let waiter = buffer.get_one_waiter();
+                if waiter != 0 {
                     // log::info!("[Pipe::write] wake up waiter");
                     // wake up reader
-                    let waiter = buffer.get_waiter();
-                    buffer.set_waiter(0);
                     wakeup(waiter);
                 }
                 // log::error!("[Pipe::write] write_bytes: {}", write_bytes);
                 write_size += write_bytes;
+                log::info!(
+                    "buffer.head: {}, buffer.tail: {}, write_size: {}",
+                    buffer.head,
+                    buffer.tail,
+                    write_size
+                );
                 if buffer.head == buffer.tail {
                     buffer.status = RingBufferStatus::FULL;
+                    log::warn!("[Pipe::write] buffer is full, byte_written: {}", write_size);
                     return Ok(write_size);
                 }
             }
             buffer.status = RingBufferStatus::NORMAL;
             return Ok(write_size);
         }
+    }
+    fn ioctl(&self, op: usize, arg_ptr: usize) -> SyscallRet {
+        log::info!("[Pipe::ioctl] op: {:#x}, arg_ptr: {:#x}", op, arg_ptr);
+        let op = unsafe { core::mem::transmute::<usize, PipeIoctlCmd>(op) };
+        match op {
+            PipeIoctlCmd::FIONREAD => {
+                // 获取管道中可读字节数
+                let buffer = self.inode.buffer.lock();
+                let used_size = buffer.get_used_size();
+                copy_to_user(arg_ptr as *mut usize, &used_size, 1)?;
+                Ok(0)
+            }
+            _ => {
+                log::error!("[Pipe::ioctl] unsupported ioctl command: {:?}", op);
+                Err(Errno::ENOTTY)
+            }
+        }
+    }
+    // 管道不支持 fsync
+    fn fsync(&self) -> SyscallRet {
+        return Err(Errno::EINVAL);
     }
     fn readable(&self) -> bool {
         self.readable
@@ -521,16 +602,21 @@ impl FileOp for Pipe {
     fn get_flags(&self) -> OpenFlags {
         OpenFlags::from_bits(self.flags.load(core::sync::atomic::Ordering::Relaxed)).unwrap()
     }
+    fn set_flags(&self, flags: OpenFlags) {
+        self.flags
+            .store(flags.bits(), core::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 impl Drop for Pipe {
     fn drop(&mut self) {
         log::trace!("[Pipe::drop]");
         let buffer = self.inode.buffer.lock();
-        let waiter = buffer.get_waiter();
-        if waiter != 0 {
-            // wake up reader or writer
-            wakeup(waiter);
+        let waiter = &buffer.waiter;
+        // 唤醒所有等待者
+        for &tid in waiter {
+            log::warn!("[Pipe::drop] wake up waiter: {}", tid);
+            wakeup(tid);
         }
     }
 }

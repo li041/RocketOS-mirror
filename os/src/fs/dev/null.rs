@@ -149,6 +149,10 @@ impl FileOp for NullFile {
             Whence::SeekSet => inner.offset = offset as usize,
             Whence::SeekCur => inner.offset = (inner.offset as isize + offset) as usize,
             Whence::SeekEnd => inner.offset = 0,
+            _ => {
+                log::warn!("Unsupported whench: {:?}", whence);
+                return Err(Errno::EINVAL); // Invalid argument
+            }
         }
         Ok(inner.offset)
     }

@@ -1,10 +1,11 @@
 use alloc::{collections::VecDeque, vec, vec::Vec};
+use smoltcp::phy::ChecksumCapabilities;
 use smoltcp::{
     iface::SocketSet,
     phy::{Device, DeviceCapabilities, Medium},
-    time::Instant, wire::{IpListenEndpoint, IpProtocol, Ipv4Packet, TcpPacket},
+    time::Instant,
+    wire::{IpListenEndpoint, IpProtocol, Ipv4Packet, TcpPacket},
 };
-use smoltcp::phy::ChecksumCapabilities;
 
 use crate::net::{addr::from_sockaddr_to_ipendpoint, LISTEN_TABLE};
 
@@ -27,19 +28,30 @@ impl LoopbackDev {
 fn snoop_tcp_from_ip(buffer: &[u8], sockets: &mut SocketSet) -> Result<(), smoltcp::wire::Error> {
     use core::net::SocketAddr;
     use smoltcp::wire::{IpProtocol, Ipv4Packet, TcpPacket};
-    log::error!("[snoop_tcp_from_ip] begin snoop_from_ip");
+    // log::error!("[snoop_tcp_from_ip] begin snoop_from_ip");
     let ipv4_packet = Ipv4Packet::new_checked(buffer)?;
-    log::error!("[snoop_tcp_from_ip]:ipv4 packet header {:?}",ipv4_packet.next_header());
+    log::error!(
+        "[snoop_tcp_from_ip]:ipv4 packet header {:?}",
+        ipv4_packet.next_header()
+    );
     if ipv4_packet.next_header() == IpProtocol::Tcp {
         let tcp_packet = TcpPacket::new_checked(ipv4_packet.payload())?;
         let src_addr = SocketAddr::new(ipv4_packet.src_addr().0.into(), tcp_packet.src_port());
         let dst_addr = SocketAddr::new(ipv4_packet.dst_addr().0.into(), tcp_packet.dst_port());
         let is_first = tcp_packet.syn() && !tcp_packet.ack();
-        log::error!("[snoop_tcp_from_ip] is first:{}",is_first);
+        log::error!("[snoop_tcp_from_ip] is first:{}", is_first);
         if is_first {
             // create a socket for the first incoming TCP packet, as the later accept() returns.
-            log::error!("[snoop_tcp_from_ip]:src_addr :{:?},dst_addr:{:?}",src_addr,dst_addr);
-            LISTEN_TABLE.push_incoming_packet(from_sockaddr_to_ipendpoint(dst_addr),from_sockaddr_to_ipendpoint(src_addr),sockets);
+            log::error!(
+                "[snoop_tcp_from_ip]:src_addr :{:?},dst_addr:{:?}",
+                src_addr,
+                dst_addr
+            );
+            LISTEN_TABLE.push_incoming_packet(
+                from_sockaddr_to_ipendpoint(dst_addr),
+                from_sockaddr_to_ipendpoint(src_addr),
+                sockets,
+            );
         }
     }
     Ok(())
@@ -81,10 +93,9 @@ impl<'a> smoltcp::phy::TxToken for TxToken<'a> {
     where
         F: FnOnce(&mut [u8]) -> R,
     {
-
         let mut buffer = vec![0; len];
         let result = f(&mut buffer); // 应用层填充原始数据
-        
+
         // 强制计算 IP 和 TCP 校验和
         if let Ok(mut ipv4_packet) = Ipv4Packet::new_checked(&mut buffer) {
             // 1. 计算 IP 头部校验和
@@ -103,11 +114,10 @@ impl<'a> smoltcp::phy::TxToken for TxToken<'a> {
             }
         }
         // log::error!("[LoopbackTxtoken]:send buf {:?}", buffer);
-        log::error!("[LoopbackTxtoken]:send buf {:?}", buffer);
+        // log::error!("[LoopbackTxtoken]:send buf {:?}", buffer);
         self.queue.push_back(buffer);
         result
     }
-
 }
 
 impl Device for LoopbackDev {
@@ -126,7 +136,7 @@ impl Device for LoopbackDev {
     fn receive(&mut self, _timestamp: Instant) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
         //TODO,需要保证listen的socket不会重复在这里取数据
         self.queue.pop_front().map(move |buffer| {
-            log::error!("[LoopbackDev]:recv buffer {:?}",buffer);
+            // log::error!("[LoopbackDev]:recv buffer {:?}", buffer);
             let rx = Self::RxToken { buffer };
             let tx = Self::TxToken {
                 queue: &mut self.queue,

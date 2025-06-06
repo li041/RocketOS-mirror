@@ -208,6 +208,9 @@ impl FileOp for MapsFile {
                 let len = content.len();
                 inner_guard.offset = len.checked_add_signed(offset).unwrap();
             }
+            _ => {
+                return Err(Errno::EINVAL); // Invalid argument
+            }
         }
         Ok(inner_guard.offset)
     }

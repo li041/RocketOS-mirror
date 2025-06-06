@@ -144,6 +144,10 @@ impl FileOp for TaintedFile {
             crate::fs::uapi::Whence::SeekEnd => {
                 unimplemented!("SeekEnd is not supported for pagemap");
             }
+            _ => {
+                log::warn!("Unsupported whence: {:?}", whence);
+                return Err(Errno::EINVAL); // Invalid argument
+            }
         }
         Ok(inner_guard.offset)
     }

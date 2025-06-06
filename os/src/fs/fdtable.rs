@@ -7,10 +7,12 @@ use alloc::vec;
 use alloc::vec::Vec;
 use bitflags::bitflags;
 use spin::RwLock;
+use virtio_drivers::PAGE_SIZE;
 
 use super::{
     dev::tty::TTY,
     file::{FileOp, OpenFlags},
+    pipe::Pipe,
     uapi::RLimit,
 };
 use alloc::sync::Arc;
@@ -299,7 +301,10 @@ impl FdTable {
     pub fn fcntl(&self, fd: usize, op: i32, arg: usize) -> SyscallRet {
         // let table = self.table.read();
         // let fd_entry = table.get(fd).and_then(|entry| entry.as_ref());
-        let op = FcntlOp::try_from(op).unwrap_or(FcntlOp::F_UNIMPL);
+        let op = FcntlOp::try_from(op).map_err(|_| {
+            log::error!("[fcntl] Invalid fcntl operation: {}", op);
+            Errno::EINVAL
+        })?;
         let fd_flags = FdFlags::from(&op);
 
         // if let Some(entry) = fd_entry {
@@ -341,12 +346,52 @@ impl FdTable {
                 file.set_flags(flags);
                 return Ok(0);
             }
+            FcntlOp::F_GETPIPE_SZ => {
+                let file = self.get_file(fd).ok_or(Errno::EBADF)?;
+                if let Some(pipe) = file.as_any().downcast_ref::<Pipe>() {
+                    return Ok(pipe.get_size());
+                } else {
+                    log::warn!("[fcntl] F_GETPIPE_SZ on non-pipe file");
+                    return Err(Errno::EINVAL);
+                }
+            }
+            FcntlOp::F_SETPIPE_SZE => {
+                let file = self.get_file(fd).ok_or(Errno::EBADF)?;
+                if let Some(pipe) = file.as_any().downcast_ref::<Pipe>() {
+                    let pipe_size = if arg < PAGE_SIZE {
+                        // 试图将容量设置为低于页面大小的值，会被自动上调到页面大小；
+                        PAGE_SIZE
+                    } else {
+                        // 如果大于等于页面大小，则直接使用arg
+                        // Todo: 权限检查
+                        arg
+                    };
+                    pipe.resize(pipe_size);
+                    return Ok(pipe_size);
+                } else {
+                    log::warn!("[fcntl] F_SETPIPE_SZ on non-pipe file");
+                    return Err(Errno::EINVAL);
+                }
+            }
             _ => {
                 log::warn!("[fcntl] Unsupported op: {:?}", op);
                 return Err(Errno::EINVAL);
             }
         }
         // }
+    }
+}
+
+impl FdTable {
+    pub fn get_fds(&self) -> Vec<usize> {
+        let table = self.table.read();
+        let mut fds = Vec::new();
+        for (fd, entry) in table.iter().enumerate() {
+            if let Some(_) = entry {
+                fds.push(fd);
+            }
+        }
+        fds
     }
 }
 

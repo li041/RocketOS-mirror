@@ -12,6 +12,7 @@ use crate::{
     },
     mm::Page,
     syscall::errno::{Errno, SyscallRet},
+    task::current_task,
     timer::TimeSpec,
 };
 use alloc::vec;
@@ -25,7 +26,7 @@ use dentry::{EXT4_DT_CHR, EXT4_DT_DIR, EXT4_DT_FIFO, EXT4_DT_LNK};
 use fs::EXT4_BLOCK_SIZE;
 use inode::{
     load_inode, write_inode, write_inode_on_disk, Ext4Inode, EXT4_EXTENTS_FL, EXT4_INLINE_DATA_FL,
-    S_IALLUGO, S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFLNK, S_IFMT, S_IFREG,
+    S_IALLUGO, S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFLNK, S_IFMT, S_IFREG, S_ISGID,
 };
 
 use core::any::Any;
@@ -48,8 +49,18 @@ impl InodeOp for Ext4Inode {
         self.read(offset, buf).expect("Ext4Inode::read failed")
     }
     // 共享文件映射和私有文件映射只读时调用
-    fn get_page(self: Arc<Self>, page_index: usize) -> Option<Arc<Page>> {
+    fn get_page<'a>(&'a self, page_index: usize) -> Option<Arc<Page>> {
         self.get_page_cache(page_index)
+    }
+    // 返回对应的文件系统中的物理块号和长度
+    fn lookup_extent<'a>(&'a self, page_index: usize) -> Option<(usize, usize)> {
+        let extent = self.lookup_extent(page_index);
+        if let Some(extent) = extent {
+            // log::info!("[Ext4Inode::lookup_extent] page_index: {}, block_num: {}, block_count: {}", page_index, block_num, block_count);
+            Some((extent.physical_start_block(), extent.len as usize))
+        } else {
+            None
+        }
     }
 
     fn write<'a>(&'a self, page_offset: usize, buf: &'a [u8]) -> usize {
@@ -63,6 +74,9 @@ impl InodeOp for Ext4Inode {
     }
     fn fallocate<'a>(&'a self, mode: FallocFlags, offset: usize, len: usize) -> SyscallRet {
         self.fallocate(mode, offset, len)
+    }
+    fn fsync<'a>(&'a self) -> SyscallRet {
+        self.fsync()
     }
     // 上层调用者应先查找DentryCache, 如果没有才调用该函数
     // 先查找parent_entry的child(child是惰性加载的), 如果还没有则从目录中查找
@@ -199,10 +213,33 @@ impl InodeOp for Ext4Inode {
             .upgrade()
             .unwrap()
             .alloc_inode(self.block_device.clone(), false);
-        let (child_uid, child_gid) = self.child_uid_gid();
+        // let (child_uid, child_gid, inode_mode) = self.child_uid_gid(mode & S_IALLUGO);
+        let task = current_task();
+        let child_uid = task.fsuid();
+        let child_gid;
+        let mut mode = mode & S_IALLUGO | S_IFREG; // 常规文件标志
+        if self.inner.read().inode_on_disk.get_mode() & S_ISGID != 0 {
+            // 如果父目录的S_ISGID标志位被设置, 则子文件的gid与父目录相同
+            child_gid = self.inner.read().inode_on_disk.get_gid();
+            log::warn!(
+                "[Ext4Inode::create] dir S_ISGID set, child_gid: {}",
+                child_gid
+            );
+            if child_uid != 0 {
+                log::warn!(
+                    "[Ext4Inode::create] clear S_ISGID flag for child: uid: {}, gid: {}",
+                    child_uid,
+                    child_gid
+                );
+                mode &= !S_ISGID; // 清除S_ISGID标志位
+            }
+        } else {
+            // 否则使用当前任务的fsgid
+            child_gid = task.fsgid();
+        }
         // 初始化新的inode结构
         let new_inode = Ext4Inode::new(
-            (mode & S_IALLUGO) as u16 | S_IFREG,
+            mode,
             EXT4_INLINE_DATA_FL,
             self.ext4_fs.clone(),
             new_inode_num,
@@ -610,7 +647,7 @@ impl InodeOp for Ext4Inode {
                             .ext4_fs
                             .upgrade()
                             .unwrap()
-                            .alloc_inode(self.block_device.clone(), true);
+                            .alloc_inode(self.block_device.clone(), false);
                         let loop_inode = LoopInode::new(new_inode_num, mode, 7, id);
                         self.add_entry(dentry.clone(), new_inode_num as u32, EXT4_DT_CHR);
                         dentry.inner.lock().inode = Some(loop_inode);

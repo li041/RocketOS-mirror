@@ -1,3 +1,5 @@
+use crate::syscall::errno::Errno;
+
 /// writev
 #[derive(Debug, Clone, Copy, Default)]
 #[repr(C)]
@@ -38,7 +40,6 @@ pub struct PollFd {
     pub events: PollEvents,
     pub revents: PollEvents,
 }
-
 
 /// sys_mknod
 pub struct DevT(pub u64);
@@ -119,25 +120,29 @@ bitflags::bitflags! {
     }
 }
 
+#[derive(Debug)]
 #[repr(usize)]
 pub enum Whence {
     SeekSet = 0,
     SeekCur = 1,
     SeekEnd = 2,
-    // Todo:
-    // SeekData = 3,
-    // SeekHole = 4,
+    // 将文件偏移量调整到文件中大于或等于offset的下一个包含数据的位置。如果offset本身指向数据，则文件偏移量设置为offset。
+    SeekData = 3,
+    // 将文件偏移量调整到文件中大于或等于offset的下一个不包含数据的位置。如果offset本身指向空洞，则文件偏移量设置为offset。
+    SeekHole = 4,
 }
 
 impl TryFrom<usize> for Whence {
-    type Error = &'static str;
+    type Error = Errno;
 
     fn try_from(value: usize) -> Result<Self, Self::Error> {
         match value {
             0 => Ok(Whence::SeekSet),
             1 => Ok(Whence::SeekCur),
             2 => Ok(Whence::SeekEnd),
-            _ => Err("invalid whence"),
+            3 => Ok(Whence::SeekData),
+            4 => Ok(Whence::SeekHole),
+            _ => Err(Errno::EINVAL), // Invalid argument
         }
     }
 }

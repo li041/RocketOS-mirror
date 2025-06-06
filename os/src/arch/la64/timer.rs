@@ -52,14 +52,14 @@ impl TimeVal {
         let current_time = get_time_ms();
         Self {
             sec: current_time / 1000,
-            usec: (current_time % 1000),
+            usec: (current_time % 1000) * 1000,
         }
     }
     pub fn new_wall_time() -> Self {
         let mut time_val = TimeVal::default();
         let current_time = get_time_ms();
         time_val.sec = current_time / 1000;
-        time_val.usec = current_time % 1000;
+        time_val.usec = (current_time % 1000) * 1000;
         time_val
     }
 }

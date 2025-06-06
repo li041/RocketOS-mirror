@@ -628,8 +628,8 @@ impl TcpSocket {
     }
 
     pub fn poll(&self,isread:bool)->PollState {
-        log::error!("[Tcp_socket]:poll state is {:?}",self.get_state());
-        log::error!("[Tcp_socket]:poll socket addr is {:?}",self.local_addr().unwrap());
+        // log::error!("[Tcp_socket]:poll state is {:?}",self.get_state());
+        // log::error!("[Tcp_socket]:poll socket addr is {:?}",self.local_addr().unwrap());
         match self.get_state() {
             STATE_LISTENING=>self.poll_listening(),
             STATE_CONNECTING=>self.poll_connect(),

@@ -159,6 +159,10 @@ impl FileOp for StatusFile {
                     .checked_add_signed(offset)
                     .unwrap();
             }
+            _ => {
+                log::warn!("Unsupported whence: {:?}", whence);
+                return Err(Errno::EINVAL); // Invalid argument
+            }
         }
         Ok(inner_guard.offset)
     }

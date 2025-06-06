@@ -281,7 +281,7 @@ pub fn syscall(
         SYSCALL_FCHMODAT => sys_fchmodat(a0, a1 as *const u8, a2, a3 as i32),
         SYSCALL_FCHOWN => sys_fchown(a0, a1 as u32, a2 as u32),
         SYSCALL_FCHOWNAT => sys_fchownat(a0, a1 as *const u8, a2 as u32, a3 as u32, a4 as i32),
-        SYSCALL_OPENAT => sys_openat(a0 as i32, a1 as *const u8, a2 as i32, a3),
+        SYSCALL_OPENAT => sys_openat(a0 as i32, a1 as *const u8, a2 as i32, a3 as i32),
         SYSCALL_CLOSE => sys_close(a0),
         SYSCALL_PIPE2 => sys_pipe2(a0 as *mut i32, a1 as i32),
         SYSCALL_GETDENTS64 => sys_getdents64(a0, a1, a2),

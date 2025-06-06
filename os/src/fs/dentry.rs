@@ -22,15 +22,16 @@ use crate::{
 use super::{file::OpenFlags, inode::InodeOp, tmp};
 
 bitflags::bitflags! {
+    #[derive(Debug)]
     /// 目前只支持type
     pub struct DentryFlags: u32 {
-        const DCACHE_MISS_TYPE     = 0 << 20; // Negative dentry
-        const DCACHE_WHITEOUT_TYPE = 1 << 20; // Whiteout dentry
-        const DCACHE_DIRECTORY_TYPE= 2 << 20; // Normal directory
-        const DCACHE_AUTODIR_TYPE  = 3 << 20; // Autodir (presumed automount)
-        const DCACHE_REGULAR_TYPE  = 4 << 20; // Regular file
-        const DCACHE_SPECIAL_TYPE  = 5 << 20; // Special file
-        const DCACHE_SYMLINK_TYPE  = 6 << 20; // Symlink
+        const DCACHE_MISS_TYPE     = 1 << 0; // Negative dentry
+        const DCACHE_WHITEOUT_TYPE = 1 << 1; // Whiteout dentry
+        const DCACHE_DIRECTORY_TYPE= 1 << 2; // Normal directory
+        const DCACHE_AUTODIR_TYPE  = 1 << 3; // Autodir (presumed automount)
+        const DCACHE_REGULAR_TYPE  = 1 << 4; // Regular file
+        const DCACHE_SPECIAL_TYPE  = 1 << 5; // Special file
+        const DCACHE_SYMLINK_TYPE  = 1 << 6; // Symlink
         // const DCACHE_ENTRY_TYPE    = 7 << 20; // Bitmask for entry type
     }
 }
@@ -108,7 +109,7 @@ pub fn dentry_check_access(
 // 由调用者保证:
 //    1. dentry不是负目录项
 /// mode是inode的mode
-pub fn dentry_check_open(dentry: &Dentry, flags: OpenFlags, mode: u16) -> Result<usize, Errno> {
+pub fn dentry_check_open(dentry: &Dentry, flags: OpenFlags, mode: i32) -> Result<usize, Errno> {
     log::debug!(
         "[dentry_check_open] Checking open permissions for {}, flags: {:?}, mode: {:o}",
         dentry.absolute_path,
@@ -166,7 +167,8 @@ pub fn dentry_check_open(dentry: &Dentry, flags: OpenFlags, mode: u16) -> Result
             );
             return Err(Errno::EISDIR);
         }
-        if dentry_check_access(dentry, W_OK, true).is_err() {
+        // ToOptimize: 有冗余的权限检查?
+        if dentry_check_access(dentry, mode | W_OK, true).is_err() {
             log::error!(
                 "[dentry_check_open] Write access denied for {}, mode: {:o}, uid: {}, gid: {}",
                 dentry.absolute_path,
@@ -176,7 +178,19 @@ pub fn dentry_check_open(dentry: &Dentry, flags: OpenFlags, mode: u16) -> Result
             );
             return Err(Errno::EACCES);
         }
+        // 文件存在且成功(O_WRONLY 或 O_RDWR)打开
+        if flags.contains(OpenFlags::O_TRUNC) {
+            if dentry.is_regular() {
+                log::warn!(
+                    "[dentry_check_open] O_TRUNC flag set, truncating file {}",
+                    dentry.absolute_path
+                );
+                dentry.get_inode().truncate(0)?;
+            }
+        }
     }
+    // 检查权限
+    dentry_check_access(dentry, mode, true)?;
     Ok(0)
 }
 
@@ -188,7 +202,7 @@ pub fn chown(inode: &Arc<dyn InodeOp>, new_uid: u32, new_gid: u32) -> SyscallRet
     let (euid, egid) = (task.fsuid(), task.fsgid());
     let mut i_mode = inode.get_mode();
     log::info!(
-        "[dentry_chown] euid: {}, egid: {}, new_uid: {}, new_gid: {}, i_mode: {:o}",
+        "[chown] euid: {}, egid: {}, new_uid: {}, new_gid: {}, i_mode: {:o}",
         euid,
         egid,
         new_uid,
@@ -202,7 +216,7 @@ pub fn chown(inode: &Arc<dyn InodeOp>, new_uid: u32, new_gid: u32) -> SyscallRet
             // 当super-user修改可执行文件的所有者时需要清除setuid和setgid位
             if i_mode & 0o111 != 0 {
                 log::warn!(
-                    "[dentry_chown] Root user is changing owner of executable file , clearing setuid/setgid bits",
+                    "[chown] Root user is changing owner of executable file , clearing setuid/setgid bits",
                 );
                 // 如果是文件是non-group-executable, 则保留setgid位
                 if i_mode & 0o10 == 0 {
@@ -227,7 +241,7 @@ pub fn chown(inode: &Arc<dyn InodeOp>, new_uid: u32, new_gid: u32) -> SyscallRet
         log::warn!("inode gid: {}", inode.get_gid());
         if euid != inode.get_uid() {
             log::error!(
-                "[dentry_check_chown] No permission to change ownership, euid: {}, egid: {}",
+                "[chown] No permission to change ownership, euid: {}, egid: {}",
                 euid,
                 egid
             );
@@ -239,7 +253,7 @@ pub fn chown(inode: &Arc<dyn InodeOp>, new_uid: u32, new_gid: u32) -> SyscallRet
             |groups| {
                 if !groups.contains(&new_gid) {
                     log::error!(
-                        "[dentry_check_chown] New group {} is not in the effective groups of task {}, euid: {}, egid: {}",
+                        "[chown] New group {} is not in the effective groups of task {}, euid: {}, egid: {}",
                         new_gid,
                         task.tid(),
                         euid,
@@ -362,6 +376,13 @@ impl Dentry {
             return true; // root用户总是有权限
         }
         let i_mode = self.get_inode().get_mode();
+        log::error!(
+            "[can_search] Checking search permission for {}, i_mode: {:o}, euid: {}, egid: {}",
+            self.absolute_path,
+            i_mode,
+            euid,
+            egid
+        );
         let (user_perm, group_perm, other_perm) = (
             (i_mode >> 6) & 0o7, // 用户权限
             (i_mode >> 3) & 0o7, // 组权限

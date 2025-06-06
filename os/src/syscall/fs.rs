@@ -2,11 +2,12 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use alloc::string::ToString;
+use alloc::string::{String, ToString};
 use virtio_drivers::PAGE_SIZE;
 
 use crate::arch::timer::get_time_ms;
 use crate::ext4::dentry;
+use crate::ext4::inode::S_ISGID;
 use crate::fs::dentry::{chown, dentry_check_access, F_OK, R_OK, W_OK, X_OK};
 use crate::fs::fd_set::init_fdset;
 use crate::fs::fdtable::FdFlags;
@@ -45,15 +46,15 @@ use crate::arch::mm::{copy_from_user, copy_to_user};
 use super::errno::SyscallRet;
 
 pub fn sys_lseek(fd: usize, offset: isize, whence: usize) -> SyscallRet {
-    // log::info!(
-    //     "[sys_lseek] fd: {}, offset: {}, whence: {}",
-    //     fd,
-    //     offset,
-    //     whence
-    // );
+    log::info!(
+        "[sys_lseek] fd: {}, offset: {}, whence: {}",
+        fd,
+        offset,
+        whence
+    );
     let task = current_task();
     let file = task.fd_table().get_file(fd);
-    let whence = Whence::try_from(whence).unwrap_or(Whence::SeekSet);
+    let whence = Whence::try_from(whence)?;
     if let Some(file) = file {
         let file = file.clone();
         file.seek(offset, whence)
@@ -131,10 +132,10 @@ pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> SyscallRet {
         let file = file.clone();
         let mut ker_buf = vec![0u8; len];
         copy_from_user(buf, ker_buf.as_mut_ptr(), len)?;
-        // if fd >= 3 {
-        //     // log::info!("sys_write: fd: {}, len: {}, buf: {:?}", fd, len, ker_buf);
-        //     log::info!("sys_write: fd: {}, len: {}", fd, len);
-        // }
+        if fd >= 3 {
+            //     // log::info!("sys_write: fd: {}, len: {}, buf: {:?}", fd, len, ker_buf);
+            log::info!("sys_write: fd: {}, len: {}", fd, len);
+        }
         let ret = file.write(&ker_buf)?;
         Ok(ret)
     } else {
@@ -284,6 +285,10 @@ pub fn sys_pwrite(fd: usize, buf: *const u8, count: usize, offest: usize) -> Sys
         }
         let mut ker_buf = vec![0u8; count];
         copy_from_user(buf, ker_buf.as_mut_ptr(), count)?;
+        log::warn!(
+            "[sys_pwrite] ker_buf: {:?}",
+            String::from_utf8(ker_buf.clone())
+        );
         file.pwrite(&ker_buf, offest)
     } else {
         log::error!("[sys_pwrite] fd {} not opened", fd);
@@ -430,7 +435,7 @@ pub fn sys_symlinkat(target: *const u8, newdirfd: i32, linkpath: *const u8) -> S
 
 /// mode是直接传递给ext4_create, 由其处理(仅当O_CREAT设置时有效, 指定inode的权限)
 /// flags影响文件的打开, 在flags中指定O_CREAT, 则创建文件
-pub fn sys_openat(dirfd: i32, pathname: *const u8, flags: i32, mode: usize) -> SyscallRet {
+pub fn sys_openat(dirfd: i32, pathname: *const u8, flags: i32, mode: i32) -> SyscallRet {
     let flags = OpenFlags::from_bits(flags).ok_or(Errno::EINVAL)?;
     let task = current_task();
     let path = c_str_to_string(pathname)?;
@@ -611,6 +616,14 @@ pub fn sys_chdir(pathname: *const u8) -> SyscallRet {
     let mut nd = Nameidata::new(&path, AT_FDCWD)?;
     match filename_lookup(&mut nd, true) {
         Ok(dentry) => {
+            if !dentry.is_dir() {
+                log::error!("[sys_chdir] chdir path must be a directory");
+                return Err(Errno::ENOTDIR);
+            }
+            if !dentry.can_search() {
+                log::error!("[sys_chdir] chdir path must be searchable");
+                return Err(Errno::EACCES);
+            }
             current_task().set_pwd(Path::new(nd.mnt, dentry));
             Ok(0)
         }
@@ -826,17 +839,17 @@ pub fn sys_renameat2(
 }
 
 // Defined in <bits/fcntl-linux.h>
-#[derive(Debug, Eq, PartialEq, Clone, Copy, Default)]
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
 #[allow(non_camel_case_types)]
 pub enum FcntlOp {
     F_DUPFD = 0,
-    F_DUPFD_CLOEXEC = 1030,
     F_GETFD = 1,
     F_SETFD = 2,
     F_GETFL = 3,
     F_SETFL = 4,
-    #[default]
-    F_UNIMPL,
+    F_DUPFD_CLOEXEC = 1030,
+    F_SETPIPE_SZE = 1031, // 设置管道大小
+    F_GETPIPE_SZ = 1032,  // 获取管道大小
 }
 
 impl TryFrom<i32> for FcntlOp {
@@ -844,11 +857,13 @@ impl TryFrom<i32> for FcntlOp {
     fn try_from(value: i32) -> Result<Self, Self::Error> {
         match value {
             0 => Ok(FcntlOp::F_DUPFD),
-            1030 => Ok(FcntlOp::F_DUPFD_CLOEXEC),
             1 => Ok(FcntlOp::F_GETFD),
             2 => Ok(FcntlOp::F_SETFD),
             3 => Ok(FcntlOp::F_GETFL),
             4 => Ok(FcntlOp::F_SETFL),
+            1030 => Ok(FcntlOp::F_DUPFD_CLOEXEC),
+            1031 => Ok(FcntlOp::F_SETPIPE_SZE),
+            1032 => Ok(FcntlOp::F_GETPIPE_SZ),
             _ => Err(()),
         }
     }
@@ -1751,8 +1766,12 @@ pub fn sys_sync(fd: usize) -> SyscallRet {
 }
 
 pub fn sys_fsync(fd: usize) -> SyscallRet {
-    log::info!("[sys_fsync] fd: {}, Unimplemented", fd);
-    Ok(0)
+    let file = current_task().fd_table().get_file(fd);
+    if let Some(file) = file {
+        log::info!("[sys_fsync] fd: {}", fd);
+        return file.fsync();
+    }
+    return Err(Errno::EBADF);
 }
 
 pub const MS_ASYNC: i32 = 1;
@@ -1832,8 +1851,7 @@ pub fn sys_fchmod(fd: usize, mode: usize) -> SyscallRet {
             return Err(Errno::EBADF);
         }
         // 修改权限
-        file.get_inode().set_perm(mode as u16);
-        return Ok(0);
+        file.get_inode().set_perm(mode as u16)
     }
     Err(Errno::EBADF)
 }
@@ -1850,10 +1868,11 @@ pub fn sys_fchmodat(fd: usize, path: *const u8, mode: usize, flag: i32) -> Sysca
         return Err(Errno::ENAMETOOLONG);
     }
     log::info!(
-        "[sys_fchmodat] fd: {}, path: {:?}, mode: {:o}",
+        "[sys_fchmodat] fd: {}, path: {:?}, mode: {:o}, flag: {}",
         fd,
         path,
-        mode
+        mode,
+        flag
     );
     let mut nd = Nameidata::new(&path, fd as i32)?;
     let follow_symlink = flag & AT_SYMLINK_NOFOLLOW == 0;
@@ -1882,13 +1901,19 @@ pub fn sys_fchownat(fd: usize, path: *const u8, owner: u32, group: u32, flag: i3
         log::error!("[sys_fchownat] path is too long: {}", path.len());
         return Err(Errno::ENAMETOOLONG);
     }
+    if flag & !(AT_SYMLINK_NOFOLLOW) != 0 {
+        log::error!("[sys_fchownat] Invalid flags: {:#x}", flag);
+        return Err(Errno::EINVAL);
+    }
     log::info!(
-        "[sys_fchownat] fd: {}, path: {:?}, owner: {}, group: {}",
+        "[sys_fchownat] fd: {}, path: {:?}, owner: {}, group: {}, flag: {}",
         fd,
         path,
         owner,
-        group
+        group,
+        flag
     );
+
     let mut nd = Nameidata::new(&path, fd as i32)?;
     let follow_symlink = flag & AT_SYMLINK_NOFOLLOW == 0;
     let dentry = filename_lookup(&mut nd, follow_symlink)?;

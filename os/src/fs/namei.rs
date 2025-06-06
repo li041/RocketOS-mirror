@@ -22,7 +22,7 @@ use super::{
 use crate::{
     ext4::{
         dentry,
-        inode::{self, S_IFCHR, S_IFDIR, S_IFIFO, S_IFMT, S_IFREG},
+        inode::{self, S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFMT, S_IFREG},
     },
     fs::{
         dentry::{dentry_check_open, DentryFlags},
@@ -145,7 +145,7 @@ pub const MAX_SYMLINK_DEPTH: usize = 40;
 pub fn open_last_lookups(
     nd: &mut Nameidata,
     flags: OpenFlags,
-    mode: usize,
+    mode: i32,
 ) -> Result<Arc<dyn FileOp>, Errno> {
     let absolute_current_dir = nd.dentry.absolute_path.clone();
 
@@ -217,7 +217,7 @@ pub fn open_last_lookups(
                     continue;
                 }
 
-                dentry_check_open(&dentry, flags, mode as u16)?;
+                dentry_check_open(&dentry, flags, mode as i32)?;
 
                 dentry
             } else {
@@ -346,7 +346,7 @@ fn create_file_from_dentry(
             }
         }
         S_IFBLK => {
-            let (major, id) = inode.get_devt();
+            let (_major, id) = inode.get_devt();
             // /dev/loopX
             assert!(dentry.absolute_path == format!("/dev/loop{}", id));
             // 这里的id是从0开始的
@@ -375,7 +375,7 @@ pub fn path_openat(
     path: &str,
     flags: OpenFlags,
     dfd: i32,
-    mode: usize,
+    mode: i32,
 ) -> Result<Arc<dyn FileOp>, Errno> {
     // 解析路径的目录部分，遇到最后一个组件时停止
     // Todo: 正常有符号链接的情况下, 这里应该是一个循环
@@ -612,7 +612,7 @@ pub fn link_path_walk(nd: &mut Nameidata) -> Result<String, Errno> {
             if dentry.is_negative() {
                 return Err(Errno::ENOENT);
             }
-            if task.euid() != 0 {
+            if task.fsuid() != 0 {
                 if !dentry.can_search() {
                     return Err(Errno::EACCES); // 没有搜索权限
                 }
