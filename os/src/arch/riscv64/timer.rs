@@ -36,7 +36,7 @@ impl TimeVal {
         let current_time = get_time_ms();
         Self {
             sec: (current_time / 1000) as usize,
-            usec: (current_time % 1000) as usize,
+            usec: (current_time % 1000) * 1000 as usize,
         }
     }
     pub fn new_wall_time() -> Self {

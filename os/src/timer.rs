@@ -97,7 +97,7 @@ impl TimeSpec {
 pub struct TimeVal {
     /// 绝对时间, 表示从UNIX time以来的秒数
     pub sec: usize,
-    /// 毫秒数, 表示秒数后剩余的部分
+    /// 微秒数, 表示秒数后剩余的部分
     pub usec: usize,
 }
 
@@ -152,7 +152,7 @@ impl Sub for TimeVal {
         let mut usec = self.usec as isize - rhs.usec as isize;
         if usec < 0 {
             sec -= 1;
-            usec += 1_000;
+            usec += 1_000_000;
         }
         Self {
             sec,
@@ -186,7 +186,7 @@ pub struct ITimerVal {
 }
 impl ITimerVal {
     pub fn is_valid(&self) -> bool {
-        self.it_interval.usec < 1_000_000_000 && self.it_value.usec < 1_000_000_000
+        self.it_interval.usec < 1_000_000 && self.it_value.usec < 1_000_000
     }
 }
 

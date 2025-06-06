@@ -5,11 +5,11 @@ use spin::{lazy, mutex, Once, RwLock};
 
 use crate::{
     ext4::{
-        dentry,
+        dentry::{self, EXT4_DT_LNK},
         inode::{Ext4Inode, Ext4InodeDisk},
     },
     fs::{
-        dentry::{Dentry, DentryFlags},
+        dentry::{Dentry, DentryFlags, LinuxDirent64},
         file::{FileOp, OpenFlags},
         inode::InodeOp,
         kstat::Kstat,
@@ -26,6 +26,7 @@ use alloc::{
     format,
     string::{String, ToString},
     sync::Arc,
+    vec::Vec,
 };
 
 pub static FD_FILE: Once<Arc<dyn FileOp>> = Once::new();
@@ -102,6 +103,45 @@ impl InodeOp for FdDirInode {
             }
         };
     }
+    fn getdents(&self, buf: &mut [u8], offset: usize) -> (usize, usize) {
+        const NAME_OFFSET: usize = 19;
+        let mut buf_offset = 0;
+        let mut file_offset = 0;
+        let buf_len = buf.len();
+        let fds: Vec<String> = current_task()
+            .fd_table()
+            .get_fds()
+            .iter()
+            .map(usize::to_string)
+            .collect();
+        for fd in fds {
+            let name_bytes = fd.as_bytes();
+            let name_len = name_bytes.len();
+            let null_term_name_len = name_len + 1; // +1 for null terminator
+            let d_reclen = (NAME_OFFSET + null_term_name_len + 7) & !0x7;
+            if file_offset + d_reclen <= offset {
+                continue; // 跳过已经偏移的条目
+            }
+
+            // 检查缓冲区是否有足够空间
+            if buf_offset + d_reclen > buf_len {
+                break;
+            }
+            // 创建dirent结构
+            let mut dirent = LinuxDirent64 {
+                d_ino: 0,                               // fake inode number
+                d_off: (file_offset + d_reclen) as u64, // 下一个条目的偏移
+                d_reclen: d_reclen as u16,
+                d_type: EXT4_DT_LNK, // /proc/self/fd下的都是符号链接
+                d_name: name_bytes.to_vec(),
+            };
+            // 写入缓冲区
+            dirent.write_to_mem(&mut buf[buf_offset..buf_offset + d_reclen]);
+            buf_offset += d_reclen;
+            file_offset += d_reclen;
+        }
+        (file_offset, buf_offset)
+    }
     fn getattr(&self) -> Kstat {
         let mut kstat = Kstat::new();
         let inner_guard = self.inner.read();
@@ -136,6 +176,14 @@ impl InodeOp for FdDirInode {
     // Todo
     fn get_mode(&self) -> u16 {
         self.inner.read().inode_on_disk.get_mode()
+    }
+    // Todo: 先fake, 给
+    fn get_uid(&self) -> u32 {
+        current_task().fsuid()
+    }
+    // Todo: 先fake
+    fn get_gid(&self) -> u32 {
+        current_task().fsgid()
     }
     /* 时间戳 */
     fn get_atime(&self) -> TimeSpec {

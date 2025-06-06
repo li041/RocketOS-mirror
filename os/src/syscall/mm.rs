@@ -110,6 +110,7 @@ pub fn sys_brk(brk: usize) -> SyscallRet {
                                 MapPermission::R | MapPermission::W | MapPermission::U,
                                 None,
                                 0,
+                                false,
                             );
                             memory_set.insert_map_area_lazily(heap_area);
                         }

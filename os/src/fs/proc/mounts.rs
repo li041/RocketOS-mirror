@@ -12,7 +12,7 @@ use crate::{
         path::Path,
         FileOld,
     },
-    syscall::errno::SyscallRet,
+    syscall::errno::{Errno, SyscallRet},
     timer::TimeSpec,
 };
 
@@ -150,6 +150,10 @@ impl FileOp for MountsFile {
             }
             crate::fs::uapi::Whence::SeekEnd => {
                 inner_guard.offset = read_proc_mounts().len().checked_add_signed(offset).unwrap();
+            }
+            _ => {
+                log::warn!("Unsupported whence: {:?}", whence);
+                return Err(Errno::EINVAL); // Invalid argument
             }
         }
         Ok(inner_guard.offset)

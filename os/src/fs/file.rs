@@ -81,6 +81,9 @@ pub trait FileOp: Any + Send + Sync {
     fn fallocate(&self, _mode: FallocFlags, _offset: usize, _length: usize) -> SyscallRet {
         unimplemented!();
     }
+    fn fsync(&self) -> SyscallRet {
+        unimplemented!();
+    }
     // Get the file offset
     fn get_offset(&self) -> usize {
         unimplemented!();
@@ -252,6 +255,75 @@ impl FileOp for File {
                     let size = inner.inode.get_size();
                     inner.offset = size.checked_add_signed(offset).ok_or(Errno::EINVAL)?;
                 }
+                Whence::SeekData => {
+                    // 一直get_page直到找到数据
+                    let mut page_aligned_offset = offset as usize & !(PAGE_SIZE - 1);
+                    log::info!(
+                        "SeekData: initial offset: {}, inner.offset: {}",
+                        page_aligned_offset,
+                        inner.offset
+                    );
+                    let inode = inner.inode.clone();
+                    let file_size = inode.get_size();
+                    loop {
+                        if page_aligned_offset >= file_size {
+                            // whench是SeekData, 且offset在文件末尾的hole中, 返回ENXIO
+                            log::error!(
+                                "SeekData: offset {} is beyond file size {}",
+                                page_aligned_offset,
+                                file_size
+                            );
+                            return Err(Errno::ENXIO);
+                        }
+                        // if let Some(_page) = inode.get_page(page_aligned_offset >> PAGE_SIZE_BITS) {
+                        if let Some(_) = inode.lookup_extent(page_aligned_offset >> PAGE_SIZE_BITS)
+                        {
+                            // 找到数据, 更新偏移量
+                            if offset as usize & !(PAGE_SIZE - 1) == page_aligned_offset {
+                                log::warn!("SeekData: data found at offset: {}", inner.offset);
+                                inner.offset = offset as usize;
+                            } else {
+                                inner.offset = page_aligned_offset;
+                            }
+                            break;
+                        }
+                        // 没有数据, 继续查找下一个页
+                        page_aligned_offset += PAGE_SIZE;
+                    }
+                    // 6.7 Debug
+                    log::warn!("SeekData: found data at offset: {}", inner.offset);
+                }
+                Whence::SeekHole => {
+                    // 一直get_page直到找到hole
+                    let mut page_aligned_offset = offset as usize & !(PAGE_SIZE - 1);
+                    let inode = inner.inode.clone();
+                    let file_size = inode.get_size();
+                    if page_aligned_offset >= file_size {
+                        // whench是SeekHole, 且offset超过文件末尾, 返回ENXIO
+                        log::error!(
+                            "SeekHole: offset {} is beyond file size {}",
+                            page_aligned_offset,
+                            file_size
+                        );
+                        return Err(Errno::ENXIO);
+                    }
+                    loop {
+                        if inode
+                            .lookup_extent(page_aligned_offset >> PAGE_SIZE_BITS)
+                            .is_none()
+                        {
+                            // 找到hole, 更新偏移量
+                            inner.offset = page_aligned_offset;
+                            break;
+                        }
+                        // 没有hole, 继续查找下一个页
+                        page_aligned_offset += PAGE_SIZE;
+                    }
+                }
+                _ => {
+                    log::warn!("Unsupported whence: {:?}", whence);
+                    return Err(Errno::EINVAL); // Invalid argument
+                }
             }
             return Ok(inner.offset);
         })
@@ -260,11 +332,14 @@ impl FileOp for File {
         if self.get_flags().contains(OpenFlags::O_APPEND) {
             return Err(Errno::EPERM);
         }
-        self.inner_handler(|inner| inner.inode.truncate(length));
+        self.inner_handler(|inner| inner.inode.truncate(length))?;
         Ok(0)
     }
     fn fallocate(&self, _mode: FallocFlags, _offset: usize, _length: usize) -> SyscallRet {
         self.inner_handler(|inner| inner.inode.fallocate(_mode, _offset, _length))
+    }
+    fn fsync(&self) -> SyscallRet {
+        self.inner_handler(|inner| inner.inode.fsync())
     }
     fn get_offset(&self) -> usize {
         self.inner_handler(|inner| inner.offset)
@@ -324,6 +399,8 @@ bitflags::bitflags! {
         const O_CREAT       = 0o100;
         const O_EXCL        = 0o200;
         const O_NOCTTY      = 0o400;
+        // 若文件已存在且为普通文件，并以O_RDWR（读写）或O_WRONLY（只写）方式成功打开时：文件长度将被截断为0（清空内容）
+        // 对FIFO特殊文件（命名管道）和终端设备文件无影响。对其他文件类型的影响由具体实现定义。
         const O_TRUNC       = 0o1000;
         const O_APPEND      = 0o2000;
         const O_NONBLOCK    = 0o4000;
