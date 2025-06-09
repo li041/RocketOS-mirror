@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-02 23:04:54
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-05 18:03:10
+ * @LastEditTime: 2025-06-09 17:13:13
  * @FilePath: /RocketOS_netperfright/os/src/syscall/net.rs
  * @Description: net syscall
  *
@@ -503,6 +503,9 @@ pub fn syscall_send(
 
     log::error!("[syscall_send]:buf{:?}", kernel_buf.to_ascii_lowercase());
     if socket.domain == Domain::AF_UNIX {
+        if socket.buffer.is_some() {
+            return socket.buffer.as_ref().unwrap().write(kernel_buf.as_slice());
+        }
         // //check当前的对于unix的send,直接写入文件即可
         // let path=socket.get_so();
         // let s_path=core::str::from_utf8(path.as_slice()).unwrap();
