@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-03 16:40:04
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-07 22:25:11
+ * @LastEditTime: 2025-06-09 17:10:16
  * @FilePath: /RocketOS_netperfright/os/src/net/socket.rs
  * @Description: socket file
  *
@@ -798,6 +798,14 @@ impl Socket {
     pub fn recv_from(&self, buf: &mut [u8]) -> Result<(usize, SocketAddr), Errno> {
         //这里暂时保留unix本地回环网络的接受，需要pipe?
         if self.domain == Domain::AF_UNIX {
+            if self.buffer.is_some() {
+                let ans = self.buffer.as_ref().unwrap().read(buf)?;
+                //这里的socketaddr没有用，直接使用ans即可
+                return Ok((
+                    ans,
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
+                ));
+            }
             let path = self.socket_path_unix.lock().clone().unwrap();
             let s_path = core::str::from_utf8(path.as_slice()).unwrap();
             if s_path.contains("/etc") {
@@ -1314,6 +1322,9 @@ impl FileOp for Socket {
             self.socket_type
         );
         if self.domain == Domain::AF_UNIX {
+            if self.buffer.is_some() {
+                return self.buffer.as_ref().unwrap().read(buf);
+            }
             yield_current_task();
             let path = self.socket_path_unix.lock().clone().unwrap();
             let s_path = core::str::from_utf8(path.as_slice()).unwrap();
@@ -1339,10 +1350,6 @@ impl FileOp for Socket {
                 );
                 return Ok((passwd_blob.len()));
             }
-            //todo 写回用户buf
-            // let file=self.get_unix_file();
-            // let bind=self.socket_path_unix.lock();
-            // let self_path=bind.as_ref().unwrap();
             let self_path = self.get_socket_path();
             let s_self = core::str::from_utf8(self_path.as_slice()).unwrap();
             loop {
@@ -1441,6 +1448,9 @@ impl FileOp for Socket {
     fn write<'a>(&'a self, buf: &'a [u8]) -> SyscallRet {
         log::error!("[socket_write]:begin send socket");
         if self.domain == Domain::AF_UNIX {
+            if self.buffer.is_some() {
+                return self.buffer.as_ref().unwrap().write(buf);
+            }
             log::error!("[socket_write] write buf is {:?}", buf);
             let path = self.socket_peer_path_unix.lock().clone().unwrap();
             let s_path = core::str::from_utf8(path.as_slice()).unwrap();
