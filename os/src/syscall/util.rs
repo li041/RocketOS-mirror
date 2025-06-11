@@ -3,7 +3,7 @@ use core::time;
 use super::errno::SyscallRet;
 use crate::{
     arch::mm::{copy_from_user, copy_to_user},
-    fs::uapi::{RLimit, Resource},
+    fs::{file::OpenFlags, namei::path_openat, uapi::{RLimit, Resource}},
     syscall::errno::Errno,
     task::{
         add_real_timer, current_task, get_task, remove_timer, rusage::RUsage, update_real_timer,
@@ -18,7 +18,7 @@ use crate::{
 pub struct Utsname {
     /// 系统名称
     pub sysname: [u8; 65],
-    /// 网络上主机名称
+    /// 网络上主机名称 from etc/hostname
     pub nodename: [u8; 65],
     /// 发行编号
     pub release: [u8; 65],
@@ -26,6 +26,8 @@ pub struct Utsname {
     pub version: [u8; 65],
     /// 域名
     pub machine: [u8; 65],
+    ///domainname
+    pub domainname: [u8;65],
 }
 
 impl Default for Utsname {
@@ -36,6 +38,7 @@ impl Default for Utsname {
             release: Self::from_str("5.15.146.1-standard"),
             version: Self::from_str("#1 SMP Thu Jan"),
             machine: Self::from_str("RISC-V SiFive Freedom U740 SoC"),
+            domainname:Self::from_str("SHY"),
         }
     }
 }
@@ -45,6 +48,16 @@ impl Utsname {
         let mut data: [u8; 65] = [0; 65];
         data[..info.len()].copy_from_slice(info.as_bytes());
         data
+    }
+    pub fn set_nodename(&mut self, nodename: &[u8]) {
+        let len = core::cmp::min(nodename.len(), 64); 
+        self.nodename = [0u8; 65];
+        self.nodename[..len].copy_from_slice(&nodename[..len]);
+    }
+    pub fn set_domainname(&mut self, domainname: &[u8]) {
+        let len = core::cmp::min(domainname.len(), 64); 
+        self.domainname = [0u8; 65];
+        self.domainname[..len].copy_from_slice(&domainname[..len]);
     }
 }
 
@@ -80,10 +93,20 @@ pub fn sys_uname(uts: usize) -> SyscallRet {
     log::info!("[sys_uname] uts: {:#x}", uts);
     let uts = uts as *mut Utsname;
     //Todo!: check validarity
-    let utsname = Utsname::default();
-    // unsafe {
-    //     core::ptr::write(uts, utsname);
-    // }
+    let mut utsname = Utsname::default();
+    //todo:还差其他的
+    let hostnamefile=path_openat("/etc/hostname", OpenFlags::O_CLOEXEC, -100, 0)?;
+    let nodename=hostnamefile.read_all();
+    log::error!("[sys_uname] nodename is {:?}",nodename);
+    if nodename.len()>0 {
+        utsname.set_nodename(nodename.as_slice());
+    }
+    let domainnamefile=path_openat("/etc/domainname", OpenFlags::O_CLOEXEC, -100, 0)?;
+    let domainname=domainnamefile.read_all();
+    log::error!("[sys_uname] domainname is {:?}",domainname);
+    if domainname.len()>0 {
+        utsname.set_domainname(domainname.as_slice());
+    }
     copy_to_user(uts, &utsname as *const Utsname, 1).unwrap();
     Ok(0)
 }

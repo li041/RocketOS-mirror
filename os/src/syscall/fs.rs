@@ -1010,8 +1010,9 @@ pub fn sys_pselect6(
             log::error!("[sys_pselect] timeout is 0");
             break;
         } else if timeout > 0 {
-            if get_time_ms()/1000 > timeout as usize {
+            if get_time_ms()/10> timeout as usize {
                 // 超时了, 返回
+                // println!("[sys_pselect] get_time_ms {:?},timeout {:?}",get_time_ms(),timeout);
                 log::error!("[sys_pselect]:timeout");
                 break;
             }
