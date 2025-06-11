@@ -53,13 +53,7 @@ use crate::{
     fs::{
         kstat::{Stat, Statx},
         uapi::{IoVec, PollFd, RLimit, StatFs},
-    },
-    futex::robust_list::{sys_get_robust_list, sys_set_robust_list},
-    mm::shm::ShmId,
-    signal::{SigInfo, SigSet},
-    task::rusage::RUsage,
-    time::KernelTimex,
-    timer::{ITimerVal, TimeSpec},
+    }, futex::robust_list::{sys_get_robust_list, sys_set_robust_list}, mm::shm::ShmId, signal::{SigInfo, SigSet}, syscall::net::{syscall_setdomainname, syscall_sethostname}, task::rusage::RUsage, time::KernelTimex, timer::{ITimerVal, TimeSpec}
 };
 pub use fs::FcntlOp;
 pub use fs::AT_SYMLINK_NOFOLLOW;
@@ -163,6 +157,8 @@ const SYSCALL_GETPGID: usize = 155;
 const SYSCALL_GETGROUPS: usize = 158;
 const SYSCALL_SETGROUPS: usize = 159;
 const SYSCALL_UNAME: usize = 160;
+const SYSCALL_SETHOSTNAME:usize =161;
+const SYSCALL_SETDOMAINNAME:usize =162;
 const SYSCALL_GETRUSAGE: usize = 165;
 const SYSCALL_UMASK: usize = 166;
 const SYSCALL_GET_TIME: usize = 169;
@@ -414,6 +410,8 @@ pub fn syscall(
         SYSCALL_SENDMSG => syscall_sendmsg(a0, a1, a2),
         SYSCALL_RECVMSG => syscall_recvmsg(a0, a1, a2),
         SYSCALL_FACCESSAT2 => sys_faccessat(a0 as usize, a1 as *const u8, a2 as i32, a3 as i32),
+        SYSCALL_SETDOMAINNAME=>syscall_setdomainname(a0 as *const u8, a1),
+        SYSCALL_SETHOSTNAME=>syscall_sethostname(a0 as *const u8, a1),
         _ => {
             log::warn!(
                 "Unsupported syscall_id: {}, {}",

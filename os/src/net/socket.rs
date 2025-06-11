@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-03 16:40:04
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-09 17:10:16
+ * @LastEditTime: 2025-06-11 11:15:11
  * @FilePath: /RocketOS_netperfright/os/src/net/socket.rs
  * @Description: socket file
  *
@@ -73,6 +73,7 @@ pub enum Domain {
     AF_NETLINK = 16,
     AF_UNSPEC = 512,
     AF_ALG = 38,
+    AF_RDS = 21,
 }
 #[derive(TryFromPrimitive, Clone, PartialEq, Eq, Debug, Copy)]
 #[repr(usize)]
@@ -300,10 +301,10 @@ impl Socket {
     }
     pub fn new(domain: Domain, socket_type: SocketType) -> Self {
         let inner = match socket_type {
-            SocketType::SOCK_STREAM | SocketType::SOCK_SEQPACKET | SocketType::SOCK_RAW => {
+            SocketType::SOCK_STREAM  | SocketType::SOCK_RAW => {
                 SocketInner::Tcp(TcpSocket::new())
             }
-            SocketType::SOCK_DGRAM => SocketInner::Udp(UdpSocket::new()),
+            SocketType::SOCK_DGRAM | SocketType::SOCK_SEQPACKET=> SocketInner::Udp(UdpSocket::new()),
             _ => {
                 log::error!("unimplemented SocketType: {:?}", socket_type);
                 unimplemented!();
@@ -375,6 +376,9 @@ impl Socket {
     }
     pub fn set_socket_peer_path(&self, path: &[u8]) {
         *self.socket_peer_path_unix.lock() = Some(path.to_vec());
+    }
+    pub fn get_socket_peer_path(&self)->Vec<u8> {
+        self.socket_peer_path_unix.lock().clone().unwrap_or_default()
     }
     pub fn get_unix_file(&self) -> Arc<dyn FileOp> {
         self.socket_file_unix.lock().clone().unwrap()
@@ -765,10 +769,9 @@ impl Socket {
         let req_type = RequestType::try_from(raw_req).map_err(|_| Errno::EINVAL)?;
         tmp4.copy_from_slice(&buf[4..8]);
         let raw_db = u32::from_le_bytes(tmp4);
-        let db = if raw_db == 3 {
-            None
-        } else {
-            Some(Database::try_from(raw_db).map_err(|_| Errno::EINVAL)?)
+        let db = match Database::try_from(raw_db) {
+            Ok(parsed_db) => Some(parsed_db),
+            Err(_) => None,
         };
         tmp4.copy_from_slice(&buf[8..12]);
         let str_len = u32::from_le_bytes(tmp4) as usize;
@@ -808,7 +811,7 @@ impl Socket {
             }
             let path = self.socket_path_unix.lock().clone().unwrap();
             let s_path = core::str::from_utf8(path.as_slice()).unwrap();
-            if s_path.contains("/etc") {
+            if s_path.contains("/etc") | s_path.contains("/var/run/nscd/socket"){
                 log::error!("[recv_from] buffer is none");
                 let passwd_blob = PasswdEntry::passwd_lookup(self, buf.len())?;
                 log::error!("[recv_from]:len is {:?}", passwd_blob.len());
@@ -1105,7 +1108,8 @@ pub unsafe fn socket_address_from(
         | Domain::AF_UNIX
         | Domain::AF_NETLINK
         | Domain::AF_UNSPEC
-        | Domain::AF_ALG => {
+        | Domain::AF_ALG
+        | Domain::AF_RDS => {
             let port = u16::from_be_bytes([kernel_addr_from_user[2], kernel_addr_from_user[3]]);
             // let a = (*(kernel_addr_from_user.as_ptr().add(2) as *const u32)).to_le_bytes();
             let raw_ip: u32 =
@@ -1200,7 +1204,12 @@ pub unsafe fn socket_address_from(
                 } else if port == 35091 {
                     let addr = Ipv4Addr::new(127, 0, 0, 1);
                     Ok(SocketAddr::V4(SocketAddrV4::new(addr, 5001)))
-                } else {
+                } else if port==65471 {
+                    //fake for recvmsg02
+                    let addr = Ipv4Addr::new(127, 0, 0, 1);
+                    Ok(SocketAddr::V4(SocketAddrV4::new(addr, 49151)))
+                } 
+                else {
                     // println!("fake4");
                     let addr = Ipv4Addr::new(127, 0, 0, 1);
                     Ok(SocketAddr::V4(SocketAddrV4::new(
@@ -1213,7 +1222,7 @@ pub unsafe fn socket_address_from(
     }
 }
 #[repr(C)]
-struct SockAddrIn {
+pub struct SockAddrIn {
     sin_family: u16,   // __SOCKADDR_COMMON 中的 sa_family_t
     sin_port: u16,     // in_port_t，网络字节序
     sin_addr: [u8; 4], // struct in_addr.s_addr（网络字节序）
@@ -1323,12 +1332,16 @@ impl FileOp for Socket {
         );
         if self.domain == Domain::AF_UNIX {
             if self.buffer.is_some() {
-                return self.buffer.as_ref().unwrap().read(buf);
+                if self.buffer.as_ref().unwrap().r_ready() {
+                    return self.buffer.as_ref().unwrap().read(buf);
+                }
+                return Ok(0);
+                
             }
             yield_current_task();
             let path = self.socket_path_unix.lock().clone().unwrap();
             let s_path = core::str::from_utf8(path.as_slice()).unwrap();
-            if s_path.contains("/etc") {
+            if s_path.contains("/etc") || s_path.contains("/var/run/nscd/socket"){
                 let passwd_blob = PasswdEntry::passwd_lookup(self, buf.len())?;
                 log::error!("[socket_read]: passwd blob len is {:?}", passwd_blob.len());
                 if buf.len() < passwd_blob.len() {
@@ -1354,6 +1367,7 @@ impl FileOp for Socket {
             let s_self = core::str::from_utf8(self_path.as_slice()).unwrap();
             loop {
                 let file = path_openat(s_self, OpenFlags::O_CLOEXEC, -100, 0)?;
+                log::error!("[socket_read]s_self path is {:?}",s_self);
                 if file.r_ready() {
                     let mut flag: Vec<u8> = vec![0; 1];
                     file.pread(flag.as_mut_slice(), 128)?;
@@ -1449,7 +1463,11 @@ impl FileOp for Socket {
         log::error!("[socket_write]:begin send socket");
         if self.domain == Domain::AF_UNIX {
             if self.buffer.is_some() {
-                return self.buffer.as_ref().unwrap().write(buf);
+                if self.buffer.as_ref().unwrap().w_ready(){
+                    return self.buffer.as_ref().unwrap().write(buf);
+                }
+                return Ok(0);
+                    
             }
             log::error!("[socket_write] write buf is {:?}", buf);
             let path = self.socket_peer_path_unix.lock().clone().unwrap();
@@ -1513,6 +1531,9 @@ impl FileOp for Socket {
         // log::error!("[sokcet_readable]:poll readable");
         if self.domain == Domain::AF_UNIX {
             //这里将寻找的文件中内容返回给进程
+            if self.buffer.is_some() {
+                return self.buffer.as_ref().unwrap().r_ready();
+            }
             log::error!("[sokcet_readable]:unix socket readable");
             return true;
         }
@@ -1528,7 +1549,11 @@ impl FileOp for Socket {
     }
     fn w_ready(&self) -> bool {
         if self.domain == Domain::AF_UNIX {
-            return self.buffer.as_ref().unwrap().w_ready();
+            if self.buffer.is_some() {
+                return self.buffer.as_ref().unwrap().r_ready();
+            }
+            log::error!("[sokcet_readable]:unix socket writeable");
+            return true;
         }
         poll_interfaces();
         log::error!("[sokcet_writedable]:poll writeable");
