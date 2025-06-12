@@ -13,7 +13,7 @@ use super::{
     dev::tty::TTY,
     file::{FileOp, OpenFlags},
     pipe::Pipe,
-    uapi::RLimit,
+    uapi::{CloseRangeFlags, RLimit},
 };
 use alloc::sync::Arc;
 
@@ -211,6 +211,12 @@ impl FdTable {
         } else {
             false
         }
+    }
+    pub fn close_range(&self, first: usize, last: usize, flags: CloseRangeFlags) -> SyscallRet {
+        if flags.contains(CloseRangeFlags::CLOSE_RANGE_UNSHARE) {
+            // Todo:
+        }
+        return Err(Errno::ENOSYS); // 目前不支持 CLOSE_RANGE_UNSHARE
     }
 
     pub fn clear(&self) {

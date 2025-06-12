@@ -418,7 +418,10 @@ pub fn sys_mmap(
                     memory_set.insert_map_area_lazily(mmap_area);
                 };
             }
-            log::error!("[sys_mmap] alloc area is {:#x}",vpn_range.get_start().0 << PAGE_SIZE_BITS);
+            log::error!(
+                "[sys_mmap] alloc area is {:#x}",
+                vpn_range.get_start().0 << PAGE_SIZE_BITS
+            );
             return Ok(vpn_range.get_start().0 << PAGE_SIZE_BITS);
         })
     } else {
@@ -763,7 +766,7 @@ pub fn sys_shmctl(shmid: usize, op: i32, buf: *mut ShmId) -> SyscallRet {
         }
         _ => {
             log::warn!("[sys_shmctl] Unimplemented");
-             // Todo: 实现sys_shmctl
+            // Todo: 实现sys_shmctl
             return Ok(0);
             // return Err(Errno::EINVAL);
         }

@@ -244,6 +244,9 @@ impl LoopInode {
 }
 
 impl InodeOp for LoopInode {
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
     fn can_lookup(&self) -> bool {
         // /dev/loop是一个特殊文件, 不是目录
         false
@@ -271,6 +274,9 @@ impl InodeOp for LoopInode {
     }
     fn get_resident_page_count(&self) -> usize {
         0
+    }
+    fn get_inode_num(&self) -> usize {
+        self.inode_num
     }
     /* get/set属性方法 */
     // Todo
