@@ -11,6 +11,8 @@ use crate::{
     task::current_task,
 };
 
+use super::config::{USER_MAX, USER_MAX_VA};
+
 #[inline(always)]
 pub unsafe fn sfence_vma_vaddr(vaddr: usize) {
     asm!("sfence.vma {}, x0", in(reg) vaddr, options(nostack))
@@ -32,7 +34,7 @@ pub fn check_va_mapping(va: usize) {
 /// 逐字节复制数据到用户空间, n为元素个数, 注意不是字节数
 /// 一般T是u8, 但是也可以是其他类型,
 pub fn copy_to_user<T: Copy>(to: *mut T, from: *const T, n: usize) -> SyscallRet {
-    if to.is_null() || from.is_null() {
+    if to.is_null() || from.is_null() || to as usize > USER_MAX_VA {
         return Err(Errno::EFAULT);
     }
     // 没有数据复制
@@ -74,7 +76,7 @@ pub fn copy_to_user<T: Copy>(to: *mut T, from: *const T, n: usize) -> SyscallRet
 /// 逐字节复制数据到内核空间, n为元素个数, 注意不是字节数
 pub fn copy_from_user<'a, T: Copy>(from: *const T, to: *mut T, n: usize) -> SyscallRet {
     if from.is_null() {
-        return Err(Errno::EINVAL);
+        return Err(Errno::EFAULT);
     }
     if n == 0 {
         return Err(Errno::EINVAL);
