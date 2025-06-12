@@ -19,7 +19,10 @@ use core::{
 
 use crate::{
     arch::{config::SysResult, mm::copy_to_user},
-    fs::{fdtable::FdFlags, file::OpenFlags, namei::path_openat, pipe::Pipe, uapi::IoVec},
+    fs::{
+        fdtable::FdFlags, file::OpenFlags, inode::InodeOp, namei::path_openat, pipe::Pipe,
+        uapi::IoVec,
+    },
     net::{
         alg::{encode_text, AlgType},
         udp::get_ephemeral_port,
@@ -1498,6 +1501,9 @@ impl FileOp for Socket {
 
     fn get_offset(&self) -> usize {
         panic!("can not get offset socket");
+    }
+    fn get_inode(&self) -> Arc<dyn InodeOp> {
+        panic!("can not get inode socket");
     }
     fn r_ready(&self) -> bool {
         // log::error!("[sokcet_readable]:poll readable");

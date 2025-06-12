@@ -1,5 +1,9 @@
 use crate::{
-    arch::{config::SysResult, trap::context::dump_trap_context}, signal::{SiField, Sig, SigInfo}, syscall::errno::SyscallRet, task::{add_task, current_task, processor::current_tp, schedule, scheduler::dump_scheduler}, timer::{self, ITimerVal, TimeSpec}
+    arch::{config::SysResult, trap::context::dump_trap_context},
+    signal::{SiField, Sig, SigInfo},
+    syscall::errno::SyscallRet,
+    task::{add_task, current_task, processor::current_tp, schedule, scheduler::dump_scheduler},
+    timer::{self, ITimerVal, TimeSpec},
 };
 use alloc::{
     boxed::Box,
@@ -155,7 +159,7 @@ impl ProcessGroupManager {
             .unwrap()
             .retain(|task| task.upgrade().map_or(false, |t| !Arc::ptr_eq(process, &t)))
     }
-    
+
     pub fn dump_group(&self) {
         log::info!("[ProcessGroupManager] dump process groups:");
         for (pgid, group) in self.0.lock().iter() {
@@ -181,7 +185,7 @@ pub fn wait() -> isize {
     let task = current_task();
     task.set_interruptable();
     WAIT_MANAGER.add(task);
-    // log::warn!("[wait] task{} block", current_task().tid());
+    log::warn!("[wait] task{} block", current_task().tid());
     schedule(); // 调度其他任务
     let task = current_task();
     if task.is_interrupted() {
@@ -482,7 +486,9 @@ pub fn real_timer_callback(tid: Tid) {
             SigInfo {
                 signo: Sig::SIGALRM.raw(),
                 code: SigInfo::TIMER,
-                fields: SiField::Kill { tid: current_task().tid() },
+                fields: SiField::Kill {
+                    tid: current_task().tid(),
+                },
             },
             true,
         );

@@ -18,7 +18,7 @@ use crate::{
             TrapContext,
         },
     },
-    ext4::inode::S_IWUSR,
+    ext4::inode::{S_IWGRP, S_IWOTH, S_IWUSR},
     fs::{
         fdtable::FdTable,
         file::FileOp,
@@ -60,7 +60,7 @@ use core::{
     cell::SyncUnsafeCell,
     fmt::Write,
     mem,
-    sync::atomic::{AtomicI32, AtomicU32, AtomicUsize},
+    sync::atomic::{AtomicI32, AtomicU16, AtomicU32, AtomicUsize},
 };
 use spin::{Mutex, RwLock};
 
@@ -99,9 +99,10 @@ pub struct Task {
     // futex管理, 线程局部
     robust_list_head: AtomicUsize, // struct robust_list_head* head
     // 文件系统
-    fd_table: Arc<FdTable>,
+    fd_table: Mutex<Arc<FdTable>>,
     root: Arc<SpinNoIrqLock<Arc<Path>>>,
     pwd: Arc<SpinNoIrqLock<Arc<Path>>>,
+    umask: AtomicU16, // 文件权限掩码
     // 信号处理
     sig_pending: SpinNoIrqLock<SigPending>,      // 待处理信号
     sig_handler: Arc<SpinNoIrqLock<SigHandler>>, // 信号处理函数
@@ -156,9 +157,10 @@ impl Task {
             exe_path: Arc::new(RwLock::new(String::new())),
             memory_set: RwLock::new(Arc::new(RwLock::new(MemorySet::new_bare()))),
             robust_list_head: AtomicUsize::new(0),
-            fd_table: FdTable::new_bare(),
+            fd_table: Mutex::new(FdTable::new_bare()),
             root: Arc::new(SpinNoIrqLock::new(Path::zero_init())),
             pwd: Arc::new(SpinNoIrqLock::new(Path::zero_init())),
+            umask: AtomicU16::new(0),
             sig_pending: SpinNoIrqLock::new(SigPending::new()),
             sig_handler: Arc::new(SpinNoIrqLock::new(SigHandler::new())),
             sig_stack: SpinNoIrqLock::new(None),
@@ -219,9 +221,10 @@ impl Task {
             exe_path: Arc::new(RwLock::new(String::from("/initproc"))),
             memory_set: RwLock::new(Arc::new(RwLock::new(memory_set))),
             robust_list_head: AtomicUsize::new(0),
-            fd_table: FdTable::new(),
+            fd_table: Mutex::new(FdTable::new()),
             root: Arc::new(SpinNoIrqLock::new(root_path.clone())),
             pwd: Arc::new(SpinNoIrqLock::new(root_path)),
+            umask: AtomicU16::new(S_IWGRP | S_IWOTH), // 默认umask为022
             sig_pending: SpinNoIrqLock::new(SigPending::new()),
             sig_handler: Arc::new(SpinNoIrqLock::new(SigHandler::new())),
             sig_stack: SpinNoIrqLock::new(None),
@@ -272,7 +275,6 @@ impl Task {
         let tid = tid_alloc();
         let tid_address = SpinNoIrqLock::new(TidAddress::new());
         let exit_code = AtomicI32::new(0);
-        let exe_path;
         let status = SpinNoIrqLock::new(TaskStatus::Ready);
         let tgid;
         let mut kstack;
@@ -349,7 +351,6 @@ impl Task {
             children = self.children.clone();
             thread_group = self.thread_group.clone();
             itimerval = self.itimerval.clone();
-            exe_path = self.exe_path.clone();
             rlimit = self.rlimit.clone();
         }
         // 创建进程
@@ -360,7 +361,6 @@ impl Task {
             children = Arc::new(SpinNoIrqLock::new(BTreeMap::new()));
             thread_group = Arc::new(SpinNoIrqLock::new(ThreadGroup::new()));
             itimerval = Arc::new(RwLock::new([ITimerVal::default(); 3]));
-            exe_path = Arc::new(RwLock::new(String::new()));
             rlimit = Arc::new(RwLock::new([RLimit::default(); RLIM_NLIMITS]));
         }
 
@@ -389,10 +389,10 @@ impl Task {
 
         if flags.contains(CloneFlags::CLONE_FILES) {
             log::warn!("[kernel_clone] handle CLONE_FILES");
-            fd_table = self.fd_table.clone()
+            fd_table = Mutex::new(self.fd_table());
         } else {
             log::warn!("[kernel_clone] fd_table from_existed_user");
-            fd_table = FdTable::from_existed_user(&self.fd_table);
+            fd_table = Mutex::new(FdTable::from_existed_user(&self.fd_table()));
         }
 
         // 申请新的内核栈并复制父进程trap_cx内容
@@ -408,6 +408,8 @@ impl Task {
         let robust_list_head = AtomicUsize::new(0);
         let time_stat = SyncUnsafeCell::new(TimeStat::default());
         cpu_mask = SpinNoIrqLock::new(CpuMask::ALL);
+        let umask = AtomicU16::new(self.umask.load(core::sync::atomic::Ordering::Relaxed));
+        let exe_path = self.exe_path.clone();
         // 创建新任务
         let task = Arc::new(Self {
             kstack,
@@ -426,6 +428,7 @@ impl Task {
             fd_table,
             root,
             pwd,
+            umask,
             sig_handler,
             sig_pending,
             sig_stack,
@@ -616,6 +619,8 @@ impl Task {
         memory_set.activate();
         // 更新exe_path
         *self.exe_path.write() = exe_path.clone();
+        // 6.11 Debug
+        log::error!("[kernel_execve] task{} exe_path: {}", self.tid(), exe_path);
 
         #[cfg(target_arch = "loongarch64")]
         memory_set.push_with_offset(
@@ -892,6 +897,9 @@ impl Task {
     pub fn pwd(&self) -> Arc<Path> {
         self.pwd.lock().clone()
     }
+    pub fn umask(&self) -> u16 {
+        self.umask.load(core::sync::atomic::Ordering::Relaxed)
+    }
     pub fn exit_code(&self) -> i32 {
         self.exit_code.load(core::sync::atomic::Ordering::SeqCst)
     }
@@ -902,7 +910,7 @@ impl Task {
         self.memory_set.read().clone()
     }
     pub fn fd_table(&self) -> Arc<FdTable> {
-        self.fd_table.clone()
+        self.fd_table.lock().clone()
     }
     pub fn mask(&self) -> SigSet {
         self.sig_pending.lock().mask
@@ -964,6 +972,10 @@ impl Task {
     }
     pub fn set_pwd(&self, pwd: Arc<Path>) {
         *self.pwd.lock() = pwd;
+    }
+    pub fn set_umask(&self, umask: u16) {
+        self.umask
+            .store(umask, core::sync::atomic::Ordering::Relaxed);
     }
     pub fn set_exit_code(&self, exit_code: i32) {
         self.exit_code
@@ -1483,17 +1495,24 @@ pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
         }
         children.clear();
     });
-    // 回收地址空间
-    if Arc::strong_count(&task.memory_set()) == 1 {
-        log::warn!("[kernel_exit] Task{} memory_set recycle", task.tid());
-        task.op_memory_set_mut(|mem| {
-            mem.recycle_data_pages();
-        });
-    }
+    // // 回收地址空间
+    // if Arc::strong_count(&task.memory_set()) == 1 {
+    //     log::warn!("[kernel_exit] Task{} memory_set recycle", task.tid());
+    //     task.op_memory_set_mut(|mem| {
+    //         mem.recycle_data_pages();
+    //     });
+    // }
     // 清空文件描述符表
-    if Arc::strong_count(&task.fd_table) == 1 {
+    if Arc::strong_count(&task.fd_table()) == 2 {
         log::warn!("[kernel_exit] Task{} fd_table recycle", task.tid());
+        // 6.12 Debug
         task.fd_table().clear();
+    } else {
+        log::warn!(
+            "[kernel_exit] Task{} fd_table strong count: {}",
+            task.tid(),
+            Arc::strong_count(&task.fd_table())
+        );
     }
     // 清空信号
     task.op_sig_pending_mut(|pending| {

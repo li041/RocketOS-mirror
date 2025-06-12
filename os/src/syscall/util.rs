@@ -237,7 +237,7 @@ pub fn sys_clock_gettime(clock_id: usize, timespec: *mut TimeSpec) -> SyscallRet
             copy_to_user(timespec, &time as *const TimeSpec, 1)?;
         }
         _ => {
-            panic!("[sys_clock_gettime] invalid clock_id: {}", clock_id);
+            log::error!("[sys_clock_gettime] Unsupported clock_id: {}", clock_id);
             return Err(Errno::EINVAL);
         }
     }
@@ -371,7 +371,7 @@ pub fn sys_clock_getres(_clockid: usize, res: usize) -> SyscallRet {
 /// 根据传入的kernelTimex调整时间并返回最新的内核结构体到指针
 pub fn sys_adjtimex(user_timex: *mut KernelTimex) -> SyscallRet {
     log::error!("[sys_adjtimex] user_timex: {:#x}", user_timex as usize);
-    if user_timex.is_null(){
+    if user_timex.is_null() {
         return Err(Errno::EFAULT);
     }
     if user_timex as usize == 0xffffffffffffffff {
@@ -382,7 +382,7 @@ pub fn sys_adjtimex(user_timex: *mut KernelTimex) -> SyscallRet {
     let mut kernel_timex = KernelTimex::default();
 
     //todo
-    if kernel_timex.modes==0x8000 {
+    if kernel_timex.modes == 0x8000 {
         return Err(Errno::EINVAL);
     }
     if kernel_timex.modes != 0 && task.euid() != 0 {

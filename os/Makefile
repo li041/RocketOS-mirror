@@ -19,11 +19,14 @@ GW ?= 10.0.2.2
 ifeq ($(ARCH), riscv64)
 	TARGET := riscv64gc-unknown-none-elf
 	OBJCOPY := rust-objcopy --binary-architecture=riscv64
-    FS := ../img/ext4_prev.img
+    # FS := ../img/ext4_prev.img
+    FS := ../img/sdcard-rv.img
+    FS2 := ../img/ext4_prev.img
 else ifeq ($(ARCH), loongarch64)
 	TARGET := loongarch64-unknown-none
 	OBJCOPY := loongarch64-linux-gnu-objcopy 
-    FS := ../img/ext4_prev-la.img
+    FS := ../img/sdcard-la.img
+    FS2 := ../img/ext4_prev-la.img
 else
 	$(error "Unsupported architecture: $(ARCH), Use riscv64 or loongarch64")
 endif
@@ -66,17 +69,21 @@ ifeq ($(ARCH), riscv64)
                     -bios default\
                     -drive file=$(FS),if=none,format=raw,id=x0 \
                     -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0\
-                    -device virtio-net-device,netdev=net -netdev user,id=net,hostfwd=tcp::5555-:5555,hostfwd=udp::5555-:5555
+                    -device virtio-net-device,netdev=net -netdev user,id=net,hostfwd=tcp::5555-:5555,hostfwd=udp::5555-:5555\
+                    -drive file=$(FS2),if=none,format=raw,id=x1\
+                    -device virtio-blk-device,drive=x1,bus=virtio-mmio-bus.1
 else ifeq ($(ARCH), loongarch64)
     QEMU_CMD := qemu-system-loongarch64
     QEMU_ARGS = 	-kernel $(KERNEL_ELF) -m $(MEM_SIZE) -nographic \
                     -smp 1\
                     -machine virt \
                     -no-reboot \
-                    -drive file=$(FS),if=none,format=raw,id=disk0 \
-                    -device virtio-blk-pci,drive=disk0 \
+                    -drive file=$(FS),if=none,format=raw,id=x0 \
+                    -device virtio-blk-pci,drive=x0 \
                     -device virtio-net-pci,netdev=net -netdev user,id=net,hostfwd=tcp::5556-:5555,hostfwd=udp::5556-:5555 \
-                    -nographic 
+                    -nographic\
+                    -drive file=$(FS2),if=none,format=raw,id=x1\
+                    -device virtio-blk-pci,drive=x1
 else
 	$(error "Unsupported architecture: $(ARCH), Use riscv64 or loongarch64")
 endif
