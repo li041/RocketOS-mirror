@@ -6,11 +6,13 @@ use riscv::asm;
 
 use crate::{
     arch::{
-        config::USER_MAX, mm::{copy_from_user, copy_to_user}, trap::{
+        config::USER_MAX,
+        mm::{copy_from_user, copy_to_user},
+        trap::{
             self,
             context::{dump_trap_context, get_trap_context, save_trap_context},
             TrapContext,
-        }
+        },
     },
     signal::{
         handle_signal, FrameFlags, SiField, Sig, SigAction, SigContext, SigFrame, SigInfo,
@@ -136,7 +138,7 @@ pub fn sys_tkill(tid: isize, sig: i32) -> SyscallRet {
     if !sig.is_valid() || tid < 0 {
         return Err(Errno::EINVAL);
     }
-    let task = get_task(tid as usize).unwrap();
+    let task = get_task(tid as usize).ok_or(Errno::ESRCH)?;
     log::info!(
         "[sys_tkill] task{} send signal {:?} to task {}",
         current_task().tid(),
@@ -171,22 +173,26 @@ pub fn sys_tgkill(tgid: isize, tid: isize, sig: i32) -> SyscallRet {
         sig
     );
     let sig = Sig::from(sig);
-    if !sig.is_valid() || tid < 0 {
+    if !sig.is_valid() || tid < 0 || tgid < 0 {
         return Err(Errno::EINVAL);
     }
 
+    let siginfo = SigInfo::prepare_kill(current_task().tid(), sig);
     if let Some(task) = get_task(tid as usize) {
         if task.tgid() != tgid as usize {
-            return Err(Errno::EINVAL);
+            return Err(Errno::ESRCH);
         }
-        task.receive_siginfo(
-            SigInfo {
-                signo: sig.raw(),
-                code: SigInfo::TKILL,
-                fields: SiField::Kill { tid: tid as usize },
-            },
-            true,
-        );
+        let pending_size = task.op_sig_pending_mut(|pending| pending.pending.bits().count_ones());
+        if sig.raw() > 32 {
+            let max_sig_pending = task
+                .get_rlimit(crate::fs::uapi::Resource::SIGPENDING)
+                .unwrap()
+                .rlim_cur;
+            if pending_size >= max_sig_pending as u32 {
+                return Err(Errno::EAGAIN);
+            }
+        }
+        task.receive_siginfo(siginfo, true);
     } else {
         return Err(Errno::ESRCH);
     }
@@ -287,13 +293,14 @@ pub fn sys_rt_sigsuspend(mask: usize) -> SyscallRet {
 /// 如果 oldact 非 NULL，则先前的操作将保存在 oldact 中。
 /// 返回值 sigaction() 在成功时返回 0；在错误时返回 -1，并设置 errno 以指示错误。
 /// EFAULT act 或 oldact 指向的内存不是进程地址空间的有效部分。EINVAL 指定了无效信号。
-pub fn sys_rt_sigaction(signum: i32, act: usize, oldact: usize) -> SyscallRet {
+pub fn sys_rt_sigaction(signum: i32, act: usize, oldact: usize, sigsetsize: usize) -> SyscallRet {
     log::trace!("[sys_rt_sigaction]");
     log::info!(
-        "[sys_rt_sigaction] sigaction signum: {}, act: {:x}, oldact: {:x}",
+        "[sys_rt_sigaction] sigaction signum: {}, act: {:x}, oldact: {:x}, sigsetsize: {}",
         signum,
         act,
-        oldact
+        oldact,
+        sigsetsize
     );
     let task = current_task();
     // 信号值不合法
@@ -307,6 +314,9 @@ pub fn sys_rt_sigaction(signum: i32, act: usize, oldact: usize) -> SyscallRet {
     }
     if act > USER_MAX || oldact > USER_MAX {
         return Err(Errno::EFAULT);
+    }
+    if sigsetsize != core::mem::size_of::<SigSet>() {
+        return Err(Errno::EINVAL);
     }
     let act_ptr = act as *const SigAction;
     let oldact_ptr = oldact as *mut SigAction;
@@ -342,11 +352,17 @@ pub fn sys_rt_sigaction(signum: i32, act: usize, oldact: usize) -> SyscallRet {
 /// 如果 oldset 非 NULL，则信号掩码的先前值存储在 oldset 中。
 /// 如果 set 为 NULL，则信号掩码不变（即忽略 how），但信号掩码的当前值仍然返回到 oldset（如果它不为 NULL）。
 /// EFAULT set 或 oldset 参数指向进程分配的地址空间之外。 EINVAL how 中指定的值无效，或者内核不支持在 sigsetsize 中传递的大小。
-pub fn sys_rt_sigprocmask(how: usize, set: usize, oldset: usize) -> SyscallRet {
+pub fn sys_rt_sigprocmask(how: usize, set: usize, oldset: usize, sigsetsize: usize) -> SyscallRet {
     log::trace!("[sys_rt_sigprocmask] enter sigprocmask");
     const SIG_BLOCK: usize = 0;
     const SIG_UNBLOCK: usize = 1;
     const SIG_SETMASK: usize = 2;
+    if set > USER_MAX || oldset > USER_MAX {
+        return Err(Errno::EFAULT);
+    }
+    if sigsetsize != core::mem::size_of::<SigSet>() {
+        return Err(Errno::EINVAL);
+    }
     let task = current_task();
     let set_ptr = set as *const SigSet;
     let oldset_ptr = oldset as *mut SigSet;
@@ -361,7 +377,7 @@ pub fn sys_rt_sigprocmask(how: usize, set: usize, oldset: usize) -> SyscallRet {
     // set不为NULL（为NULL时直接跳过，即忽略how）
     if set != 0 {
         let mut new_mask: SigSet = SigSet::empty();
-        log::error!("[sys_rt_sigprocmask] set_ptr is {:?}",set_ptr);
+        log::error!("[sys_rt_sigprocmask] set_ptr is {:?}", set_ptr);
         copy_from_user(set_ptr, &mut new_mask as *mut SigSet, 1)?;
         // log::info!("[sys_rt_sigprocmask] current mask {:?}", new_mask);
         new_mask.remove(SigSet::SIGKILL | SigSet::SIGCONT);
@@ -404,120 +420,190 @@ pub fn sys_rt_sigpending(set: usize) -> SyscallRet {
 /// 如果 timeout 为空指针，则行为未指定。
 /// 先检查是否有set中的信号pending，如果有则消耗该信号并返回, 否则就等待timeout时间
 pub fn sys_rt_sigtimedwait(set: usize, info: usize, timeout_ptr: usize) -> SyscallRet {
-    fn restore_mask(task: &Arc<Task>, mask: SigSet) {
-        task.op_sig_pending_mut(|pending| {
-            pending.mask = mask;
-        });
-    }
-
-    fn return_signal(
-        task: &Arc<Task>,
-        sig: Sig,
-        siginfo: SigInfo,
-        info: usize,
-        origin_mask: SigSet,
-    ) -> SyscallRet {
-        if info != 0 {
-            let info_ptr = info as *mut SigInfo;
-            copy_to_user(info_ptr, &siginfo as *const SigInfo, 1)?;
-        }
-        log::info!("[sys_rt_sigtimedwait] received expected signal: {:?}", sig);
-        restore_mask(task, origin_mask);
-        Ok(sig.raw() as usize)
-    }
-
-    // 1. 取出目标掩码
     let mut wanted_set = SigSet::empty();
     copy_from_user(set as *const SigSet, &mut wanted_set as *mut SigSet, 1)?;
     wanted_set.remove(SigSet::SIGKILL | SigSet::SIGSTOP);
+    log::info!("[sys_rt_sigtimedwait] wanted_set: {:?}", wanted_set);
 
-    let task = current_task();
-    log::info!(
-        "[sys_rt_sigtimedwait] wanted_set: {:?}, info: {:#x}, timeout_ptr: {:#x}",
-        wanted_set,
-        info,
-        timeout_ptr
-    );
-
-    // 2. 屏蔽不感兴趣信号
-    let focus_mask = !wanted_set.clone();
-    let origin_mask = task.op_sig_pending_mut(|pending| pending.change_mask(focus_mask));
-
-    // 3. 检查当前是否有挂起的感兴趣信号
-    if let Some((sig, siginfo)) =
-        task.op_sig_pending_mut(|pending| pending.fetch_signal(wanted_set))
-    {
-        return return_signal(&task, sig, siginfo, info, origin_mask);
-    }
-
-    // 4. 若指定了超时时间
     if timeout_ptr != 0 {
+        // timeout是空指针, 行为未定义
+        // panic!("[sys_rt_sigtimedwait] timeout is null");
+        return Err(Errno::EINVAL);
         let mut timeout: TimeSpec = TimeSpec::default();
         copy_from_user(
             timeout_ptr as *const TimeSpec,
             &mut timeout as *mut TimeSpec,
             1,
         )?;
-
-        if !timeout.timespec_valid_settod() {
-            restore_mask(&task, origin_mask);
-            return Err(Errno::EINVAL);
-        }
-        if timeout.is_zero() && wanted_set.is_empty() {
-            restore_mask(&task, origin_mask);
-            log::info!("[sys_rt_sigtimedwait] zero timeout and empty signal set");
-            return Err(Errno::EAGAIN);
-        }
-
-        drop(task);
-        let wait_ret = wait_timeout(timeout, -1);
-        let task = current_task();
-
-        match wait_ret {
-            -2 => {
-                // 超时
-                log::info!("[sys_rt_sigtimedwait] wait timeout");
-                restore_mask(&task, origin_mask);
-                return Err(Errno::EAGAIN);
-            }
-            -1 => {
-                // 被信号唤醒
-                if let Some((sig, siginfo)) =
-                    task.op_sig_pending_mut(|pending| pending.fetch_signal(wanted_set))
-                {
-                    return return_signal(&task, sig, siginfo, info, origin_mask);
+        // 等待timeout时间
+        let wait_until = TimeSpec::new_machine_time() + timeout;
+        loop {
+            log::trace!("[sys_rt_sigtimedwait] loop");
+            let sig = current_task().op_sig_pending_mut(|pending| {
+                // ToOptimize: 这里的mask会被多次修改
+                let old = pending.mask;
+                pending.mask = wanted_set.revert();
+                let sig = pending.fetch_signal(wanted_set);
+                pending.mask = old;
+                sig
+            });
+            if let Some((sig, siginfo)) = sig {
+                // log::info!("[sys_rt_sigtimedwait] sig: {:?}", sig);
+                if info != 0 {
+                    let info_ptr = info as *mut SigInfo;
+                    copy_to_user(info_ptr, &siginfo as *const SigInfo, 1)?;
                 }
-                restore_mask(&task, origin_mask);
-                return Err(Errno::EINTR); // 被其他信号打断
+                log::info!("[sys_rt_sigtimedwait] receved expected sig: {:?}", sig);
+                return Ok(sig.raw() as usize);
             }
-            _ => {
-                restore_mask(&task, origin_mask);
-                log::error!(
-                    "[sys_rt_sigtimedwait] unknown wait return value: {}",
-                    wait_ret
-                );
-                return Err(Errno::EINTR);
+            let current_time = TimeSpec::new_machine_time();
+            if current_time >= wait_until {
+                log::error!("[sys_rt_sigtimedwait] timeout");
+                return Err(Errno::ETIMEDOUT);
             }
+            yield_current_task();
         }
     } else {
-        // 非限时等待
-        log::info!("[sys_rt_sigtimedwait] no timeout, blocking until signal");
-
-        drop(task);
-        let ret = wait();
-        debug_assert_eq!(ret, -1);
-
-        let task = current_task();
-        if let Some((sig, siginfo)) =
-            task.op_sig_pending_mut(|pending| pending.fetch_signal(wanted_set))
-        {
-            return return_signal(&task, sig, siginfo, info, origin_mask);
+        loop {
+            log::trace!("[sys_rt_sigtimedwait] loop");
+            let sig = current_task().op_sig_pending_mut(|pending| {
+                // ToOptimize: 这里的mask会被多次修改
+                let old = pending.mask;
+                pending.mask = wanted_set.revert();
+                let sig = pending.fetch_signal(wanted_set);
+                pending.mask = old;
+                sig
+            });
+            if let Some((sig, siginfo)) = sig {
+                // log::info!("[sys_rt_sigtimedwait] sig: {:?}", sig);
+                if info != 0 {
+                    let info_ptr = info as *mut SigInfo;
+                    copy_to_user(info_ptr, &siginfo as *const SigInfo, 1)?;
+                }
+                log::info!("[sys_rt_sigtimedwait] receved expected sig: {:?}", sig);
+                return Ok(sig.raw() as usize);
+            }
+            yield_current_task();
         }
-
-        restore_mask(&task, origin_mask);
-        Err(Errno::EINTR)
     }
 }
+
+// pub fn sys_rt_sigtimedwait(set: usize, info: usize, timeout_ptr: usize) -> SyscallRet {
+//     fn restore_mask(task: &Arc<Task>, mask: SigSet) {
+//         task.op_sig_pending_mut(|pending| {
+//             pending.mask = mask;
+//         });
+//     }
+
+//     fn return_signal(
+//         task: &Arc<Task>,
+//         sig: Sig,
+//         siginfo: SigInfo,
+//         info: usize,
+//         origin_mask: SigSet,
+//     ) -> SyscallRet {
+//         if info != 0 {
+//             let info_ptr = info as *mut SigInfo;
+//             copy_to_user(info_ptr, &siginfo as *const SigInfo, 1)?;
+//         }
+//         log::info!("[sys_rt_sigtimedwait] received expected signal: {:?}", sig);
+//         restore_mask(task, origin_mask);
+//         Ok(sig.raw() as usize)
+//     }
+
+//     // 1. 取出目标掩码
+//     let mut wanted_set = SigSet::empty();
+//     copy_from_user(set as *const SigSet, &mut wanted_set as *mut SigSet, 1)?;
+//     wanted_set.remove(SigSet::SIGKILL | SigSet::SIGSTOP);
+
+//     let task = current_task();
+//     log::info!(
+//         "[sys_rt_sigtimedwait] wanted_set: {:?}, info: {:#x}, timeout_ptr: {:#x}",
+//         wanted_set,
+//         info,
+//         timeout_ptr
+//     );
+
+//     // 2. 屏蔽不感兴趣信号
+//     let focus_mask = !wanted_set.clone();
+//     let origin_mask = task.op_sig_pending_mut(|pending| pending.change_mask(focus_mask));
+
+//     // 3. 检查当前是否有挂起的感兴趣信号
+//     if let Some((sig, siginfo)) =
+//         task.op_sig_pending_mut(|pending| pending.fetch_signal(wanted_set))
+//     {
+//         return return_signal(&task, sig, siginfo, info, origin_mask);
+//     }
+
+//     // 4. 若指定了超时时间
+//     if timeout_ptr != 0 {
+//         let mut timeout: TimeSpec = TimeSpec::default();
+//         copy_from_user(
+//             timeout_ptr as *const TimeSpec,
+//             &mut timeout as *mut TimeSpec,
+//             1,
+//         )?;
+//         log::error!("[sys_rt_sigtimedwait] timeout: {:?}", timeout);
+
+//         if !timeout.timespec_valid_settod() {
+//             restore_mask(&task, origin_mask);
+//             return Err(Errno::EINVAL);
+//         }
+//         if timeout.is_zero() && wanted_set.is_empty() {
+//             restore_mask(&task, origin_mask);
+//             log::info!("[sys_rt_sigtimedwait] zero timeout and empty signal set");
+//             return Err(Errno::EAGAIN);
+//         }
+
+//         drop(task);
+//         let wait_ret = wait_timeout(timeout, -1);
+//         let task = current_task();
+
+//         match wait_ret {
+//             -2 => {
+//                 // 超时
+//                 log::info!("[sys_rt_sigtimedwait] wait timeout");
+//                 restore_mask(&task, origin_mask);
+//                 return Err(Errno::EAGAIN);
+//             }
+//             -1 => {
+//                 // 被信号唤醒
+//                 if let Some((sig, siginfo)) =
+//                     task.op_sig_pending_mut(|pending| pending.fetch_signal(wanted_set))
+//                 {
+//                     return return_signal(&task, sig, siginfo, info, origin_mask);
+//                 }
+//                 restore_mask(&task, origin_mask);
+//                 return Err(Errno::EINTR); // 被其他信号打断
+//             }
+//             _ => {
+//                 restore_mask(&task, origin_mask);
+//                 log::error!(
+//                     "[sys_rt_sigtimedwait] unknown wait return value: {}",
+//                     wait_ret
+//                 );
+//                 return Err(Errno::EINTR);
+//             }
+//         }
+//     } else {
+//         // 非限时等待
+//         log::info!("[sys_rt_sigtimedwait] no timeout, blocking until signal");
+
+//         drop(task);
+//         let ret = wait();
+//         debug_assert_eq!(ret, -1);
+
+//         let task = current_task();
+//         if let Some((sig, siginfo)) =
+//             task.op_sig_pending_mut(|pending| pending.fetch_signal(wanted_set))
+//         {
+//             return return_signal(&task, sig, siginfo, info, origin_mask);
+//         }
+
+//         restore_mask(&task, origin_mask);
+//         Err(Errno::EINTR)
+//     }
+// }
 
 /// sigqueue() 将 sig 中指定的信号发送给 pid 中给出其 PID 的进程。
 /// 发送信号所需的权限与 kill(2) 相同。与 kill(2) 一样，可以使用空信号 (0) 检查是否存在具有给定 PID 的进程。

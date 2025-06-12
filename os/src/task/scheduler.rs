@@ -2,8 +2,7 @@ use super::{current_task, Task, Tid};
 use crate::{
     arch::switch,
     task::{
-        dump_wait_queue, handle_timeout,
-        processor::{current_tp, Processor},
+        dump_wait_queue, handle_timeout, manager::dump_time_manager, processor::{current_tp, Processor}
     },
 };
 use alloc::{collections::vec_deque::VecDeque, sync::Arc};
