@@ -219,6 +219,7 @@ pub fn wait_timeout(dur: timer::TimeSpec, clock_id: i32) -> isize {
     task.set_interruptable();
     // 超时后唤醒任务
     let deadline = set_wait_alarm(dur, tid, clock_id);
+    dump_time_manager();
     WAIT_MANAGER.add(task);
     schedule();
     let task = current_task();
@@ -435,7 +436,17 @@ impl TimeManager {
         let mut tids = vec![];
         // 第一步：先锁一次并记录所有要移除的键
         let mut guard = self.alarms.lock();
+        // dump_time_manager();
         let keys_to_remove: vec::Vec<_> = guard.range(..=&now).map(|(k, _)| k.clone()).collect();
+        // let keys_to_remove: Vec<_> = guard
+        // .iter()
+        // .filter(|(k, _)| {
+        //     log::error!("[wakeup_timeout] now: {:?}, key: {:?}", now, k);
+        //     *k <= &now
+        // })
+        // .map(|(k, _)| k.clone())
+        // .collect();
+        
         // 第二步：再移除这些键，收集对应的值
         for key in keys_to_remove {
             if let Some(entry) = guard.remove(&key) {
@@ -497,5 +508,16 @@ pub fn real_timer_callback(tid: Tid) {
                 add_real_timer(tid, dur.into());
             }
         })
+    }
+}
+
+pub fn dump_time_manager() {
+    let alarms = TIME_MANAGER.alarms.lock();
+    log::info!("[TimeManager] dump alarms:");
+    for (time, entries) in alarms.iter() {
+        log::info!("Time: {:?}", time);
+        for (tid, clock_id, _) in entries {
+            log::info!("  Task ID: {}, Clock ID: {}", tid, clock_id);
+        }
     }
 }

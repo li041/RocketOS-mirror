@@ -629,7 +629,7 @@ pub fn syscall_recvfrom(
     match socket.recv_from(&mut kernel_buf) {
         Ok((size, _addr)) => {
             if size == 0 {
-                return Err(Errno::EAGAIN);
+                return Err(Errno::EINTR);
             }
             copy_to_user(buf, kernel_buf.as_ptr(), len)?;
             log::error!("[syscall_recvfrom]:recv buf len {}", size);
