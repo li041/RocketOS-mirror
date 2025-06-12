@@ -589,9 +589,9 @@ impl MemorySet {
             let file_name = &argv[0];
             // 文件后缀是.sh或者file_data是#!开头
             if file_name.ends_with(".sh") || elf_data.starts_with(b"#!") {
-                let prepend_args = vec![String::from("/musl/busybox"), String::from("sh")];
+                let prepend_args = vec![String::from("/busybox"), String::from("sh")];
                 argv.splice(0..0, prepend_args);
-                if let Ok(busybox) = path_openat("/musl/busybox", OpenFlags::empty(), AT_FDCWD, 0) {
+                if let Ok(busybox) = path_openat("/busybox", OpenFlags::empty(), AT_FDCWD, 0) {
                     elf_data = busybox.read_all();
                     elf_file = busybox;
                 }
@@ -1320,11 +1320,11 @@ impl MemorySet {
                                 self.areas.insert(new_start_vpn, area);
                             }
                         }
-                        log::error!(
-                            "[handle_lazy_allocation_area] lazy alloc area, vpn: {:#x}, ppn: {:#x}",
-                            vpn.0,
-                            ppn.0
-                        );
+                        // log::error!(
+                        //     "[handle_lazy_allocation_area] lazy alloc area, vpn: {:#x}, ppn: {:#x}",
+                        //     vpn.0,
+                        //     ppn.0
+                        // );
                         return Ok(());
                     }
                 }

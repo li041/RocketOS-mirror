@@ -1,7 +1,7 @@
-use core::cmp::min;
 use core::sync::atomic::{compiler_fence, Ordering};
 use core::time;
 
+use crate::arch::config::USER_MAX;
 use crate::arch::mm::copy_from_user;
 use crate::arch::trap::context::{dump_trap_context, get_trap_context, save_trap_context};
 use crate::ext4::fs;
@@ -10,10 +10,11 @@ use crate::fs::file::OpenFlags;
 use crate::futex::do_futex;
 use crate::signal::Sig;
 use crate::syscall::errno::Errno;
+use crate::syscall::fs::NAME_MAX;
 use crate::syscall::util::{CLOCK_MONOTONIC, CLOCK_REALTIME};
 use crate::task::{
-    add_group, dump_scheduler, get_group, get_scheduler_len, get_task, new_group, wait,
-    wait_timeout, CloneFlags, Task,
+    add_group, dump_scheduler, get_group, get_scheduler_len, get_task, new_group, unregister_task,
+    wait, wait_timeout, CloneFlags, Task, INITPROC,
 };
 use crate::timer::{TimeSpec, TimeVal};
 use crate::{
@@ -234,17 +235,23 @@ pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> Sy
         args,
         envs
     );
+    if path.len() >= NAME_MAX {
+        return Err(Errno::ENAMETOOLONG);
+    }
     // argv[0]是应用程序的名字
     // 后续元素是用户在命令行中输入的参数
     let mut args_vec = extract_cstrings(args)?;
     let envs_vec = extract_cstrings(envs)?;
     let task = current_task();
     // OpenFlags::empty() = RDONLY = 0, 以只读方式打开文件
-    match path_openat(&path, OpenFlags::empty(), AT_FDCWD, X_OK) {
+    match path_openat(&path, OpenFlags::empty(), AT_FDCWD, 0) {
         Ok(file) => {
             let all_data = file.read_all();
-            let absolute_path = file.get_path().dentry.absolute_path.clone();
-            task.kernel_execve_lazily(absolute_path, file, all_data.as_slice(), args_vec, envs_vec);
+            if all_data.is_empty() {
+                log::error!("[sys_execve] file {} is empty", path);
+                return Err(Errno::ENOEXEC);
+            }
+            task.kernel_execve_lazily(path, file, all_data.as_slice(), args_vec, envs_vec);
             Ok(0)
         }
         Err(err) if err == Errno::ENOENT && !path.starts_with("/") => {
@@ -282,25 +289,83 @@ pub fn sys_getpid() -> SyscallRet {
 // Todo: session
 pub fn sys_setpgid(pid: usize, pgid: usize) -> SyscallRet {
     log::info!("[sys_setpgid] pid: {}, pgid: {}", pid, pgid);
-    let task = if pid == 0 {
-        current_task()
+    if pgid > isize::MAX as usize {
+        log::error!("[sys_setpgid] pgid cannot be negative");
+        return Err(Errno::EINVAL);
+    }
+    let mut set_pid = pid;
+    let mut set_pgid = pgid;
+    let caller_task = current_task();
+    if pid == 0 {
+        set_pid = current_task().tid();
+    }
+
+    let set_task = get_task(set_pid).ok_or(Errno::ESRCH)?;
+    if !set_task.is_process() {
+        return Err(Errno::EINVAL);
+    }
+
+    if caller_task.is_child(set_pid) {
+        if !caller_task.compare_memset(&set_task) {
+            return Err(Errno::EACCES);
+        }
     } else {
-        get_task(pid).ok_or(Errno::ESRCH)?
-    };
+        if caller_task.tid() != set_task.tid() {
+            // 只能设置当前任务的pgid
+            return Err(Errno::ESRCH);
+        }
+    }
 
     if pgid == 0 {
-        // 将进程组 ID 设置为进程 ID
-        task.set_pgid(task.tid());
-        add_group(task.tid(), &task);
+        set_pgid = set_task.tid();
     } else {
-        add_group(pgid, &task);
+        if get_group(pgid).is_none() {
+            log::error!("[sys_setpgid] pgid {} does not exist", pgid);
+            return Err(Errno::EPERM);
+        }
     }
+
+    set_task.set_pgid(set_pgid);
+    add_group(set_pgid, &set_task);
+
     log::info!(
         "[sys_setpgid] task {} set pgid to {}",
-        task.tid(),
-        task.pgid()
+        set_task.tid(),
+        set_task.pgid()
     );
+
     Ok(0)
+
+    // let task = if pid == 0 {
+    //     caller_task.clone()
+    // } else {
+    //     if pid != caller_task.tid() && !caller_task.is_child(pid) {
+    //         // 只能设置当前任务的pgid
+    //         log::error!("[sys_setpgid] pid must be current task's tid");
+    //         return Err(Errno::ESRCH);
+    //     }
+    //     get_task(pid).unwrap()
+    // };
+
+    // if pgid == 0 {
+    //     // 将进程组 ID 设置为进程 ID
+    //     if !caller_task.compare_memset(&task) {
+    //         return Err(Errno::EACCES);
+    //     }
+    //     drop(caller_task);
+    //     task.set_pgid(task.tid());
+    //     add_group(task.tid(), &task);
+    // } else {
+    //     if get_group(pgid as usize).is_none() {
+    //         return Err(Errno::EPERM);
+    //     }
+    //     if !caller_task.compare_memset(&task) {
+    //         return Err(Errno::EACCES);
+    //     }
+    //     drop(caller_task);
+    //     add_group(pgid as usize, &task);
+    // }
+    //
 }
 
 pub fn sys_getpgid(pid: usize) -> SyscallRet {
@@ -428,6 +493,8 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: usize, option: i32) -> SyscallRet 
                 if child.is_zombie() {
                     cur_task.remove_child_task(tid);
                     debug_assert_eq!(Arc::strong_count(&child), 1);
+                    // 注销任务
+                    unregister_task(tid);
 
                     let code = child.exit_code();
                     log::warn!("[sys_waitpid] child {} exited with code: {}", tid, code,);
@@ -600,77 +667,83 @@ pub fn sys_nanosleep(time_val_ptr: usize, rem: usize) -> SyscallRet {
             current_task().tid(),
             remained_time
         );
-        copy_to_user(rem as *mut TimeSpec, &remained_time, 1)?;
         current_task().cancel_restart();
+        copy_to_user(rem as *mut TimeSpec, &remained_time, 1)?;
         return Err(Errno::EINTR);
     }
     Ok(0)
 }
 
 pub const TIMER_ABSTIME: i32 = 0x01;
-pub fn sys_clock_nansleep(clock_id: usize, flags: i32, t: usize, remain: usize) -> SyscallRet {
+pub fn sys_clock_nanosleep(clock_id: usize, flags: i32, req: usize, remain: usize) -> SyscallRet {
     log::info!(
         "[sys_clock_nanosleep] clock_id: {}, flags: {}, req: {:x}, rem: {:x}",
         clock_id,
         flags,
-        t,
+        req,
         remain
     );
     // let t = copy_from_user(t as *const TimeSpec, 1)?[0];
     let mut t_buf: TimeSpec = TimeSpec::default();
-    copy_from_user(t as *const TimeSpec, &mut t_buf as *mut TimeSpec, 1)?;
-    match clock_id {
+    copy_from_user(req as *const TimeSpec, &mut t_buf as *mut TimeSpec, 1)?;
+    if !t_buf.timespec_valid_settod() {
+        return Err(Errno::EINVAL);
+    }
+    let start_time;
+    let waited_time = match clock_id {
         CLOCK_REALTIME => {
+            start_time = TimeSpec::new_wall_time();
             if flags == TIMER_ABSTIME {
                 // 绝对时间
-                // Todo: 阻塞
-                loop {
-                    let current_time = TimeSpec::new_wall_time();
-                    if current_time >= t_buf {
-                        return Ok(0);
-                    }
-                    yield_current_task();
+                if start_time >= t_buf {
+                    return Ok(0);
                 }
+                t_buf - start_time
             } else {
-                // 相对时间
-                let start_time = TimeSpec::new_wall_time();
-                loop {
-                    let current_time = TimeSpec::new_wall_time();
-                    if current_time >= t_buf + start_time {
-                        return Ok(0);
-                    }
-                    yield_current_task();
-                }
+                t_buf
             }
         }
         CLOCK_MONOTONIC => {
+            start_time = TimeSpec::new_machine_time();
             if flags == TIMER_ABSTIME {
                 // 绝对时间
-                // Todo: 阻塞 + 信号中断
-                loop {
-                    let current_time = TimeSpec::new_machine_time();
-                    if current_time >= t_buf {
-                        return Ok(0);
-                    }
-                    yield_current_task();
+                if start_time >= t_buf {
+                    return Ok(0);
                 }
+                t_buf - start_time
             } else {
                 // 相对时间
-                let start_time = TimeSpec::new_machine_time();
-                loop {
-                    let current_time = TimeSpec::new_machine_time();
-                    if current_time >= t_buf + start_time {
-                        return Ok(0);
-                    }
-                    yield_current_task();
-                }
+                t_buf
             }
         }
         _ => {
             log::error!("[sys_clock_nanosleep] clock_id: {} not supported", clock_id);
-            return Err(Errno::EINVAL);
+            return Err(Errno::EOPNOTSUPP);
         }
+    };
+    let ret = wait_timeout(waited_time, -1);
+    let now = if clock_id == CLOCK_REALTIME {
+        TimeSpec::new_wall_time()
+    } else {
+        TimeSpec::new_machine_time()
+    };
+    if ret == -1 {
+        let sleep_time = now - start_time;
+        let remained_time = if sleep_time >= waited_time {
+            TimeSpec::default() // 如果睡眠时间超过了请求的时间，则剩余时间为0
+        } else {
+            waited_time - sleep_time
+        };
+        log::error!(
+            "[sys_clock_nanosleep] task{} wakeup by signal, remained time: {:?}",
+            current_task().tid(),
+            remained_time
+        );
+        current_task().cancel_restart();
+        copy_to_user(remain as *mut TimeSpec, &remained_time, 1)?;
+        return Err(Errno::EINTR);
     }
+    Ok(0)
 }
 
 // fake

@@ -50,7 +50,7 @@ endif
 
 # Configs
 MEM_SIZE = 1024M
-LOG := error 
+LOG :=  
 ifeq ($(MODE), release)
 	MODE_ARG := --release
 endif

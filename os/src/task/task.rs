@@ -874,6 +874,16 @@ impl Task {
         self.tgid() == task.tgid()
     }
 
+    // 检查task是否为调用任务的子任务
+    pub fn is_child(&self, tid: usize) -> bool {
+        self.children.lock().contains_key(&tid)
+    }
+
+    // 比较两个任务memset是否相同，用于确定子进程是否执行过execve
+    pub fn compare_memset(&self, task: &Arc<Task>) -> bool {
+        Arc::ptr_eq(&self.memory_set.read(), &task.memory_set.read())
+    }
+
     /*********************************** getter *************************************/
 
     pub fn kstack(&self) -> usize {
@@ -1514,10 +1524,11 @@ pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
             Arc::strong_count(&task.fd_table())
         );
     }
-    // 清空信号
-    task.op_sig_pending_mut(|pending| {
-        pending.clear();
-    });
+    // // 清空信号
+    // task.op_sig_pending_mut(|pending| {
+    //     pending.clear();
+    // });
+    
     // 向父进程发送SIGCHID
     if task.thread_group.lock().len() == 0 {
         log::warn!(
@@ -1548,8 +1559,6 @@ pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
         });
         remove_group(&task);
     }
-    // 注销任务
-    unregister_task(task.tid());
     log::error!("[kernel_exit] Task{} clear the resource", task.tid());
     log::error!(
         "[kernel_exit] Task{} strong count: {}",

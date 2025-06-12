@@ -31,9 +31,9 @@ pub use context::TaskContext;
 pub use id::IdAllocator;
 pub use kstack::get_stack_top_by_sp;
 pub use manager::{
-    add_group, add_real_timer, dump_wait_queue, for_each_task, get_task, handle_timeout, new_group,
-    remove_timer, update_real_timer, wait, wait_timeout, wakeup, ITIMER_PROF, ITIMER_REAL, get_group,
-    ITIMER_VIRTUAL,
+    add_group, add_real_timer, dump_wait_queue, for_each_task, get_group, get_task, handle_timeout,
+    new_group, remove_timer, unregister_task, update_real_timer, wait, wait_timeout, wakeup,
+    ITIMER_PROF, ITIMER_REAL, ITIMER_VIRTUAL,
 };
 pub use processor::{current_task, run_tasks};
 pub use scheduler::{

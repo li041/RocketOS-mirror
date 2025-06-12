@@ -38,7 +38,7 @@ use signal::{
     sys_rt_sigsuspend, sys_rt_sigtimedwait, sys_tgkill, sys_tkill,
 };
 use task::{
-    sys_acct, sys_clock_nansleep, sys_clone, sys_execve, sys_exit_group, sys_futex, sys_get_time,
+    sys_acct, sys_clock_nanosleep, sys_clone, sys_execve, sys_exit_group, sys_futex, sys_get_time,
     sys_getegid, sys_geteuid, sys_getgid, sys_getgroups, sys_getpgid, sys_getpid, sys_getppid,
     sys_getresgid, sys_getresuid, sys_gettid, sys_getuid, sys_nanosleep, sys_set_tid_address,
     sys_setfsgid, sys_setfsuid, sys_setgid, sys_setgroups, sys_setpgid, sys_setregid,
@@ -318,7 +318,7 @@ pub fn syscall(
         SYSCALL_SETITIMER => sys_setitimer(a0 as i32, a1 as *const ITimerVal, a2 as *mut ITimerVal),
         SYSCALL_CLOCK_GETTIME => sys_clock_gettime(a0, a1 as *mut TimeSpec),
         SYSCALL_CLOCK_GETRES => sys_clock_getres(a0, a1),
-        SYSCALL_CLOCK_NANOSLEEP => sys_clock_nansleep(a0, a1 as i32, a2, a3),
+        SYSCALL_CLOCK_NANOSLEEP => sys_clock_nanosleep(a0, a1 as i32, a2, a3),
         SYSCALL_SYSLOG => sys_syslog(a0, a1 as *mut u8, a3),
         SYSCALL_SCHED_SETSCHEDULER => sys_sched_setscheduler(a0 as isize, a1 as i32, a2),
         SYSCALL_SCHED_GETSCHEDULER => sys_sched_getscheduler(a0 as isize),
@@ -330,8 +330,8 @@ pub fn syscall(
         SYSCALL_TGKILL => sys_tgkill(a0 as isize, a1 as isize, a2 as i32),
         // SYSCALL_SIGALTSTACK => sys_sigaltstack()
         SYSCALL_RT_SIGSUSPEND => sys_rt_sigsuspend(a0),
-        SYSCALL_RT_SIGACTION => sys_rt_sigaction(a0 as i32, a1, a2),
-        SYSCALL_RT_SIGPROCMASK => sys_rt_sigprocmask(a0, a1, a2),
+        SYSCALL_RT_SIGACTION => sys_rt_sigaction(a0 as i32, a1, a2, a3),
+        SYSCALL_RT_SIGPROCMASK => sys_rt_sigprocmask(a0, a1, a2, a3),
         SYSCALL_RT_SIGPENDING => sys_rt_sigpending(a0),
         SYSCALL_RT_SIGTIMEDWAIT => sys_rt_sigtimedwait(a0, a1, a2),
         //SYSCALL_RT_SIGQUEUEINFO => sys_rt_sigqueueinfo(),
