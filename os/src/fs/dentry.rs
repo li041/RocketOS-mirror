@@ -12,7 +12,7 @@ use lazy_static::lazy_static;
 use spin::{Mutex, RwLock};
 
 use crate::{
-    ext4::inode::{S_ISGID, S_ISUID},
+    ext4::inode::{S_IFREG, S_ISGID, S_ISUID},
     mutex::SpinNoIrqLock,
     syscall::errno::{Errno, SyscallRet},
     task::current_task,
@@ -201,6 +201,7 @@ pub fn chown(inode: &Arc<dyn InodeOp>, new_uid: u32, new_gid: u32) -> SyscallRet
     let task = current_task();
     let (euid, egid) = (task.fsuid(), task.fsgid());
     let mut i_mode = inode.get_mode();
+    let is_reg = i_mode & S_IFREG != 0;
     log::info!(
         "[chown] euid: {}, egid: {}, new_uid: {}, new_gid: {}, i_mode: {:o}",
         euid,
@@ -213,8 +214,8 @@ pub fn chown(inode: &Arc<dyn InodeOp>, new_uid: u32, new_gid: u32) -> SyscallRet
     if euid == 0 {
         if new_uid != u32::MAX {
             // dentry.get_inode().set_uid(new_uid);
-            // 当super-user修改可执行文件的所有者时需要清除setuid和setgid位
-            if i_mode & 0o111 != 0 {
+            // 当super-user修改可执行文件的所有者或组时需要清除setuid和setgid位
+            if i_mode & 0o111 != 0 && is_reg {
                 log::warn!(
                     "[chown] Root user is changing owner of executable file , clearing setuid/setgid bits",
                 );
@@ -265,11 +266,25 @@ pub fn chown(inode: &Arc<dyn InodeOp>, new_uid: u32, new_gid: u32) -> SyscallRet
             },
         )?;
         }
+        // dentry.get_inode().set_uid(new_uid);
+        // 当用户修改可执行文件的所有者或组时需要清除setuid和setgid位
+        // 非root用户需要清除setuid和setgid位
+        if i_mode & 0o111 != 0 && is_reg {
+            log::warn!(
+                    "[chown] Root user is changing owner of executable file , clearing setuid/setgid bits",
+                );
+            // 如果是文件是non-group-executable, 则保留setgid位
+            if i_mode & 0o10 == 0 {
+                i_mode &= !(S_ISUID) as u16
+            } else {
+                i_mode &= !(S_ISGID | S_ISUID) as u16; // 清除setuid和setgid位
+            }
+            inode.set_mode(i_mode);
+        }
         inode.set_gid(new_gid);
     }
-    // 非root用户需要清除setuid和setgid位
-    i_mode &= !(S_ISUID | S_ISGID) as u16;
-    inode.set_mode(i_mode);
+    // i_mode &= !(S_ISUID | S_ISGID) as u16;
+    // inode.set_mode(i_mode);
     Ok(0)
 }
 

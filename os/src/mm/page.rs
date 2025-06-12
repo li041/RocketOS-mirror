@@ -137,6 +137,10 @@ impl Page {
     pub fn ppn(&self) -> PhysPageNum {
         PhysPageNum((self.vaddr - KERNEL_BASE) >> PAGE_SIZE_BITS)
     }
+    #[inline(always)]
+    pub fn vaddr(&self) -> usize {
+        self.vaddr
+    }
     // Get the address of an offset inside the cached block data
     #[inline(always)]
     fn addr_of_offset(&self, offset: usize) -> usize {
@@ -268,7 +272,7 @@ impl Page {
             }
             PageKind::Inline(info) => {
                 log::warn!(
-                    "[Page::sync]inline page synced directly, vaddr: {:#x}",
+                    "[Page::sync] inline page synced directly, vaddr: {:#x}",
                     self.vaddr
                 );
                 let guard = info.write(); // 加写锁
@@ -276,8 +280,16 @@ impl Page {
                 if let Some(inode) = inode {
                     if let Some(ext4_inode) = inode.as_any().downcast_ref::<Ext4Inode>() {
                         if guard.modified {
+                            // Debug 6.12: 死锁
                             let mut inner = ext4_inode.inner.write();
-                            assert!(inner.inode_on_disk.has_inline_data());
+
+                            // assert!(inner.inode_on_disk.has_inline_data());
+                            if !inner.inode_on_disk.has_inline_data() {
+                                log::error!(
+                                    "[Page::sync] Inline Page but EXT4_INLINE_DATA_FL is not set"
+                                );
+                                return;
+                            }
                             log::warn!("[page::sync] has inline data, write back to disk");
                             if let Some(inline_page) = ext4_inode.address_space.get_page_cache(0) {
                                 // inline data在页缓存中, 写回磁盘

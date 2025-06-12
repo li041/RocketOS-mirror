@@ -7,6 +7,7 @@ use virtio_drivers::PAGE_SIZE;
 
 use crate::{
     arch::{config::PAGE_SIZE_BITS, mm::copy_to_user},
+    fs::dentry::LinuxDirent64,
     mm::Page,
     mutex::SpinNoIrqLock,
     syscall::errno::{Errno, SyscallRet},
@@ -168,13 +169,17 @@ impl File {
             // let buf = copy_from_user_mut(dirp as *mut u8, count)?;
             let mut ker_buf = vec![0u8; count];
             let (file_offset, buf_offset) =
-                self.inner_handler(|inner| inner.inode.getdents(&mut ker_buf, inner.offset));
+                self.inner_handler(|inner| inner.inode.getdents(&mut ker_buf, inner.offset))?;
             self.add_offset(file_offset);
             log::error!(
                 "readdir: file_offset: {}, buf_offset: {}",
                 file_offset,
                 buf_offset
             );
+            // 检查count太小 视为无效
+            if count < core::mem::size_of::<LinuxDirent64>() {
+                return Err(Errno::EINVAL);
+            }
             let n = copy_to_user(dirp as *mut u8, ker_buf[..buf_offset].as_ptr(), buf_offset)?;
             return Ok(n);
         }
@@ -187,6 +192,9 @@ impl FileOp for File {
         self
     }
     fn read<'a>(&'a self, buf: &'a mut [u8]) -> SyscallRet {
+        if self.inner.lock().path.dentry.is_dir() {
+            return Err(Errno::EISDIR);
+        }
         let read_size = self.inner_handler(|inner| inner.inode.read(inner.offset, buf));
         self.add_offset(read_size);
         Ok(read_size)
@@ -195,8 +203,17 @@ impl FileOp for File {
         let read_size = self.inner_handler(|inner| inner.inode.read(offset, buf));
         Ok(read_size)
     }
+    // 依照linux的行为, 而非POSIX标准, 如果文件是O_APPEND打开的, 则pwrite时会向文件末尾写, 同时不更新offset
     fn pwrite<'a>(&'a self, buf: &'a [u8], offset: usize) -> SyscallRet {
-        let write_size = self.inner_handler(|inner| inner.inode.write(offset, buf));
+        let write_size = self.inner_handler(|inner| {
+            if inner.flags.contains(OpenFlags::O_APPEND) {
+                let size = inner.inode.get_size();
+                inner.inode.write(size, buf)
+            } else {
+                // 如果不是O_APPEND, 则使用指定的offset写入
+                inner.inode.write(offset, buf)
+            }
+        });
         Ok(write_size)
     }
     fn read_all(&self) -> Vec<u8> {
@@ -319,10 +336,6 @@ impl FileOp for File {
                         // 没有hole, 继续查找下一个页
                         page_aligned_offset += PAGE_SIZE;
                     }
-                }
-                _ => {
-                    log::warn!("Unsupported whence: {:?}", whence);
-                    return Err(Errno::EINVAL); // Invalid argument
                 }
             }
             return Ok(inner.offset);

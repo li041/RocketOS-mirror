@@ -166,6 +166,9 @@ impl FileOp for UrandomFile {
     fn get_inode(&self) -> Arc<dyn InodeOp> {
         self.inode.clone()
     }
+    fn get_path(&self) -> Arc<Path> {
+        self.path.clone()
+    }
     fn get_flags(&self) -> OpenFlags {
         self.flags
     }

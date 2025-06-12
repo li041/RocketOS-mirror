@@ -673,7 +673,7 @@ pub fn sys_clock_nansleep(clock_id: usize, flags: i32, t: usize, remain: usize) 
             }
         }
         _ => {
-            panic!("[sys_clock_nanosleep] clock_id: {} not supported", clock_id);
+            log::error!("[sys_clock_nanosleep] clock_id: {} not supported", clock_id);
             return Err(Errno::EINVAL);
         }
     }

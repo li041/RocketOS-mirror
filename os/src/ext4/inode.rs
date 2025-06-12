@@ -8,9 +8,11 @@ use alloc::vec::Vec;
 use spin::RwLock;
 
 use crate::arch::config::EXT4_MAX_INLINE_DATA;
+use crate::drivers::block::VIRTIO_BLOCK_SIZE;
 use crate::fs::inode::InodeOp;
 use crate::fs::kstat::Kstat;
 use crate::fs::uapi::FallocFlags;
+use crate::fs::FS_BLOCK_SIZE;
 use crate::syscall::errno::{Errno, SyscallRet};
 use crate::task::current_task;
 use crate::timer::TimeSpec;
@@ -968,11 +970,11 @@ impl Ext4Inode {
     // Todo: 处理inline_data
     pub fn get_page_cache(&self, page_index: usize) -> Option<Arc<Page>> {
         let inode_size = self.inner.read().inode_on_disk.size_lo as usize;
-        log::info!(
-            "[Ext4Inode::get_page_cache] page_index: {}, inode_size: {}",
-            page_index,
-            inode_size
-        );
+        // log::info!(
+        //     "[Ext4Inode::get_page_cache] page_index: {}, inode_size: {}",
+        //     page_index,
+        //     inode_size
+        // );
 
         // offset超出文件大小, 直接返回0(EOF)
         if page_index > (inode_size >> PAGE_SIZE_BITS) {
@@ -1228,8 +1230,9 @@ impl Ext4Inode {
             block_buf[offset_in_page..offset_in_page + copy_len]
                 .copy_from_slice(&buf[current_write..current_write + copy_len]);
 
+            let virtio_block_id = fs_block_id * (*FS_BLOCK_SIZE / VIRTIO_BLOCK_SIZE);
             // 写入整块
-            self.block_device.write_blocks(fs_block_id, &block_buf);
+            self.block_device.write_blocks(virtio_block_id, &block_buf);
 
             current_write += copy_len;
             page_offset += 1;
@@ -1321,7 +1324,6 @@ impl Ext4Inode {
         }
 
         {
-            let inode_guard = self.inner.read();
             let inode_size_before = self.inner.read().inode_on_disk.get_size();
             // 2. 若写入后文件大小超过60字节, 转换为extent tree
             // 同样会调用write_extent_tree, 但是如果size > 0, 说明有inline_data, 会先将inline_data写入新的block
@@ -1345,7 +1347,6 @@ impl Ext4Inode {
                         data[0..EXT4_MAX_INLINE_DATA].copy_from_slice(inline_data);
                     });
                 }
-                drop(inode_guard);
                 let mut inode_guard = self.inner.write();
                 let inode_on_disk = &mut inode_guard.inode_on_disk;
                 // 清除原来的inline_data flag, 设置新的extent tree flag
@@ -1454,7 +1455,11 @@ impl Ext4Inode {
     pub fn lookup(&self, name: &str) -> Option<Ext4DirEntry> {
         // log::info!("[Ext4Inode::lookup] name: {}", name);
         debug_assert!(self.inner.read().inode_on_disk.is_dir(), "not a directory");
+        // if name == "lkfile_3" {
+        //     log::warn!("[Ext4Inode::lookup] lkfile_3 is a special file, returning dummy dentry");
+        // }
         let dir_size = self.inner.read().inode_on_disk.get_size();
+        log::error!("[Ext4Inode::lookup] dir_size: {}, name: {}", dir_size, name);
         assert!(
             dir_size & (PAGE_SIZE as u64 - 1) == 0,
             "dir_size is not page aligned, {}",
@@ -1466,14 +1471,20 @@ impl Ext4Inode {
         let dir_content = Ext4DirContentRO::new(&buf);
         dir_content.find(name)
     }
-    pub fn getdents(&self, buf: &mut [u8], offset: usize) -> (usize, usize) {
+    pub fn getdents(&self, buf: &mut [u8], offset: usize) -> Result<(usize, usize), Errno> {
         assert!(self.inner.read().inode_on_disk.is_dir(), "not a directory");
-        let dir_size = self.inner.read().inode_on_disk.get_size();
+        let inner = self.inner.read();
+        let link_count = inner.inode_on_disk.links_count as usize;
+        if link_count == 0 {
+            return Err(Errno::ENOENT); // 目录已被删除
+        }
+        let dir_size = inner.inode_on_disk.get_size();
         assert!(
             dir_size & (PAGE_SIZE as u64 - 1) == 0,
             "dir_size is not page aligned"
         );
         let mut dir_content = vec![0u8; (dir_size as usize - offset) as usize];
+        drop(inner);
         // buf中是目录的所有内容
         self.read(offset, &mut dir_content).expect("read failed");
         let dir_content = Ext4DirContentRO::new(&dir_content);
@@ -1523,6 +1534,10 @@ impl Ext4Inode {
         let task = current_task();
         let uid = task.fsuid();
         if inner.inode_on_disk.mode & S_ISGID != 0 {
+            log::warn!(
+                "[Ext4Inode::child_uid_gid] S_ISGID set, inherit parent dir gid: {}",
+                inner.inode_on_disk.gid
+            );
             (uid, inner.inode_on_disk.gid as u32)
         } else {
             (uid, task.fsgid())
@@ -1566,14 +1581,16 @@ impl Ext4Inode {
     }
     // todo: 权限检查
     fn shrink_size(&self, current_size: u64, new_size: u64) -> SyscallRet {
-        let mut inner = self.inner.write();
-        // 处理inline data类型
-        if inner.inode_on_disk.has_inline_data() {
-            assert!(current_size <= EXT4_MAX_INLINE_DATA as u64);
-            inner.inode_on_disk.block[new_size as usize..current_size as usize].fill(0);
-            // 更新inode的size
-            inner.inode_on_disk.set_size(new_size);
-            return Ok(0);
+        {
+            let mut inner = self.inner.write();
+            // 处理inline data类型
+            if inner.inode_on_disk.has_inline_data() {
+                assert!(current_size <= EXT4_MAX_INLINE_DATA as u64);
+                inner.inode_on_disk.block[new_size as usize..current_size as usize].fill(0);
+                // 更新inode的size
+                inner.inode_on_disk.set_size(new_size);
+                return Ok(0);
+            }
         }
         // 清理页缓存
         let first_page_to_clear = (new_size as usize + PAGE_SIZE - 1) / PAGE_SIZE;
@@ -1587,6 +1604,7 @@ impl Ext4Inode {
         let current_block_count = (current_size + block_size - 1) / block_size;
         let mut logical_start_block = new_block_count as u32;
         // for logical_block_num in new_block_count..current_block_count {
+        let mut inner = self.inner.write();
         while logical_start_block < current_block_count as u32 {
             if let Some(extent) = inner.inode_on_disk.lookup_extent(
                 logical_start_block as u32,
@@ -1600,10 +1618,6 @@ impl Ext4Inode {
                 );
                 logical_start_block += extent.len as u32;
             } else {
-                // panic!(
-                //     "[Ext4Inode::shrink_size] No extent found for logical block {}",
-                //     logical_start_block
-                // );
                 // 可能存在文件空洞
                 log::warn!(
                     "[Ext4Inode::shrink_size] No extent found for logical block {}, maybe a hole",
@@ -1736,8 +1750,9 @@ impl Ext4Inode {
                     // 清除数据块内容
                     let phsical_block_id = extent.physical_start_block() + block_num as usize
                         - extent.logical_block as usize;
+                    let virtio_block_id = phsical_block_id * (*FS_BLOCK_SIZE / VIRTIO_BLOCK_SIZE);
                     self.block_device
-                        .write_blocks(phsical_block_id, &[0u8; PAGE_SIZE]);
+                        .write_blocks(virtio_block_id, &[0u8; PAGE_SIZE]);
                     // 释放block
                     self.ext4_fs.upgrade().unwrap().dealloc_block(
                         self.block_device.clone(),
@@ -1795,7 +1810,7 @@ impl Ext4Inode {
     }
     /// 目录项的插入
     ///     1. 注意可能使用inline_data
-    /// Todo: 1. 目前没有考虑目录扩容的情况
+    /// ToOptimize: 获得page_cache后, 直接修改page_cache的内容, 而不是重新读取buf
     pub fn add_entry(&self, dentry: Arc<Dentry>, inode_num: u32, file_type: u8) {
         assert!(self.inner.read().inode_on_disk.is_dir(), "not a directory");
         log::error!(
@@ -1817,6 +1832,8 @@ impl Ext4Inode {
         match dir_content.add_entry(&dentry.get_last_name(), inode_num, file_type) {
             Ok(_) => {
                 log::info!("[Ext4Inode::add_entry] add entry success");
+                // 写回page cache
+                self.write(0, &buf);
             }
             Err(e) => {
                 // 目录已满, 需要扩容
@@ -1825,8 +1842,19 @@ impl Ext4Inode {
                 const EMPTY_DENTRY: [u8; 8] = [0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00];
 
                 // 目录扩容, 需要申请新的block
-                self.write(old_dir_size, EMPTY_DENTRY.as_ref());
+                // 6.10 Todo
+                // 申请新的block
+                let new_block = self.alloc_one_block();
+                // 更新extent tree
+                self.insert_extent(
+                    (old_dir_size / PAGE_SIZE) as u32,
+                    new_block as u64,
+                    1,
+                    self.block_device.clone(),
+                    self.get_block_size(),
+                );
                 self.set_size((old_dir_size + PAGE_SIZE) as u64);
+                self.write(old_dir_size, EMPTY_DENTRY.as_ref());
                 // 重新读取目录内容
                 self.read(old_dir_size, &mut buf)
                     .expect("read failed after extend");
@@ -1834,12 +1862,10 @@ impl Ext4Inode {
                 dir_content
                     .add_entry(&dentry.get_last_name(), inode_num, file_type)
                     .expect("Ext4Inode::add_entry after extend failed");
+                // 写回page cache(仅最后一页)
+                self.write(old_dir_size, &buf);
             }
         }
-
-        // 写回page cache
-        // Todo: 没有处理目录多页的情况
-        self.write(0, &buf);
     }
     pub fn delete_entry(&self, name: &str, inode_num: u32) -> Result<(), Errno> {
         assert!(self.inner.read().inode_on_disk.is_dir(), "not a directory");

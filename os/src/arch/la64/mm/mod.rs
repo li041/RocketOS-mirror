@@ -2,7 +2,7 @@
 use heap_allocator::heap_test;
 
 use crate::{
-    arch::config::PAGE_SIZE,
+    arch::config::{PAGE_SIZE, USER_MAX_VA},
     mm::{MapPermission, VPNRange, VirtAddr},
     syscall::errno::{Errno, SyscallRet},
     task::current_task,
@@ -24,7 +24,7 @@ pub unsafe fn sfence_vma_vaddr(vaddr: usize) {
 
 pub fn copy_to_user<T: Copy>(to: *mut T, from: *const T, n: usize) -> SyscallRet {
     log::trace!("[copy_to_user]");
-    if to.is_null() || from.is_null() {
+    if to.is_null() || from.is_null() || to as usize > USER_MAX_VA {
         log::error!(
             "null pointer: to: {:#x}, from: {:#x}",
             to as usize,
@@ -79,7 +79,7 @@ pub fn copy_to_user<T: Copy>(to: *mut T, from: *const T, n: usize) -> SyscallRet
 pub fn copy_from_user<'a, T: Copy>(from: *const T, to: *mut T, n: usize) -> SyscallRet {
     log::trace!("[copy from user]");
     if from.is_null() {
-        return Err(Errno::EINVAL);
+        return Err(Errno::EFAULT);
     }
     // 没有数据复制
     if n == 0 {

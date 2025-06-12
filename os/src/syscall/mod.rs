@@ -16,9 +16,9 @@ use fs::{
     sys_fadvise64, sys_fallocate, sys_fchdir, sys_fchmod, sys_fchmodat, sys_fchown, sys_fchownat,
     sys_fcntl, sys_fstat, sys_fstatat, sys_fsync, sys_ftruncate, sys_getcwd, sys_getdents64,
     sys_ioctl, sys_linkat, sys_lseek, sys_mkdirat, sys_mknodat, sys_mount, sys_msync, sys_openat,
-    sys_pipe2, sys_ppoll, sys_pread, sys_pselect6, sys_pwrite, sys_read, sys_readlinkat, sys_readv,
-    sys_renameat2, sys_sendfile, sys_statfs, sys_statx, sys_symlinkat, sys_sync, sys_umask,
-    sys_umount2, sys_unlinkat, sys_utimensat, sys_write, sys_writev,
+    sys_openat2, sys_pipe2, sys_ppoll, sys_pread, sys_pselect6, sys_pwrite, sys_read,
+    sys_readlinkat, sys_readv, sys_renameat2, sys_sendfile, sys_statfs, sys_statx, sys_symlinkat,
+    sys_sync, sys_umask, sys_umount2, sys_unlinkat, sys_utimensat, sys_write, sys_writev,
 };
 use mm::{
     sys_brk, sys_get_mempolicy, sys_madvise, sys_membarrier, sys_mlock, sys_mmap, sys_mprotect,
@@ -215,7 +215,9 @@ const SYSCALL_PSELECT: usize = 72;
 const SYSCALL_SETSID: usize = 157;
 const SYSCALL_ADJTIMEX: usize = 171;
 const SYSCALL_CLOCKADJTIME: usize = 266;
-pub const SYSCALL_FACCESSAT2: usize = 439;
+const SYSCALL_CLOSE_RANGE: usize = 436;
+const SYSCALL_OPENAT2: usize = 437;
+const SYSCALL_FACCESSAT2: usize = 439;
 
 const CARELESS_SYSCALLS: [usize; 9] = [62, 63, 64, 72, 113, 124, 129, 165, 260];
 // const SYSCALL_NUM_2_NAME: [(&str, usize); 4] = [
@@ -287,12 +289,14 @@ pub fn syscall(
         SYSCALL_WRITE => sys_write(a0, a1 as *const u8, a2),
         SYSCALL_READV => sys_readv(a0, a1 as *const IoVec, a2),
         SYSCALL_WRITEV => sys_writev(a0, a1 as *const IoVec, a2),
-        SYSCALL_PREAD => sys_pread(a0, a1 as *mut u8, a2, a3),
-        SYSCALL_PWRITE => sys_pwrite(a0, a1 as *const u8, a2, a3),
+        SYSCALL_PREAD => sys_pread(a0, a1 as *mut u8, a2, a3 as isize),
+        SYSCALL_PWRITE => sys_pwrite(a0, a1 as *const u8, a2, a3 as isize),
         SYSCALL_SENDFILE => sys_sendfile(a0, a1, a2 as *mut usize, a3),
         SYSCALL_PSELECT6 => sys_pselect6(a0, a1, a2, a3, a4 as *const TimeSpec, a5),
         SYSCALL_PPOLL => sys_ppoll(a0 as *mut PollFd, a1, a2 as *const TimeSpec, a3),
-        SYSCALL_READLINKAT => sys_readlinkat(a0 as i32, a1 as *const u8, a2 as *mut u8, a3),
+        SYSCALL_READLINKAT => {
+            sys_readlinkat(a0 as i32, a1 as *const u8, a2 as *mut u8, a3 as isize)
+        }
         SYSCALL_FSTATAT => sys_fstatat(a0 as i32, a1 as *const u8, a2 as *mut Stat, a3 as i32),
         SYSCALL_FSTAT => sys_fstat(a0 as i32, a1 as *mut Stat),
         SYSCALL_SYNC => sys_sync(a0),
@@ -411,6 +415,7 @@ pub fn syscall(
         SYSCALL_SOCKETPAIR => syscall_socketpair(a0, a1, a2, a3 as *mut i32),
         SYSCALL_SENDMSG => syscall_sendmsg(a0, a1, a2),
         SYSCALL_RECVMSG => syscall_recvmsg(a0, a1, a2),
+        SYSCALL_OPENAT2 => sys_openat2(a0 as i32, a1 as *const u8, a2 as *const u8, a3 as usize),
         SYSCALL_FACCESSAT2 => sys_faccessat(a0 as usize, a1 as *const u8, a2 as i32, a3 as i32),
         SYSCALL_SETDOMAINNAME=>syscall_setdomainname(a0 as *const u8, a1),
         SYSCALL_SETHOSTNAME=>syscall_sethostname(a0 as *const u8, a1),
