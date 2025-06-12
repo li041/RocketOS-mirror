@@ -17,7 +17,7 @@ use crate::{
         uapi::Whence,
         FileOld,
     },
-    syscall::errno::SyscallRet,
+    syscall::errno::{Errno, SyscallRet},
     task::current_task,
     timer::TimeSpec,
 };
@@ -103,7 +103,7 @@ impl InodeOp for FdDirInode {
             }
         };
     }
-    fn getdents(&self, buf: &mut [u8], offset: usize) -> (usize, usize) {
+    fn getdents(&self, buf: &mut [u8], offset: usize) -> Result<(usize, usize), Errno> {
         const NAME_OFFSET: usize = 19;
         let mut buf_offset = 0;
         let mut file_offset = 0;
@@ -140,7 +140,7 @@ impl InodeOp for FdDirInode {
             buf_offset += d_reclen;
             file_offset += d_reclen;
         }
-        (file_offset, buf_offset)
+        Ok((file_offset, buf_offset))
     }
     fn getattr(&self) -> Kstat {
         let mut kstat = Kstat::new();

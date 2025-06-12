@@ -95,50 +95,6 @@ impl InodeOp for Ext4Inode {
             assert!(child.absolute_path == format!("{}/{}", parent_entry.absolute_path, name));
             return child.clone();
         } else {
-            // // 处理特殊类型文件
-            // if dentry.absolute_path.starts_with("/proc") {
-            //     // procfs的文件类型
-            //     if dentry.absolute_path == "/proc/mounts" {
-            //         dentry = Dentry::new(
-            //             dentry.absolute_path.clone(),
-            //             Some(parent_entry.clone()),
-            //             DentryFlags::DCACHE_REGULAR_TYPE,
-            //             MOUNTS.get().unwrap().get_inode(),
-            //         );
-            //     }
-            //     if dentry.absolute_path == "/proc/meminfo" {
-            //         dentry = Dentry::new(
-            //             dentry.absolute_path.clone(),
-            //             Some(parent_entry.clone()),
-            //             DentryFlags::DCACHE_REGULAR_TYPE,
-            //             MEMINFO.get().unwrap().get_inode(),
-            //         );
-            //     }
-            //     if dentry.absolute_path == "/proc/self/exe" {
-            //         dentry = Dentry::new(
-            //             dentry.absolute_path.clone(),
-            //             Some(parent_entry.clone()),
-            //             DentryFlags::DCACHE_SYMLINK_TYPE,
-            //             EXE.get().unwrap().get_inode(),
-            //         );
-            //     }
-            //     if dentry.absolute_path == "/proc/self/maps" {
-            //         dentry = Dentry::new(
-            //             dentry.absolute_path.clone(),
-            //             Some(parent_entry.clone()),
-            //             DentryFlags::DCACHE_REGULAR_TYPE,
-            //             MAPS.get().unwrap().get_inode(),
-            //         );
-            //     }
-            //     if dentry.absolute_path == "/proc/self/pagemap" {
-            //         dentry = Dentry::new(
-            //             dentry.absolute_path.clone(),
-            //             Some(parent_entry.clone()),
-            //             DentryFlags::DCACHE_REGULAR_TYPE,
-            //             PAGEMAP.get().unwrap().get_inode(),
-            //         );
-            //     }
-            // }
             // 从目录中查找
             if let Some(ext4_dentry) = self.lookup(name) {
                 log::info!("[InodeOp::lookup] ext4_dentry: {:?}", ext4_dentry);
@@ -153,7 +109,7 @@ impl InodeOp for Ext4Inode {
 
                 let inode_mode = inode.get_mode();
                 let dentry_flags;
-                log::error!("inode: {:#x}", inode_mode & S_IFMT);
+                // log::error!("inode: {:#x}", inode_mode & S_IFMT);
                 match inode_mode & S_IFMT {
                     S_IFREG => dentry_flags = DentryFlags::DCACHE_REGULAR_TYPE,
                     S_IFDIR => dentry_flags = DentryFlags::DCACHE_DIRECTORY_TYPE,
@@ -435,7 +391,29 @@ impl InodeOp for Ext4Inode {
             .upgrade()
             .unwrap()
             .alloc_inode(self.block_device.clone(), false);
-        let (child_uid, child_gid) = self.child_uid_gid();
+        let task = current_task();
+        let child_uid = task.fsuid();
+        let child_gid;
+        let mut mode = mode & S_IALLUGO | S_IFREG; // 常规文件标志
+        if self.inner.read().inode_on_disk.get_mode() & S_ISGID != 0 {
+            // 如果父目录的S_ISGID标志位被设置, 则子文件的gid与父目录相同
+            child_gid = self.inner.read().inode_on_disk.get_gid();
+            log::warn!(
+                "[Ext4Inode::create] dir S_ISGID set, child_gid: {}",
+                child_gid
+            );
+            if child_uid != 0 {
+                log::warn!(
+                    "[Ext4Inode::create] clear S_ISGID flag for child: uid: {}, gid: {}",
+                    child_uid,
+                    child_gid
+                );
+                mode &= !S_ISGID; // 清除S_ISGID标志位
+            }
+        } else {
+            // 否则使用当前任务的fsgid
+            child_gid = task.fsgid();
+        }
         // 2. 初始化新的inode结构
         let new_inode = Ext4Inode::new(
             (mode & S_IALLUGO) as u16 | S_IFREG,
@@ -462,6 +440,11 @@ impl InodeOp for Ext4Inode {
             .unwrap()
             .alloc_inode(self.block_device.clone(), true);
         let (child_uid, child_gid) = self.child_uid_gid();
+        let mut mode = mode & S_IALLUGO | S_IFDIR; // 目录标志
+        if self.get_mode() & S_ISGID != 0 {
+            // 继承父目录的S_ISGID标志位
+            mode |= S_ISGID;
+        }
         // 初始化新的inode结构
         let new_inode = Ext4Inode::new(
             (mode & S_IALLUGO) | S_IFDIR as u16,
@@ -547,7 +530,7 @@ impl InodeOp for Ext4Inode {
                 // 主设备号1表示mem
                 match (major, minor) {
                     (1, 3) => {
-                        assert!(dentry.absolute_path == "/dev/null");
+                        // assert!(dentry.absolute_path == "/dev/null");
                         let new_inode_num = self
                             .ext4_fs
                             .upgrade()
@@ -642,7 +625,7 @@ impl InodeOp for Ext4Inode {
                 match (major, minor) {
                     (7, id) => {
                         // /dev/loopX, X是设备号
-                        assert!(dentry.absolute_path.starts_with("/dev/loop"));
+                        // assert!(dentry.absolute_path.starts_with("/dev/loop"));
                         let new_inode_num = self
                             .ext4_fs
                             .upgrade()
@@ -667,7 +650,7 @@ impl InodeOp for Ext4Inode {
             .update_type_from_negative(DentryFlags::DCACHE_SPECIAL_TYPE);
     }
     // 返回(file_offset, linux_dirents)
-    fn getdents(&self, buf: &mut [u8], offset: usize) -> (usize, usize) {
+    fn getdents(&self, buf: &mut [u8], offset: usize) -> Result<(usize, usize), Errno> {
         self.getdents(buf, offset)
     }
     fn getattr(&self) -> Kstat {

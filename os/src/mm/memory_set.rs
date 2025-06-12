@@ -1388,6 +1388,49 @@ impl MemorySet {
     // 使用`MapArea`做检查, 而不是查页表
     // 要保证MapArea与页表的一致性, 也就是说, 页表中的映射都在MapArea中, MapArea中的映射都在页表中
     // 检查用户传进来的虚拟地址的合法性
+    // pub fn check_valid_user_vpn_range(
+    //     &self,
+    //     vpn_range: VPNRange,
+    //     wanted_map_perm: MapPermission,
+    // ) -> SyscallRet {
+    //     log::trace!("[check_valid_user_vpn_range]");
+    //     let mut current_vpn = vpn_range.get_start();
+    //     let end_vpn = vpn_range.get_end();
+
+    //     while current_vpn < end_vpn {
+    //         let mut found = false;
+
+    //         for (_, area) in self.areas.iter() {
+    //             if area.vpn_range.contains_vpn(current_vpn) {
+    //                 if !area.map_perm.contains(wanted_map_perm) {
+    //                     log::error!("[check_valid_user_vpn_range] vpn {:#x} has wrong map permission: {:?}, wanted: {:?}",
+    //                                 current_vpn.0, area.map_perm, wanted_map_perm);
+    //                     return Err(Errno::EFAULT);
+    //                 }
+    //                 current_vpn = core::cmp::min(area.vpn_range.get_end(), end_vpn);
+    //                 found = true;
+    //                 break;
+    //             }
+    //         }
+
+    //         if !found {
+    //             log::error!(
+    //                 "[check_valid_user_vpn_range] can't find area with vpn {:#x}",
+    //                 current_vpn.0
+    //             );
+    //             // self.page_table.dump_all_user_mapping();
+    //             self.areas.iter().for_each(|(vpn, area)| {
+    //                 log::error!(
+    //                     "[check_valid_user_vpn_range] area: {:#x?}, {:?}",
+    //                     area.vpn_range,
+    //                     area.map_perm
+    //                 );
+    //             });
+    //             return Err(Errno::EFAULT);
+    //         }
+    //     }
+    //     Ok(0)
+    // }
     pub fn check_valid_user_vpn_range(
         &self,
         vpn_range: VPNRange,
@@ -1397,29 +1440,18 @@ impl MemorySet {
         let mut current_vpn = vpn_range.get_start();
         let end_vpn = vpn_range.get_end();
 
-        while current_vpn < end_vpn {
-            let mut found = false;
-
-            for (_, area) in self.areas.iter() {
-                if area.vpn_range.contains_vpn(current_vpn) {
-                    if !area.map_perm.contains(wanted_map_perm) {
-                        log::error!("[check_valid_user_vpn_range] vpn {:#x} has wrong map permission: {:?}, wanted: {:?}",
-                                    current_vpn.0, area.map_perm, wanted_map_perm);
-                        return Err(Errno::EFAULT);
-                    }
-                    current_vpn = core::cmp::min(area.vpn_range.get_end(), end_vpn);
-                    found = true;
-                    break;
-                }
+        for (_, area) in self.areas.iter() {
+            // 如果该区域在 current_vpn 之后，跳过
+            if area.vpn_range.get_end() <= current_vpn {
+                continue;
             }
-
-            if !found {
+            // 如果该区域不覆盖 current_vpn，说明有空洞
+            if !area.vpn_range.contains_vpn(current_vpn) {
                 log::error!(
                     "[check_valid_user_vpn_range] can't find area with vpn {:#x}",
                     current_vpn.0
                 );
-                // self.page_table.dump_all_user_mapping();
-                self.areas.iter().for_each(|(vpn, area)| {
+                self.areas.iter().for_each(|(_, area)| {
                     log::error!(
                         "[check_valid_user_vpn_range] area: {:#x?}, {:?}",
                         area.vpn_range,
@@ -1428,7 +1460,34 @@ impl MemorySet {
                 });
                 return Err(Errno::EFAULT);
             }
+            // 权限不满足
+            if !area.map_perm.contains(wanted_map_perm) {
+                log::error!(
+                "[check_valid_user_vpn_range] vpn {:#x} has wrong map permission: {:?}, wanted: {:?}",
+                current_vpn.0,
+                area.map_perm,
+                wanted_map_perm
+            );
+                return Err(Errno::EFAULT);
+            }
+
+            // 更新 current_vpn 到该区域结束（不要超过 end_vpn）
+            current_vpn = core::cmp::min(area.vpn_range.get_end(), end_vpn);
+
+            if current_vpn >= end_vpn {
+                break;
+            }
         }
+
+        if current_vpn < end_vpn {
+            log::error!(
+                "[check_valid_user_vpn_range] reach end prematurely at {:#x}, want {:#x}",
+                current_vpn.0,
+                end_vpn.0
+            );
+            return Err(Errno::EFAULT);
+        }
+
         Ok(0)
     }
     // 检查是否是COW或者lazy_allocation的区域
@@ -1535,7 +1594,7 @@ impl MemorySet {
                         // 根据VPN找到对应的data_frame, 并查看Arc的引用计数
                         if Arc::strong_count(data_frame) == 1 {
                             // 直接修改pte
-                            log::warn!("[handle_recoverable_page_fault] arc strong count == 1");
+                            // log::warn!("[handle_recoverable_page_fault] arc strong count == 1");
                             let mut flags = pte.flags();
                             flags.remove(PTEFlags::COW);
                             flags.insert(PTEFlags::W);

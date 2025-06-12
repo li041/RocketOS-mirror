@@ -105,11 +105,12 @@ pub trait InodeOp: Any + Send + Sync {
     }
     // 检查是否是目录, 且有子目录项可以用于lookup
     fn can_lookup(&self) -> bool {
-        unimplemented!();
+        // unimplemented!();
+        false
     }
     // 上层readdir调用
     // 返回(file_offset, buf_offset)
-    fn getdents(&self, _buf: &mut [u8], _offset: usize) -> (usize, usize) {
+    fn getdents(&self, _buf: &mut [u8], _offset: usize) -> Result<(usize, usize), Errno> {
         unimplemented!();
     }
     // 上层fstat调用

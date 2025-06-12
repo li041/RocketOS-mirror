@@ -284,3 +284,49 @@ bitflags::bitflags! {
         const UNSHARE_RANGE = 0x40;
     }
 }
+
+// openat2 how
+// 目前OpenHow只有三个字段
+pub const MAX_OPEN_HOW: usize = 31; // openat2 的 how 参数最大长度
+
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy)]
+pub struct OpenHow {
+    pub flags: u64,   // 打开文件的标志
+    pub mode: u64,    // 文件的权限模式
+    pub resolve: u64, // 解析标志
+}
+
+bitflags::bitflags! {
+    /// openat2 系统调用的路径解析标志（resolve 字段）
+    pub struct ResolveFlags: u64 {
+        /// 禁止跨越挂载点（包括绑定挂载），路径必须在同一挂载源下
+        const RESOLVE_NO_XDEV = 0x01;
+
+        /// 禁止解析 magic link（如 /proc/self/exe、/proc/pid/fd/*）
+        const RESOLVE_NO_MAGICLINKS = 0x02;
+
+        /// 禁止解析所有符号链接（隐含 RESOLVE_NO_MAGICLINKS）
+        const RESOLVE_NO_SYMLINKS = 0x04;
+
+        /// 限制路径只能在 dirfd 指定目录及其子目录下（防止 ".." 跳出）
+        const RESOLVE_BENEATH = 0x08;
+
+        /// 以 dirfd 指定目录为“根目录”解析路径，类似临时 chroot
+        const RESOLVE_IN_ROOT = 0x10;
+
+        /// 要求所有路径组件必须已缓存，不能触发 I/O，否则返回 EAGAIN
+        const RESOLVE_CACHED = 0x20;
+    }
+}
+
+// close_range flags
+bitflags::bitflags! {
+    #[derive(Debug, Clone, Copy, Default)]
+    pub struct CloseRangeFlags: i32 {
+        /// 并不立即关闭文件描述符，而是设置这些文件描述符的 FD_CLOEXEC 标志。
+        const CLOSE_RANGE_CLOEXEC = 0x1;
+        ///  先解除与其他进程共享的文件描述符表（unshare fd table），再进行关闭。
+        const CLOSE_RANGE_UNSHARE = 0x2;
+    }
+}

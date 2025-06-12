@@ -5,21 +5,26 @@ use alloc::vec::Vec;
 use alloc::string::{String, ToString};
 use virtio_drivers::PAGE_SIZE;
 
+use crate::arch::config::USER_MAX_VA;
 use crate::arch::timer::get_time_ms;
 use crate::ext4::dentry;
-use crate::ext4::inode::S_ISGID;
-use crate::fs::dentry::{chown, dentry_check_access, F_OK, R_OK, W_OK, X_OK};
+use crate::ext4::inode::{S_IFREG, S_ISGID};
+use crate::fs::dentry::{chown, dentry_check_access, LinuxDirent64, F_OK, R_OK, W_OK, X_OK};
 use crate::fs::fd_set::init_fdset;
 use crate::fs::fdtable::FdFlags;
 use crate::fs::file::OpenFlags;
 use crate::fs::kstat::Statx;
 use crate::fs::mount::get_mount_by_dentry;
-use crate::fs::namei::lookup_dentry;
+use crate::fs::namei::{
+    link_path_walk, link_path_walk2, lookup_dentry, open_last_lookups, open_last_lookups2,
+};
 use crate::fs::pipe::make_pipe;
 use crate::fs::uapi::{
-    convert_old_dev_to_new, DevT, FallocFlags, PollEvents, PollFd, RenameFlags, StatFs, Whence,
+    convert_old_dev_to_new, CloseRangeFlags, DevT, FallocFlags, OpenHow, PollEvents, PollFd,
+    RenameFlags, ResolveFlags, StatFs, Whence, MAX_OPEN_HOW,
 };
-use crate::fs::EXT4_MAX_FILE_SIZE;
+use crate::fs::{old, path, AT_REMOVEDIR, EXT4_MAX_FILE_SIZE};
+use crate::futex::flags;
 use crate::mm::{MapType, VPNRange, VirtAddr, VirtPageNum};
 use crate::signal::{Sig, SigSet};
 use crate::syscall::errno::Errno;
@@ -64,7 +69,6 @@ pub fn sys_lseek(fd: usize, offset: isize, whence: usize) -> SyscallRet {
     }
 }
 
-// #[cfg(target_arch = "riscv64")]
 pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> SyscallRet {
     let task = current_task();
     let file = task.fd_table().get_file(fd);
@@ -74,6 +78,11 @@ pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> SyscallRet {
             log::error!("[sys_read] fd {} not readable", fd);
             return Err(Errno::EBADF);
         }
+        // Todo: Socket没有实现get_inode会寄, 改在Impl FileOp for File中检查
+        // if file.get_inode().can_lookup() {
+        //     log::error!("[sys_read] fd {} is dir", fd);
+        //     return Err(Errno::EISDIR);
+        // }
         // let ret = file.read(unsafe { core::slice::from_raw_parts_mut(buf, len) });
         let mut ker_buf = vec![0u8; len];
         let read_len = file.read(&mut ker_buf)?;
@@ -89,34 +98,6 @@ pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> SyscallRet {
         Err(Errno::EBADF)
     }
 }
-
-// #[cfg(target_arch = "loongarch64")]
-// pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> SyscallRet {
-//     use crate::mm::VirtAddr;
-//     log::trace!("[sys_read]");
-//     let task = current_task();
-//     let file = task.fd_table().get_file(fd);
-//     if let Some(file) = file {
-//         let file = file.clone();
-//         if !file.readable() {
-//             return Err(Errno::EBADF);
-//         }
-//         let buf = current_task().op_memory_set(|memory_set| {
-//             memory_set
-//                 .translate_va_to_pa(VirtAddr::from(buf as usize))
-//                 .unwrap()
-//         });
-//         let ret = file.read(unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, len) });
-//         // ToOptimize:
-//         // if fd >= 3 {
-//         //     log::info!("sys_read: fd: {}, len: {}, ret: {}", fd, len, ret);
-//         // }
-//         Ok(ret)
-//     } else {
-//         log::error!("[sys_read] fd {} not opened", fd);
-//         Err(Errno::EBADF)
-//     }
-// }
 
 #[no_mangle]
 pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> SyscallRet {
@@ -157,13 +138,35 @@ pub fn sys_readv(fd: usize, iov_ptr: *const IoVec, iovcnt: usize) -> SyscallRet 
     if !file.readable() {
         return Err(Errno::EBADF);
     }
+    if file.get_path().dentry.is_dir() {
+        log::error!("[sys_readv] fd {} is a directory", fd);
+        return Err(Errno::EISDIR);
+    }
     let mut total_read = 0;
+    if iovcnt == 0 {
+        log::warn!("[sys_readv] iovcnt is 0, returning 0");
+        return Ok(0);
+    }
+    if iovcnt > i32::MAX as usize {
+        log::error!(
+            "[sys_readv] iovcnt is less than zero or greater than
+              the permitted maximum"
+        );
+        return Err(Errno::EINVAL);
+    }
     let mut iov: Vec<IoVec> = vec![IoVec::default(); iovcnt];
+
     copy_from_user(iov_ptr, iov.as_mut_ptr(), iovcnt)?;
     log::info!("sys_readv: iov: {:?}", iov);
+    let mut iovec_total_len = 0;
     for iovec in iov.iter() {
+        iovec_total_len += iovec.len;
         if iovec.len == 0 {
             continue;
+        }
+        if iovec_total_len > isize::MAX as usize {
+            log::error!("[sys_readv] total length of iovec exceeds ssize_t max");
+            return Err(Errno::EINVAL);
         }
         // let buf = copy_from_user_mut(iovec.base as *mut u8, iovec.len).unwrap();
         let mut ker_buf = vec![0u8; iovec.len];
@@ -214,15 +217,46 @@ pub fn sys_writev(fd: usize, iov_ptr: *const IoVec, iovcnt: usize) -> SyscallRet
     if !file.writable() {
         return Err(Errno::EBADF);
     }
+    if file.get_inode().can_lookup() {
+        log::error!("[sys_writev] fd {} is a directory", fd);
+        return Err(Errno::EISDIR);
+    }
     let mut total_written = 0;
+    if iovcnt == 0 {
+        log::warn!("[sys_readv] iovcnt is 0, returning 0");
+        return Ok(0);
+    }
+    if iovcnt > i32::MAX as usize {
+        log::error!(
+            "[sys_writev] iovcnt is less than zero or greater than
+              the permitted maximum"
+        );
+        return Err(Errno::EINVAL);
+    }
     let mut iov: Vec<IoVec> = vec![IoVec::default(); iovcnt];
     copy_from_user(iov_ptr, iov.as_mut_ptr(), iovcnt)?;
+    let mut iovec_total_len = 0;
     for iovec in iov.iter() {
+        iovec_total_len += iovec.len;
         if iovec.len == 0 {
             continue;
         }
+        if iovec_total_len > isize::MAX as usize {
+            log::error!("[sys_writev] total length of iovec exceeds ssize_t max");
+            return Err(Errno::EINVAL);
+        }
         let mut ker_buf = vec![0u8; iovec.len];
-        copy_from_user(iovec.base as *const u8, ker_buf.as_mut_ptr(), iovec.len)?;
+        match copy_from_user(iovec.base as *const u8, ker_buf.as_mut_ptr(), iovec.len) {
+            Ok(_) => {}
+            Err(e) => {
+                log::error!("[sys_writev] copy_from_user failed: {:?}", e);
+                // 如果部分写入成功, 则返回已经写入的字节数
+                if total_written > 0 {
+                    return Ok(total_written);
+                }
+                return Err(e);
+            }
+        }
         // log::warn!(
         //     "[sys_writev] iovec.base: {:#x}, iovec.len: {}, ker_buf: {:?}",
         //     iovec.base,
@@ -230,27 +264,31 @@ pub fn sys_writev(fd: usize, iov_ptr: *const IoVec, iovcnt: usize) -> SyscallRet
         //     ker_buf
         // );
         let written = file.write(&ker_buf)?;
-        // 如果写入失败, 则返回已经写入的字节数, 或错误码
-        if written == 0 {
-            return if total_written > 0 {
-                Ok(total_written)
-            } else {
-                Ok(written)
-            };
-        }
         total_written += written;
     }
     Ok(total_written)
 }
 
-pub fn sys_pread(fd: usize, buf: *mut u8, count: usize, offest: usize) -> SyscallRet {
+pub fn sys_pread(fd: usize, buf: *mut u8, count: usize, offset: isize) -> SyscallRet {
     log::info!(
         "[sys_pread] fd: {}, buf: {:?}, count: {}, offset: {}",
         fd,
         buf,
         count,
-        offest
+        offset
     );
+    if fd > isize::MAX as usize {
+        log::error!("[sys_pread] fd is negative: {}", fd);
+        return Err(Errno::EBADF);
+    }
+    if offset < 0 {
+        log::error!("[sys_pread] offset is negative or too large: {}", offset);
+        return Err(Errno::EINVAL);
+    }
+    if count == 0 {
+        log::warn!("[sys_pread] count is 0, returning 0");
+        return Ok(0);
+    }
     let task = current_task();
     let file = task.fd_table().get_file(fd as usize);
     if let Some(file) = file {
@@ -258,8 +296,12 @@ pub fn sys_pread(fd: usize, buf: *mut u8, count: usize, offest: usize) -> Syscal
         if !file.readable() {
             return Err(Errno::EBADF);
         }
+        if file.get_inode().can_lookup() {
+            log::error!("[sys_pread] fd {} is dir", fd);
+            return Err(Errno::EISDIR);
+        }
         let mut ker_buf = vec![0u8; count];
-        let read_len = file.pread(&mut ker_buf, offest)?;
+        let read_len = file.pread(&mut ker_buf, offset as usize)?;
         let ker_buf_ptr = ker_buf.as_ptr();
         // 写回用户空间
         copy_to_user(buf, ker_buf_ptr, read_len as usize)
@@ -269,14 +311,26 @@ pub fn sys_pread(fd: usize, buf: *mut u8, count: usize, offest: usize) -> Syscal
     }
 }
 
-pub fn sys_pwrite(fd: usize, buf: *const u8, count: usize, offest: usize) -> SyscallRet {
+pub fn sys_pwrite(fd: usize, buf: *const u8, count: usize, offset: isize) -> SyscallRet {
     log::info!(
         "[sys_pwrite] fd: {}, buf: {:?}, count: {}, offset: {}",
         fd,
         buf,
         count,
-        offest
+        offset
     );
+    if fd > isize::MAX as usize {
+        log::error!("[sys_pwrite] fd is negative: {}", fd);
+        return Err(Errno::EBADF);
+    }
+    if offset < 0 {
+        log::error!("[sys_pwrite] offset is negative or too large: {}", offset);
+        return Err(Errno::EINVAL);
+    }
+    if count == 0 {
+        log::warn!("[sys_pwrite] count is 0, returning 0");
+        return Ok(0);
+    }
     let task = current_task();
     let file = task.fd_table().get_file(fd as usize);
     if let Some(file) = file {
@@ -289,7 +343,7 @@ pub fn sys_pwrite(fd: usize, buf: *const u8, count: usize, offest: usize) -> Sys
             "[sys_pwrite] ker_buf: {:?}",
             String::from_utf8(ker_buf.clone())
         );
-        file.pwrite(&ker_buf, offest)
+        file.pwrite(&ker_buf, offset as usize)
     } else {
         log::error!("[sys_pwrite] fd {} not opened", fd);
         Err(Errno::EBADF)
@@ -340,11 +394,27 @@ pub fn sys_unlinkat(dirfd: i32, pathname: *const u8, flag: i32) -> SyscallRet {
         path,
         flag
     );
+    if path.len() > PATH_MAX {
+        log::error!("[sys_unlinkat] pathname is too long: {}", path.len());
+        return Err(Errno::ENAMETOOLONG);
+    }
+    if flag & !AT_REMOVEDIR != 0 {
+        log::error!("[sys_unlinkat] invalid flag: {}", flag);
+        return Err(Errno::EINVAL);
+    }
     let mut nd = Nameidata::new(&path, dirfd)?;
     match filename_lookup(&mut nd, false) {
         Ok(dentry) => {
             assert!(!dentry.is_negative());
-            let parent_inode = nd.dentry.get_inode();
+            let dir_dentry = nd.dentry.clone();
+            // 检查父目录是否有写权限
+            dentry_check_access(&dir_dentry, W_OK, true)?;
+            // 检查是否是目录
+            if dentry.is_dir() && (flag & AT_REMOVEDIR) == 0 {
+                log::error!("[sys_unlinkat] cannot unlink a directory without AT_REMOVEDIR");
+                return Err(Errno::EISDIR);
+            }
+            let parent_inode = dir_dentry.get_inode();
             parent_inode.unlink(dentry.clone())?;
             // 从dentry cache中删除
             delete_dentry(dentry);
@@ -374,14 +444,36 @@ pub fn sys_linkat(
         newpath,
         flags
     );
-    let mut old_nd = Nameidata::new(&oldpath, olddirfd)?;
+    if oldpath.len() > NAME_MAX || newpath.len() > NAME_MAX {
+        log::error!(
+            "[sys_linkat] oldpath or newpath is too long: {}, {}",
+            oldpath.len(),
+            newpath.len()
+        );
+        return Err(Errno::ENAMETOOLONG);
+    }
+    // Todo: fake, 需要支持mount
+    if oldpath == "/proc/meminfo" {
+        return Err(Errno::EXDEV);
+    }
+    if flags & !(AT_SYMLINK_FOLLOW | AT_EMPTY_PATH) != 0 {
+        log::error!("[sys_linkat] invalid flags: {}", flags);
+        return Err(Errno::EINVAL);
+    }
     let follow_symlink = flags & AT_SYMLINK_FOLLOW != 0;
+    let mut old_nd = Nameidata::new(&oldpath, olddirfd)?;
     match filename_lookup(&mut old_nd, follow_symlink) {
         Ok(old_dentry) => {
             let mut new_nd = Nameidata::new(&newpath, newdirfd)?;
+            if old_dentry.is_dir() {
+                log::error!("[sys_linkat] old_dentry is dir");
+                return Err(Errno::EPERM);
+            }
             let new_fake_lookup_flags = 0;
             match filename_create(&mut new_nd, new_fake_lookup_flags) {
                 Ok(new_dentry) => {
+                    // 父目录要有写权限
+                    dentry_check_access(&new_nd.dentry, W_OK, true)?;
                     let parent_inode = new_nd.dentry.get_inode();
                     parent_inode.link(old_dentry, new_dentry);
                     return Ok(0);
@@ -404,7 +496,7 @@ pub fn sys_linkat(
 pub fn sys_symlinkat(target: *const u8, newdirfd: i32, linkpath: *const u8) -> SyscallRet {
     let target = c_str_to_string(target)?;
     let linkpath = c_str_to_string(linkpath)?;
-    if linkpath.len() > 4096 {
+    if linkpath.len() > PATH_MAX {
         log::error!("[sys_symlinkat] target is too long: {}", target.len());
         return Err(Errno::ENAMETOOLONG);
     }
@@ -439,7 +531,7 @@ pub fn sys_openat(dirfd: i32, pathname: *const u8, flags: i32, mode: i32) -> Sys
     let flags = OpenFlags::from_bits(flags).ok_or(Errno::EINVAL)?;
     let task = current_task();
     let path = c_str_to_string(pathname)?;
-    if path.len() > NAME_MAX {
+    if path.len() > PATH_MAX {
         log::error!("[sys_openat] pathname is too long: {}", path.len());
         return Err(Errno::ENAMETOOLONG);
     }
@@ -455,16 +547,107 @@ pub fn sys_openat(dirfd: i32, pathname: *const u8, flags: i32, mode: i32) -> Sys
     task.fd_table().alloc_fd(file, fd_flags)
 }
 
+/// Todo: RESOLVE_IN_ROOT没有作用于路径解析中的符号链接, 可能需要Nameidata保存root
+pub fn sys_openat2(dirfd: i32, pathname: *const u8, how_ptr: *const u8, size: usize) -> SyscallRet {
+    let path = c_str_to_string(pathname)?;
+    if path.len() > PATH_MAX {
+        log::error!("[sys_openat2] pathname is too long: {}", path.len());
+        return Err(Errno::ENAMETOOLONG);
+    }
+
+    if size < core::mem::size_of::<OpenHow>() {
+        log::error!(
+            "[sys_openat2] size mismatch: expected {}, got {}",
+            core::mem::size_of::<OpenHow>(),
+            size
+        );
+        return Err(Errno::EINVAL);
+    }
+    log::info!("[sys_openat2] how_ptr: {:?}, size: {}", how_ptr, size);
+    let mut openhow_buf = vec![0u8; size];
+    copy_from_user(how_ptr, openhow_buf.as_mut_ptr(), size)?;
+    // 如果超出 OpenHow 的大小的buf不是全零的话, 返回E2big
+    if size > core::mem::size_of::<OpenHow>()
+        && !openhow_buf[core::mem::size_of::<OpenHow>()..]
+            .iter()
+            .all(|&b| b == 0)
+    {
+        log::error!("[sys_openat2] buffer is too big or not zero-padded");
+        return Err(Errno::E2BIG);
+    }
+    let how = unsafe {
+        // 安全地将指针转换为 OpenHow 结构体
+        &*(openhow_buf.as_ptr() as *const OpenHow)
+    };
+    // 检查mode
+    if how.mode > 0o777 {
+        log::error!("[sys_openat2] mode is invalid: {}", how.mode);
+        return Err(Errno::EINVAL);
+    }
+    let open_flags = OpenFlags::from_bits(how.flags as i32).ok_or(Errno::EINVAL)?;
+    let has_create =
+        open_flags.contains(OpenFlags::O_CREAT) || open_flags.contains(OpenFlags::O_TMPFILE);
+    // 若没有设置 O_CREAT 或 O_TMPFILE，mode 必须为 0（防止无效模式）
+    if !has_create && how.mode != 0 {
+        log::error!("[sys_openat2] mode must be zero when O_CREAT or O_TMPFILE is non set");
+        return Err(Errno::EINVAL);
+    }
+    log::info!(
+        "[sys_openat2] dirfd: {}, pathname: {:?}, flags: {:?}, mode: 0o{:o}, resolve: 0x{:x}",
+        dirfd,
+        path,
+        open_flags,
+        how.mode,
+        how.resolve,
+    );
+    let resolve_flags = ResolveFlags::from_bits(how.resolve).ok_or(Errno::EINVAL)?;
+    // Todo: fake, 需要支持mount
+    if (resolve_flags.contains(ResolveFlags::RESOLVE_NO_XDEV)
+        || resolve_flags.contains(ResolveFlags::RESOLVE_BENEATH))
+        && path == "/proc/version"
+    {
+        return Err(Errno::EXDEV);
+    }
+    if resolve_flags.contains(ResolveFlags::RESOLVE_NO_MAGICLINKS) {
+        if path.starts_with("/proc/") {
+            return Err(Errno::ELOOP);
+        }
+    }
+    let task = current_task();
+    let in_root = resolve_flags.contains(ResolveFlags::RESOLVE_IN_ROOT);
+    // let file = path_openat(&path, open_flags, dirfd, how.mode as i32)?;
+    // 解析路径的目录部分，遇到最后一个组件时停止
+    let mut nd = Nameidata::new2(&path, dirfd, in_root)?;
+    let mut file;
+    loop {
+        link_path_walk2(&mut nd, &resolve_flags)?;
+        // 到达最后一个组件
+        match open_last_lookups2(&mut nd, open_flags, how.mode as i32, &resolve_flags) {
+            Ok(f) => {
+                file = f;
+                break;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    let fd_flags = FdFlags::from(&open_flags);
+    task.fd_table().alloc_fd(file, fd_flags)
+}
+
 /// mode是inode类型+文件权限
 pub fn sys_mknodat(dirfd: i32, pathname: *const u8, mode: usize, dev: u64) -> SyscallRet {
     let path = c_str_to_string(pathname)?;
     log::info!(
-        "[sys_mknodat] dirfd: {}, pathname: {:?}, mode: {}, dev: {}",
+        "[sys_mknodat] dirfd: {}, pathname: {:?}, mode: {:#o}, dev: {}",
         dirfd,
         path,
         mode,
         dev
     );
+    if path.len() > PATH_MAX {
+        log::error!("[sys_mknodat] pathname is too long: {}", path.len());
+        return Err(Errno::ENAMETOOLONG);
+    }
     let mut nd = Nameidata::new(&path, dirfd)?;
     let fake_lookup_flags = 0;
     // 兼容旧的设备号格式(16位)
@@ -476,7 +659,11 @@ pub fn sys_mknodat(dirfd: i32, pathname: *const u8, mode: usize, dev: u64) -> Sy
     match filename_create(&mut nd, fake_lookup_flags) {
         Ok(dentry) => {
             let parent_inode = nd.dentry.get_inode();
-            parent_inode.mknod(dentry, mode as u16, dev_t);
+            if (mode as u16 & S_IFREG) != 0 {
+                parent_inode.create(dentry, mode as u16);
+            } else {
+                parent_inode.mknod(dentry, mode as u16, dev_t);
+            }
             return Ok(0);
         }
         Err(e) => {
@@ -521,14 +708,17 @@ pub fn sys_getcwd(buf: *mut u8, buf_size: usize) -> SyscallRet {
     }
     cwd.push('\0'); // 添加字符串结束符
     let copy_len = cwd.len();
+    if copy_len > PATH_MAX {
+        log::error!("[sys_getcwd]: path is too long: {}", copy_len);
+    }
     if copy_len > buf_size {
-        log::error!("getcwd: buffer is too small");
+        log::error!("[sys_getcwd]: buffer is too small");
         // buf太小返回NULL
-        return Err(Errno::ENAMETOOLONG);
+        return Err(Errno::ERANGE);
     }
     let from: *const u8 = cwd.as_bytes().as_ptr();
     if let Err(err) = copy_to_user(buf, from, copy_len) {
-        log::error!("getcwd: copy_to_user failed: {:?}", err);
+        log::error!("[sys_getcwd]: copy_to_user failed: {:?}", err);
         return Err(err);
     }
     // 成功返回buf指针
@@ -559,6 +749,10 @@ pub const AT_SYMLINK_FOLLOW: i32 = 0x400;
 pub fn sys_fstatat(dirfd: i32, pathname: *const u8, statbuf: *mut Stat, flags: i32) -> SyscallRet {
     if flags & AT_EMPTY_PATH != 0 {
         return sys_fstat(dirfd, statbuf);
+    }
+    if flags & !(AT_SYMLINK_NOFOLLOW) != 0 {
+        log::error!("[sys_fstatat] invalid flags: {}", flags);
+        return Err(Errno::EINVAL);
     }
     let path = c_str_to_string(pathname)?;
     if path.is_empty() {
@@ -640,6 +834,7 @@ pub fn sys_fchdir(fd: usize) -> SyscallRet {
     let task = current_task();
     if let Some(file) = task.fd_table().get_file(fd as usize) {
         let path = file.get_path();
+        dentry_check_access(&path.dentry, X_OK, true)?;
         current_task().set_pwd(path);
         Ok(0)
     } else {
@@ -715,6 +910,23 @@ pub fn sys_close(fd: usize) -> SyscallRet {
         log::warn!("[sys_close] fd {} not opened", fd);
         Err(Errno::EBADF)
     }
+}
+
+pub fn sys_close_range(first: usize, last: usize, flags: i32) -> SyscallRet {
+    log::info!(
+        "[sys_close_range] first: {}, last: {}, flags: {}",
+        first,
+        last,
+        flags
+    );
+    if first > last {
+        log::error!("[sys_close_range] first is greater than last");
+        return Err(Errno::EINVAL);
+    }
+    let flags = CloseRangeFlags::from_bits(flags).ok_or(Errno::EINVAL)?;
+    let task = current_task();
+    let fd_table = task.fd_table();
+    fd_table.close_range(first, last, flags)
 }
 
 /// 更改文件的名称(必要的时候会改变位置), 文件的其他硬链接(由link创建)不受影响, 对oldpth打开的文件描述符不受影响
@@ -918,7 +1130,11 @@ pub fn sys_pselect6(
     } else {
         let mut tmo: TimeSpec = TimeSpec::default();
         copy_from_user(timeout, &mut tmo as *mut TimeSpec, 1)?;
-        log::error!("[sys_pselect6] tmo sec is {:?},tmo nsec is {:?}",tmo.sec,tmo.nsec);
+        log::error!(
+            "[sys_pselect6] tmo sec is {:?},tmo nsec is {:?}",
+            tmo.sec,
+            tmo.nsec
+        );
         let sec_signed = tmo.sec as isize;
         if sec_signed < 0 {
             return Err(Errno::EINVAL);
@@ -1010,7 +1226,7 @@ pub fn sys_pselect6(
             log::error!("[sys_pselect] timeout is 0");
             break;
         } else if timeout > 0 {
-            if get_time_ms()/1000 > timeout as usize {
+            if get_time_ms() / 1000 > timeout as usize {
                 // 超时了, 返回
                 log::error!("[sys_pselect]:timeout");
                 break;
@@ -1148,23 +1364,32 @@ pub fn sys_ppoll(
             task.op_sig_pending_mut(|sig_pending| sig_pending.mask = origin_sigset);
         }
         Ok(done)
-    } else { 
+    } else {
         // 不监听fd，只是为了等待信号
         wait();
         log::error!("[sys_ppoll] wakeup by signal");
         return Err(Errno::EINTR);
-    } 
+    }
 }
 
-pub fn sys_readlinkat(dirfd: i32, pathname: *const u8, buf: *mut u8, bufsiz: usize) -> SyscallRet {
+pub fn sys_readlinkat(dirfd: i32, pathname: *const u8, buf: *mut u8, bufsiz: isize) -> SyscallRet {
+    if bufsiz <= 0 {
+        log::error!("[sys_readlinkat] bufsiz must be greater than 0");
+        return Err(Errno::EINVAL);
+    }
     let path = c_str_to_string(pathname)?;
-    let mut nd = Nameidata::new(&path, dirfd)?;
-    match filename_lookup(&mut nd, false) {
-        Ok(dentry) => {
+    if path.len() > PATH_MAX {
+        log::error!("[sys_readlinkat] pathname is too long: {}", path.len());
+        return Err(Errno::ENAMETOOLONG);
+    }
+    if path.is_empty() {
+        // 获取dirfd对应的符号链接
+        if let Some(file) = current_task().fd_table().get_file(dirfd as usize) {
+            let dentry = file.get_path().dentry.clone();
             if dentry.is_symlink() {
-                let inode = dentry.get_inode();
+                let inode = file.get_inode();
                 let link_path = inode.get_link();
-                if link_path.len() > bufsiz {
+                if link_path.len() > bufsiz as usize {
                     return Err(Errno::ENAMETOOLONG);
                 }
                 log::info!(
@@ -1172,7 +1397,28 @@ pub fn sys_readlinkat(dirfd: i32, pathname: *const u8, buf: *mut u8, bufsiz: usi
                     path,
                     link_path
                 );
-                copy_to_user(buf, link_path.as_ptr(), link_path.len()).unwrap();
+                copy_to_user(buf, link_path.as_ptr(), link_path.len())?;
+                return Ok(link_path.len());
+            } else {
+                return Err(Errno::EINVAL);
+            }
+        }
+    }
+    let mut nd = Nameidata::new(&path, dirfd)?;
+    match filename_lookup(&mut nd, false) {
+        Ok(dentry) => {
+            if dentry.is_symlink() {
+                let inode = dentry.get_inode();
+                let link_path = inode.get_link();
+                if link_path.len() > bufsiz as usize {
+                    return Err(Errno::ENAMETOOLONG);
+                }
+                log::info!(
+                    "[sys_readlinkat] readlinkat: {}, link_path: {:?}",
+                    path,
+                    link_path
+                );
+                copy_to_user(buf, link_path.as_ptr(), link_path.len())?;
                 return Ok(link_path.len());
             } else {
                 return Err(Errno::EINVAL);
@@ -1638,14 +1884,12 @@ pub fn sys_copy_file_range(
     }
 }
 
-// Todo:
 pub fn sys_umask(mask: usize) -> SyscallRet {
-    // log::info!("[sys_umask] mask: {:o}", mask);
-    // let task = current_task();
-    // let old_mask = task.umask();
-    // task.set_umask(mask as u16);
-    // Ok(old_mask as usize)
-    Ok(0)
+    log::info!("[sys_umask] mask: {:o}", mask);
+    let task = current_task();
+    let old_mask = task.umask();
+    task.set_umask(mask as u16 & 0o777);
+    Ok(old_mask as usize)
 }
 
 /* Todo: fake start  */
@@ -1866,7 +2110,10 @@ pub fn sys_fchmod(fd: usize, mode: usize) -> SyscallRet {
     Err(Errno::EBADF)
 }
 
+/// 文件名的最大长度
 pub const NAME_MAX: usize = 255;
+/// 绝对路径的最大长度
+pub const PATH_MAX: usize = 4096;
 
 /// 将 path 参数指向的文件权限位修改为mode
 /// root 可任意修改任何文件的权限,无需检查其他条件
@@ -1876,6 +2123,10 @@ pub fn sys_fchmodat(fd: usize, path: *const u8, mode: usize, flag: i32) -> Sysca
     if path.len() > NAME_MAX {
         log::error!("[sys_fchmodat] path is too long: {}", path.len());
         return Err(Errno::ENAMETOOLONG);
+    }
+    if path.is_empty() {
+        log::error!("[sys_fchmodat] path is empty");
+        return Err(Errno::ENOENT);
     }
     log::info!(
         "[sys_fchmodat] fd: {}, path: {:?}, mode: {:o}, flag: {}",
