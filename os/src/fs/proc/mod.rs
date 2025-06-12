@@ -1,6 +1,9 @@
 use crate::{
     ext4::inode::{Ext4InodeDisk, S_IFCHR, S_IFDIR, S_IFLNK, S_IFREG},
-    fs::proc::{cpuinfo::{CPUInfoFile, CPUINFO}, pid_max::{PidMaxFile, PIDMAX}},
+    fs::proc::{
+        cpuinfo::{CPUInfoFile, CPUINFO},
+        pid_max::{PidMaxFile, PIDMAX},
+    },
 };
 
 use super::{
@@ -28,9 +31,9 @@ pub mod meminfo;
 pub mod mounts;
 pub mod pagemap;
 pub mod pid;
+pub mod pid_max;
 pub mod status;
 pub mod tainted;
-pub mod pid_max;
 
 pub fn init_procfs(root_path: Arc<Path>) {
     let proc_path = "/proc";
