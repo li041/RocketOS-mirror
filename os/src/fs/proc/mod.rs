@@ -1,6 +1,9 @@
 use crate::{
     ext4::inode::{Ext4InodeDisk, S_IFCHR, S_IFDIR, S_IFLNK, S_IFREG},
-    fs::proc::{cpuinfo::{CPUInfoFile, CPUINFO}, pid_max::{PidMaxFile, PIDMAX}},
+    fs::proc::{
+        cpuinfo::{CPUInfoFile, CPUINFO},
+        pid_max::{PidMaxFile, PIDMAX},
+    },
 };
 
 use super::{
@@ -28,9 +31,9 @@ pub mod meminfo;
 pub mod mounts;
 pub mod pagemap;
 pub mod pid;
+pub mod pid_max;
 pub mod status;
 pub mod tainted;
-pub mod pid_max;
 
 pub fn init_procfs(root_path: Arc<Path>) {
     let proc_path = "/proc";
@@ -112,6 +115,27 @@ pub fn init_procfs(root_path: Arc<Path>) {
             panic!("create {} failed: {:?}", taint_path, e);
         }
     };
+    let osrelease_path = "/proc/sys/kernel/osrelease";
+    let osrelease_mode = S_IFREG as u16 | 0o444;
+    let mut nd = Nameidata {
+        path_segments: parse_path(osrelease_path),
+        dentry: root_path.dentry.clone(),
+        mnt: root_path.mnt.clone(),
+        depth: 0,
+    };
+    match filename_create(&mut nd, 0) {
+        Ok(dentry) => {
+            let parent_inode = nd.dentry.get_inode();
+            parent_inode.create(dentry.clone(), osrelease_mode);
+            // 现在dentry的inode指向/proc/sys/kernel/osrelease
+            let inode = dentry.get_inode();
+            inode.write(0, b"6.6.87.1-microsoft-standard-WSL2");
+        }
+        Err(e) => {
+            panic!("create {} failed: {:?}", osrelease_path, e);
+        }
+    }
+
     let pid_max_path = "/proc/sys/kernel/pid_max";
     let pid_max_mode = S_IFREG as u16 | 0o444;
     nd = Nameidata {
