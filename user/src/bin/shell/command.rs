@@ -1,3 +1,5 @@
+extern crate alloc;
+
 use alloc::{
     ffi::CString,
     string::{String, ToString},

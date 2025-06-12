@@ -1320,11 +1320,11 @@ impl MemorySet {
                                 self.areas.insert(new_start_vpn, area);
                             }
                         }
-                        log::error!(
-                            "[handle_lazy_allocation_area] lazy alloc area, vpn: {:#x}, ppn: {:#x}",
-                            vpn.0,
-                            ppn.0
-                        );
+                        // log::error!(
+                        //     "[handle_lazy_allocation_area] lazy alloc area, vpn: {:#x}, ppn: {:#x}",
+                        //     vpn.0,
+                        //     ppn.0
+                        // );
                         return Ok(());
                     }
                 }
