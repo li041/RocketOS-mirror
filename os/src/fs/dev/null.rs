@@ -44,6 +44,9 @@ impl NullInode {
     }
 }
 impl InodeOp for NullInode {
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
     fn can_lookup(&self) -> bool {
         // /dev/null是一个特殊文件, 不是目录
         false
@@ -79,6 +82,9 @@ impl InodeOp for NullInode {
     }
     fn get_mode(&self) -> u16 {
         self.inner.read().inode_on_disk.get_mode()
+    }
+    fn get_inode_num(&self) -> usize {
+        self.inode_num
     }
     /* 时间戳 */
     fn get_atime(&self) -> TimeSpec {

@@ -144,16 +144,66 @@ fn virtio_blk_pci(transport: PciTransport) -> VirtIOBlock {
 }
 
 impl VirtIOBlock {
+    // pub fn new() -> Self {
+    //     let fdt = unsafe {
+    //         Fdt::from_ptr(DEVICE_TREE_ADDR as *const u8).expect("failed to parse device tree")
+    //     };
+    //     if let Some(pci_node) = fdt.find_compatible(&["pci-host-ecam-generic"]) {
+    //         log::info!("Found PCI node {:?}", pci_node.name);
+    //         // virtio_blk_pci(transport)
+    //         let reg = pci_node.reg().expect("failed to get reg property");
+    //         let mut allocator = PciMemory32Allocator::for_pci_ranges(&pci_node);
+    //         // assert!(reg.count() == 1);
+    //         for region in reg {
+    //             log::info!(
+    //                 "  {:#018x?}, length {:#x}",
+    //                 region.starting_address,
+    //                 region.size.unwrap()
+    //             );
+    //             let mut pci_root =
+    //                 unsafe { PciRoot::new(region.starting_address as *mut u8, Cam::Ecam) };
+    //             for (device_function, info) in pci_root.enumerate_bus(0) {
+    //                 let (status, command) = pci_root.get_status_command(device_function);
+    //                 log::info!(
+    //                     "Found {} at {}, status {:?} command {:?}",
+    //                     info,
+    //                     device_function,
+    //                     status,
+    //                     command
+    //                 );
+    //                 // Todo: 扫描到了网络设备, 但是未做处理
+    //                 if let Some(virtio_type) = virtio_device_type(&info) {
+    //                     log::info!("  VirtIO {:?}", virtio_type);
+    //                     if virtio_type == DeviceType::Block {
+    //                         allocate_bars(&mut pci_root, device_function, &mut allocator);
+    //                         dump_bar_contents(&mut pci_root, device_function, 4);
+    //                         let mut transport =
+    //                             PciTransport::new::<HalImpl>(&mut pci_root, device_function)
+    //                                 .unwrap();
+    //                         log::info!(
+    //                         "Detected virtio PCI device with device type {:?}, features {:#018x}",
+    //                         transport.device_type(),
+    //                         transport.read_device_features(),
+    //                     );
+    //                         return virtio_blk_pci(transport);
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //         panic!("failed to find virtio_blk");
+    //     } else {
+    //         panic!("failed to find pci-host-ecam-generic node");
+    //     }
+    // }
     pub fn new() -> Self {
         let fdt = unsafe {
             Fdt::from_ptr(DEVICE_TREE_ADDR as *const u8).expect("failed to parse device tree")
         };
         if let Some(pci_node) = fdt.find_compatible(&["pci-host-ecam-generic"]) {
             log::info!("Found PCI node {:?}", pci_node.name);
-            // virtio_blk_pci(transport)
             let reg = pci_node.reg().expect("failed to get reg property");
             let mut allocator = PciMemory32Allocator::for_pci_ranges(&pci_node);
-            // assert!(reg.count() == 1);
+
             for region in reg {
                 log::info!(
                     "  {:#018x?}, length {:#x}",
@@ -162,6 +212,7 @@ impl VirtIOBlock {
                 );
                 let mut pci_root =
                     unsafe { PciRoot::new(region.starting_address as *mut u8, Cam::Ecam) };
+                let mut blk_index = 0; // 用于计数第几个 virtio-blk 设备
                 for (device_function, info) in pci_root.enumerate_bus(0) {
                     let (status, command) = pci_root.get_status_command(device_function);
                     log::info!(
@@ -171,26 +222,29 @@ impl VirtIOBlock {
                         status,
                         command
                     );
-                    // Todo: 扫描到了网络设备, 但是未做处理
                     if let Some(virtio_type) = virtio_device_type(&info) {
                         log::info!("  VirtIO {:?}", virtio_type);
                         if virtio_type == DeviceType::Block {
-                            allocate_bars(&mut pci_root, device_function, &mut allocator);
-                            dump_bar_contents(&mut pci_root, device_function, 4);
-                            let mut transport =
-                                PciTransport::new::<HalImpl>(&mut pci_root, device_function)
-                                    .unwrap();
-                            log::info!(
-                            "Detected virtio PCI device with device type {:?}, features {:#018x}",
-                            transport.device_type(),
-                            transport.read_device_features(),
-                        );
-                            return virtio_blk_pci(transport);
+                            if blk_index == 1 {
+                                // 第2个 virtio-blk（drive=x1）
+                                allocate_bars(&mut pci_root, device_function, &mut allocator);
+                                dump_bar_contents(&mut pci_root, device_function, 4);
+                                let mut transport =
+                                    PciTransport::new::<HalImpl>(&mut pci_root, device_function)
+                                        .unwrap();
+                                log::info!(
+                                    "Using 2nd Virtio Block device, features: {:#018x}",
+                                    transport.read_device_features(),
+                                );
+                                return virtio_blk_pci(transport);
+                            } else {
+                                blk_index += 1;
+                            }
                         }
                     }
                 }
             }
-            panic!("failed to find virtio_blk");
+            panic!("failed to find second virtio_blk device (drive=x1)");
         } else {
             panic!("failed to find pci-host-ecam-generic node");
         }

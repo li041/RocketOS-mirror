@@ -20,7 +20,7 @@ use core::ptr;
 use zerocopy::FromZeroes;
 
 //线性偏移
-const VIRTIO0: usize = 0x10001000 + KERNEL_BASE;
+const VIRTIO0: usize = 0x10002000 + KERNEL_BASE;
 
 pub struct VirtIOBlock(SpinNoIrqLock<VirtIOBlk<HalImpl, MmioTransport>>);
 

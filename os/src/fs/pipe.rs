@@ -138,14 +138,16 @@ impl Pipe {
         let mut buffer = inode.buffer.lock();
         buffer.set_read_end(&read_end);
         if is_named_pipe {
-            if buffer.get_one_waiter() != 0 {
-                // wake up writer
+            if buffer.write_end.is_some() {
                 let waiter = buffer.get_one_waiter();
-                wakeup(waiter);
+                if waiter != 0 {
+                    log::warn!("[Pipe::read_end] waiter {} to wake up", waiter);
+                    wakeup(waiter);
+                }
             } else {
-                if flags.contains(OpenFlags::O_NONBLOCK) {
+                if !flags.contains(OpenFlags::O_NONBLOCK) {
                     log::error!(
-                        "[Pipe::read_end] named pipe write end not ready, non-blocking mode, block"
+                        "[Pipe::read_end] named pipe write end not ready, flags does not contain O_NONBLOCK, blocking"
                     );
                     buffer.add_waiter(current_task().tid());
                     drop(buffer);
@@ -170,21 +172,44 @@ impl Pipe {
         let mut buffer = inode.buffer.lock();
         buffer.set_write_end(&write_end);
         if is_named_pipe {
-            if buffer.get_one_waiter() != 0 {
-                // wake up reader
-                log::info!("[Pipe::write_end] wake up reader");
+            if buffer.read_end.is_some() {
                 let waiter = buffer.get_one_waiter();
-                wakeup(waiter);
+                if waiter != 0 {
+                    log::warn!("[Pipe::write_end] waiter {} to wake up", waiter);
+                    wakeup(waiter);
+                }
             } else {
                 if flags.contains(OpenFlags::O_NONBLOCK) {
                     log::error!(
                         "[Pipe::write_end] named pipe read end not ready, non-blocking mode, return ENXIO"
                     );
                     return Err(Errno::ENXIO);
+                } else {
+                    log::error!("[Pipe::write_end] named pipe read end not ready, blocking");
+                    buffer.add_waiter(current_task().tid());
+                    drop(buffer);
+                    wait();
                 }
             }
         }
         Ok(write_end)
+    }
+    pub fn rw_end(
+        inode: Arc<PipeInode>,
+        flags: OpenFlags,
+        is_named_pipe: bool,
+    ) -> Result<Arc<Self>, Errno> {
+        let rw_end = Arc::new(Self {
+            readable: true,
+            writable: true,
+            inode: inode.clone(),
+            flags: AtomicI32::new(flags.bits()),
+            is_named_pipe,
+        });
+        let mut buffer = inode.buffer.lock();
+        buffer.set_read_end(&rw_end);
+        buffer.set_write_end(&rw_end);
+        Ok(rw_end)
     }
     /// 创建匿名管道的读写端
     pub fn read_write_end(inode: Arc<PipeInode>, flags: OpenFlags) -> (Arc<Self>, Arc<Self>) {
@@ -330,9 +355,7 @@ impl PipeRingBuffer {
         self.waiter.pop().unwrap_or(0) // 如果没有等待者，返回0
     }
     fn add_waiter(&mut self, waiter: Tid) {
-        // 6.7 Debug
         log::warn!("[PipeRingBuffer::add_waiter] add waiter: {}", waiter);
-        log::warn!("[PipeRingBuffer::get_one_waiter] get one waiter");
         self.waiter.push(waiter);
     }
     // 成功返回新大小, 失败返回Errno
@@ -497,7 +520,9 @@ impl FileOp for Pipe {
                     SigInfo::new(
                         Sig::SIGPIPE.raw(),
                         SigInfo::KERNEL,
-                        crate::signal::SiField::Kill { tid: current_task().tid() },
+                        crate::signal::SiField::Kill {
+                            tid: current_task().tid(),
+                        },
                     ),
                     false,
                 );
@@ -543,6 +568,14 @@ impl FileOp for Pipe {
             buffer.status = RingBufferStatus::NORMAL;
             return Ok(write_size);
         }
+    }
+    fn pwrite<'a>(&'a self, _buf: &'a [u8], _offset: usize) -> SyscallRet {
+        log::error!("[Pipe::pwrite] Pipe does not support pwrite");
+        Err(Errno::ESPIPE) // 管道不支持偏移写
+    }
+    fn pread<'a>(&'a self, _buf: &'a mut [u8], _offset: usize) -> SyscallRet {
+        log::error!("[Pipe::pread] Pipe does not support pread");
+        Err(Errno::ESPIPE) // 管道不支持偏移读
     }
     fn ioctl(&self, op: usize, arg_ptr: usize) -> SyscallRet {
         log::info!("[Pipe::ioctl] op: {:#x}, arg_ptr: {:#x}", op, arg_ptr);
@@ -613,6 +646,11 @@ impl FileOp for Pipe {
 impl Drop for Pipe {
     fn drop(&mut self) {
         log::trace!("[Pipe::drop]");
+        log::warn!(
+            "[Pipe::drop] Pipe is being dropped, readable: {}, writable: {}",
+            self.readable,
+            self.writable
+        );
         let buffer = self.inode.buffer.lock();
         let waiter = &buffer.waiter;
         // 唤醒所有等待者

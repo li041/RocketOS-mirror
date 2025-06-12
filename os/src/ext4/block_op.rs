@@ -42,7 +42,7 @@ impl<'a> Ext4DirContentRO<'a> {
     // 注意: 目录项可能被截断
     // buf在内核空间
     // 返回: (file_offset, buf_offset)文件偏移的增加量和读取的字节数
-    pub fn getdents(&self, buf: &mut [u8]) -> (usize, usize) {
+    pub fn getdents(&self, buf: &mut [u8]) -> Result<(usize, usize), Errno> {
         const NAME_OFFSET: usize = 19;
         let mut buf_offset = 0;
         let mut file_offset = 0;
@@ -79,7 +79,7 @@ impl<'a> Ext4DirContentRO<'a> {
             dirent.write_to_mem(&mut buf[buf_offset..buf_offset + d_reclen]);
             buf_offset += d_reclen as usize;
         }
-        (file_offset, buf_offset)
+        Ok((file_offset, buf_offset))
     }
     pub fn find(&self, name: &str) -> Option<Ext4DirEntry> {
         let mut rec_len_total = 0;
