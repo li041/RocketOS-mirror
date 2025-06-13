@@ -61,6 +61,7 @@ pub fn c_str_to_string(ptr: *const u8) -> Result<String, Errno> {
             None => {}
         };
         memory_set.check_valid_user_vpn_range(vpn_range, MapPermission::R)?;
+        log::trace!("[c_str_to_string]");
         memory_set
             .handle_lazy_allocation_area(
                 VirtAddr::from(ptr as usize),
@@ -73,7 +74,7 @@ pub fn c_str_to_string(ptr: *const u8) -> Result<String, Errno> {
         };
     })?;
     let mut ret = String::new();
-    // trace!("[c_str_to_string] convert ptr at {:#x} to string", ptr);
+    log::trace!("[c_str_to_string] convert ptr at {:#x} to string", ptr);
     loop {
         let ch: u8 = unsafe { *(ptr as *const u8) };
         if ch == 0 {

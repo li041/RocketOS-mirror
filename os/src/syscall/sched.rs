@@ -70,6 +70,7 @@ pub fn sys_sched_getscheduler(_pid: isize) -> SyscallRet {
 }
 
 pub fn sys_sched_getparam(_pid:isize, _param: usize) -> SyscallRet {
+    log::trace!("pid: {}, param: {:#x}", _pid, _param);
     log::error!("Unimplemented syscall: sys_sched_getparam");
     Ok(0)
 }

@@ -441,6 +441,8 @@ pub fn futex_cmp_requeue(
     }
 
     {
+        log::trace!("[futex_requeue] key: {:?}, req_key: {:?}, hash_src: {}, hash_req: {}",
+                    key, req_key, hash_src, hash_req);
         let mut hash_bucket = FUTEXQUEUES.buckets[futex_hash(&key)].lock();
         if hash_bucket.is_empty() {
             return Ok(0);

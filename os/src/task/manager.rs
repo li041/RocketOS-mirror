@@ -223,7 +223,6 @@ pub fn wait_timeout(dur: timer::TimeSpec, clock_id: i32) -> isize {
     task.set_interruptable();
     // 超时后唤醒任务
     let deadline = set_wait_alarm(dur, tid, clock_id);
-    dump_time_manager();
     WAIT_MANAGER.add(task);
     schedule();
     let task = current_task();
