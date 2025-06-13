@@ -452,6 +452,8 @@ pub fn sys_rt_sigtimedwait(set: usize, info: usize, timeout_ptr: usize) -> Sysca
 
     // 4. 若指定了超时时间
     if timeout_ptr != 0 {
+        // timeout是空指针, 行为未定义
+        // panic!("[sys_rt_sigtimedwait] timeout is null");
         let mut timeout: TimeSpec = TimeSpec::default();
         copy_from_user(
             timeout_ptr as *const TimeSpec,

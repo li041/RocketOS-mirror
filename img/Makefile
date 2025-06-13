@@ -10,7 +10,7 @@ loongarch64_gnu = loongarch64-linux-gnu-gcc
 loongarch64_musl = loongarch64-linux-musl-gcc
 
 IMG_FILE := $(IMG)$(if $(filter riscv64,$(ARCH)),,-la).img
-EXT4_OUT := ext4_prev$(if $(filter riscv64,$(ARCH)),,-la).img
+EXT4_OUT := disk$(if $(filter riscv64,$(ARCH)),,-la).img
 CUSTOM := custom$(if $(filter riscv64,$(ARCH)),,-la)
 
 # Compiler flags
@@ -37,6 +37,21 @@ else
     $(error "Unsupported architecture: $(ARCH), Use riscv64 or loongarch64")
 endif
 
+all:
+	-@rm -f disk.img disk.img
+	dd if=/dev/zero of=disk.img count=4096 bs=1M
+	mkfs.ext4 disk.img 
+	mkdir -p mnt
+	mount disk.img mnt
+	cp -r ./custom/* mnt
+	umount mnt
+	dd if=/dev/zero of=disk-la.img count=4096 bs=1M
+	mkfs.ext4 disk-la.img 
+	mkdir -p mnt
+	mount disk-la.img mnt
+	cp -r ./custom-la/* mnt
+	umount mnt
+
 pre2024:
 	$(MAKE) init_img_2024 IMG=pre2024 ARCH=$(ARCH)
 
@@ -44,7 +59,7 @@ pre2025:
 	$(MAKE) init_img_2025 IMG=pre2025 ARCH=$(ARCH)
 
 init_img_2024:
-	rm $(EXT4_OUT)
+	-@rm -f $(EXT4_OUT)
 	dd if=/dev/zero of=$(EXT4_OUT) count=4096 bs=1M
 	mkfs.ext4 $(EXT4_OUT)
 	mkdir -p mnt_temp
@@ -57,7 +72,7 @@ init_img_2024:
 	sudo rm -rf mnt_temp
 
 init_img_2025:
-	rm $(EXT4_OUT)
+	-@rm -f $(EXT4_OUT)
 	dd if=/dev/zero of=$(EXT4_OUT) count=4096 bs=1M
 	mkfs.ext4 $(EXT4_OUT)
 	mkdir -p mnt_temp
@@ -70,7 +85,7 @@ init_img_2025:
 	sudo rm -rf mnt_temp
 
 custom:
-	rm $(EXT4_OUT)
+	-@rm -f $(EXT4_OUT)
 	dd if=/dev/zero of=$(EXT4_OUT) count=4096 bs=1M
 	mkfs.ext4 $(EXT4_OUT)
 	mkdir -p mnt

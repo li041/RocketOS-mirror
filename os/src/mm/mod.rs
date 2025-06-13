@@ -18,7 +18,7 @@ pub mod shm;
 
 pub use address::{PhysAddr, PhysPageNum, VPNRange, VirtAddr, VirtPageNum};
 pub use area::{MapArea, MapPermission, MapType};
-pub use frame_allocator::{frame_alloc, frame_dealloc, kbuf_alloc, kbuf_dealloc, FrameTracker};
+pub use frame_allocator::{frame_alloc, frame_dealloc, kbuf_alloc, kbuf_dealloc, FrameTracker, FRAME_ALLOCATOR};
 pub use memory_set::{MemorySet, KERNEL_SATP, KERNEL_SPACE};
 pub use page::{Page, PageKind};
 
