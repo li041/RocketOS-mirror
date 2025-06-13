@@ -11,9 +11,15 @@
 
 # ARCH ?= loongarch64
 ARCH ?= riscv64
-MODE ?= debug
+MODE ?= release
 
-all: clean run
+# all: clean run
+all : 
+	@cd ./img && make all
+	@cp ./img/disk.img ./disk.img && cp ./img/disk-la.img ./disk-la.img
+	@cd ./os && make build ARCH=riscv64 MODE=release && make build ARCH=loongarch64 MODE=release
+	@cp ./os/target/riscv64gc-unknown-none-elf/release/os.bin ./kernel-rv && cp ./os/target/loongarch64-unknown-none/release/os ./kernel-la
+	
 
 pre2024: 
 	@cd ./img && make pre2024

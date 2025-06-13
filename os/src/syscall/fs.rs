@@ -1358,7 +1358,7 @@ pub fn sys_ppoll(
             yield_current_task();
         }
         // 写回用户空间
-        copy_to_user(fds, poll_fds.as_ptr(), nfds).unwrap();
+        copy_to_user(fds, poll_fds.as_ptr(), nfds)?;
         // 恢复origin sigmask
         if sigmask != 0 {
             let task = current_task();

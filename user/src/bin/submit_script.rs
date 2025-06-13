@@ -12,6 +12,7 @@ static TEST_LIST: &[&str] = &[
     // "iperf_testcode.sh\0",
     "libcbench_testcode.sh\0",
     "libctest_testcode.sh\0",
+    //"lmbench_testcode.sh\0",
     "lua_testcode.sh\0",
     // "netperf_testcode.sh\0",
     // "ltp_testcode.sh\0",
@@ -22,7 +23,7 @@ use user_lib::{chdir, execve, exit, fork, waitpid};
 
 #[no_mangle]
 pub fn main() -> i32 {
-    chdir("/musl\0");
+    chdir("/glibc\0");
     for app_name in TEST_LIST {
         let pid = fork();
         if pid == 0 {
@@ -33,7 +34,7 @@ pub fn main() -> i32 {
             let _wait_pid = waitpid(pid, &mut exit_code);
         }
     }
-    chdir("/glibc\0");
+    chdir("/musl\0");
     for app_name in TEST_LIST {
         let pid = fork();
         if pid == 0 {
