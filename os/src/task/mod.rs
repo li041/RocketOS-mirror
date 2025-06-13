@@ -28,7 +28,7 @@ use core::arch::asm;
 use lazy_static::lazy_static;
 
 pub use context::TaskContext;
-pub use id::IdAllocator;
+pub use id::{info_allocator, IdAllocator};
 pub use kstack::get_stack_top_by_sp;
 pub use manager::{
     add_group, add_real_timer, dump_wait_queue, for_each_task, get_group, get_task, handle_timeout,
