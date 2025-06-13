@@ -1,6 +1,7 @@
 //! 用户的内核栈分配
 use crate::{
     arch::config::PAGE_SIZE,
+    fs::kstat,
     mm::{MapPermission, VPNRange, VirtAddr, KERNEL_SPACE},
 };
 
@@ -49,6 +50,7 @@ impl Drop for KernelStack {
         KERNEL_SPACE
             .lock()
             .remove_area_with_start_vpn(VirtAddr::from(kstack_bottom).floor());
+        kid_dealloc(kstack_id);
     }
 }
 

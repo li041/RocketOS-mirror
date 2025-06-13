@@ -59,6 +59,15 @@ impl StackFrameAllocator {
         self.current = l.0;
         self.end = r.0;
     }
+    pub fn info(&self) {
+        println!(
+            "[StackFrameAllocator] current: {:#x}, end: {:#x}, recycled len: {}, available: {}",
+            self.current,
+            self.end,
+            self.recycled.len(),
+            self.end - self.current + self.recycled.len()
+        );
+    }
 }
 impl FrameAllocator for StackFrameAllocator {
     fn new() -> Self {
@@ -121,16 +130,18 @@ pub fn frame_alloc() -> Option<FrameTracker> {
 
 /// 由调用者负责清理
 pub fn frame_alloc_ppn() -> PhysPageNum {
-    if let Some(ppn) = FRAME_ALLOCATOR.lock().alloc() {
-        ppn
-    } else {
-        clean_dentry_cache();
-        let ppn = FRAME_ALLOCATOR
-            .lock()
-            .alloc()
-            .expect("frame alloc failed after clean dentry cache");
-        ppn
-    }
+    // if let Some(ppn) = FRAME_ALLOCATOR.lock().alloc() {
+    //     ppn
+    // } else {
+    //     println!("[frame_alloc_ppn] frame alloc failed, clean dentry cache");
+    //     clean_dentry_cache();
+    //     let ppn = FRAME_ALLOCATOR
+    //         .lock()
+    //         .alloc()
+    //         .expect("frame alloc failed after clean dentry cache");
+    //     ppn
+    // }
+    FRAME_ALLOCATOR.lock().alloc().unwrap()
 }
 
 /// deallocate a frame

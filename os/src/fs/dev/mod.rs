@@ -45,24 +45,24 @@ pub fn init_devfs(root_path: Arc<Path>) {
             panic!("create {} failed: {:?}", dev_path, e);
         }
     };
-    // /dev/cpu_dma_latency
-    let cpu_dma_latency_path = "/dev/cpu_dma_latency";
-    let mut nd = Nameidata {
-        path_segments: parse_path(cpu_dma_latency_path),
-        dentry: root_path.dentry.clone(),
-        mnt: root_path.mnt.clone(),
-        depth: 0,
-    };
-    let cpu_dma_latency_mode = S_IFDIR as u16 | 0o755;
-    match filename_create(&mut nd, 0) {
-        Ok(dentry) => {
-            let parent_inode = nd.dentry.get_inode();
-            parent_inode.mkdir(dentry, cpu_dma_latency_mode);
-        }
-        Err(e) => {
-            panic!("create {} failed: {:?}", cpu_dma_latency_path, e);
-        }
-    };
+    // // /dev/cpu_dma_latency
+    // let cpu_dma_latency_path = "/dev/cpu_dma_latency";
+    // let mut nd = Nameidata {
+    //     path_segments: parse_path(cpu_dma_latency_path),
+    //     dentry: root_path.dentry.clone(),
+    //     mnt: root_path.mnt.clone(),
+    //     depth: 0,
+    // };
+    // let cpu_dma_latency_mode = S_IFCHR as u16 | 0o755;
+    // match filename_create(&mut nd, 0) {
+    //     Ok(dentry) => {
+    //         let parent_inode = nd.dentry.get_inode();
+    //         parent_inode.mkdir(dentry, cpu_dma_latency_mode);
+    //     }
+    //     Err(e) => {
+    //         panic!("create {} failed: {:?}", cpu_dma_latency_path, e);
+    //     }
+    // };
     // /dev/shm
     let shm_path = "/dev/shm";
     let shm_mode = S_IFDIR as u16 | 0o755;

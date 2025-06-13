@@ -19,11 +19,14 @@ GW ?= 10.0.2.2
 ifeq ($(ARCH), riscv64)
 	TARGET := riscv64gc-unknown-none-elf
 	OBJCOPY := rust-objcopy --binary-architecture=riscv64
-    FS := ../img/ext4_prev.img
+    # FS := ../img/ext4_prev.img
+    FS := ../img/sdcard-rv.img
+    FS2 := ../img/disk.img
 else ifeq ($(ARCH), loongarch64)
 	TARGET := loongarch64-unknown-none
 	OBJCOPY := loongarch64-linux-gnu-objcopy 
-    FS := ../img/ext4_prev-la.img
+    FS := ../img/sdcard-la.img
+    FS2 := ../img/disk-la.img
 else
 	$(error "Unsupported architecture: $(ARCH), Use riscv64 or loongarch64")
 endif
