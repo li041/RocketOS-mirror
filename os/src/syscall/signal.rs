@@ -428,7 +428,7 @@ pub fn sys_rt_sigpending(set: usize) -> SyscallRet {
 //     if timeout_ptr != 0 {
 //         // timeout是空指针, 行为未定义
 //         // panic!("[sys_rt_sigtimedwait] timeout is null");
-//         // return Err(Errno::EINVAL);
+//         return Err(Errno::EINVAL);
 //         let mut timeout: TimeSpec = TimeSpec::default();
 //         copy_from_user(
 //             timeout_ptr as *const TimeSpec,

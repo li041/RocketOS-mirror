@@ -518,7 +518,7 @@ pub fn clean_dentry_cache() {
     let mut cache_map = cache.cache.write(); // 需要写锁来删除
     let mut lru = cache.lru_list.lock();
 
-    if lru.len() < 200 {
+    if lru.len() < 100 {
         return;
     }
 
@@ -529,10 +529,10 @@ pub fn clean_dentry_cache() {
             //     "[DentryCache] Key: {}, Path: {:?}, Strong Count: {}, pages: {}",
             //     name, dentry.absolute_path, strong_count, count
             // );
-            if name.contains("iozone") {
-                // 特例处理, 保留 iozone*
-                continue;
-            }
+            // if name.contains("iozone") {
+            //     // 特例处理, 保留 iozone*
+            //     continue;
+            // }
             if strong_count == 1 {
                 // 没有其他强引用，可以安全移除
                 cache_map.remove(name);
@@ -543,6 +543,37 @@ pub fn clean_dentry_cache() {
 
     // 清理掉 lru_list 中不再存在于 cache 的条目
     lru.retain(|key| cache_map.contains_key(key));
+}
+
+pub fn dump_dentry_cache() {
+    let cache = DENTRY_CACHE.read();
+    let cache_map = cache.cache.read();
+    let lru = cache.lru_list.lock();
+    let mut total_pages = 0;
+
+    println!(
+        "[DentryCache] Current dentry cache size: {}",
+        cache_map.len()
+    );
+    println!("[DentryCache] LRU list size: {}", lru.len());
+
+    for (key, dentry) in cache_map.iter() {
+        let strong_count = Arc::strong_count(dentry);
+        if dentry.is_negative() {
+            println!(
+                "[DentryCache] Negative dentry found: Key: {}, Path: {:?}, Strong Count: {}",
+                key, dentry.absolute_path, strong_count
+            );
+            continue; // 跳过负目录项
+        }
+        let page_count = dentry.get_inode().get_resident_page_count();
+        println!(
+            "[DentryCache] Key: {}, Path: {:?}, Strong Count: {}, pages: {}",
+            key, dentry.absolute_path, strong_count, page_count
+        );
+        total_pages += page_count;
+    }
+    println!("[DentryCache] Total pages in dentry cache: {}", total_pages);
 }
 
 pub fn lookup_dcache_with_absolute_path(absolute_path: &str) -> Option<Arc<Dentry>> {

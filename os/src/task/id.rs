@@ -12,6 +12,15 @@ lazy_static! {
     static ref KID_ALLOCATOR: Mutex<IdAllocator> = Mutex::new(IdAllocator::new());
 }
 
+pub fn info_allocator() {
+    let tid_allocator = TID_ALLOCATOR.lock();
+    let kid_allocator = KID_ALLOCATOR.lock();
+    println!(
+        "[IdAllocator] TID: next={}, recycled={:?}, KID: next={}, recycled={:?}",
+        tid_allocator.next, tid_allocator.recycled, kid_allocator.next, kid_allocator.recycled
+    );
+}
+
 /// 申请内核栈号
 pub fn kid_alloc() -> usize {
     KID_ALLOCATOR.lock().alloc()

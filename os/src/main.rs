@@ -50,6 +50,10 @@ use core::{
     sync::atomic::AtomicU8,
 };
 
+use fs::dentry::dump_dentry_cache;
+use mm::FRAME_ALLOCATOR;
+use task::{dump_scheduler, info_allocator};
+
 global_asm!(include_str!("link_app.S"));
 
 /// clear BSS segment
@@ -160,4 +164,14 @@ pub fn rust_main() -> ! {
     run_tasks();
     panic!("shutdown machine");
     // shutdown();
+}
+
+pub fn dump_system_info() {
+    // frame_allocator位置
+    FRAME_ALLOCATOR.lock().info();
+    // 栈位置
+    // pid分配
+    info_allocator();
+    // 打印dentry缓存信息
+    dump_dentry_cache();
 }
