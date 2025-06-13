@@ -1311,6 +1311,7 @@ pub fn sys_ppoll(
         }
         let mut done;
         loop {
+            log::trace!("[sys_ppoll]:loop");
             done = 0;
             let task = current_task();
             for i in 0..nfds {

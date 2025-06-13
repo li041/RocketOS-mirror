@@ -475,17 +475,16 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: usize, option: i32) -> SyscallRet 
         // 先检查当前进程是否存在满足目标子进程
         let target_task = select_task(pid);
 
+        log::trace!(
+            "[sys_waitpid] cur_task: {}, target_task: {:?}",
+            cur_task.tid(),
+            target_task
+        );
         // 存在目标进程
         match target_task {
             Some(child) => {
                 let tid = child.tid();
                 let tgid = child.tgid();
-
-                log::error!(
-                    "[sys_waitpid] cur_task: {}, target_child: {}",
-                    cur_task.tid(),
-                    tid
-                );
 
                 // 神奇小咒语
                 log::trace!("waitpid");
@@ -513,13 +512,14 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: usize, option: i32) -> SyscallRet 
                 }
 
                 // 子进程未退出
+                log::trace!("[sys_waitpid] child {} is not zombie, waiting...", tid);
                 if wait_option.contains(WaitOption::WNOHANG) {
                     return Ok(0); // 非阻塞返回
                 }
 
                 // 阻塞等待被中断时，需要判断是否继续等待
                 if wait() == -1 {
-                    log::warn!("[sys_waitpid] wait interrupted");
+                    log::trace!("[sys_waitpid] wait interrupted");
                     // 如果因为 SIGCHLD 被中断，继续 loop 检查
                     if let Some(_sig) = cur_task
                         .op_sig_pending_mut(|pending| pending.find_signal(Sig::SIGCHLD.into()))

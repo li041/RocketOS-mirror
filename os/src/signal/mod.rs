@@ -64,7 +64,7 @@ pub fn handle_signal() {
         #[cfg(target_arch = "riscv64")]
         if task.can_restart()   // 优先判断是否可以重启以恢复原有状态
             && action.flags.contains(SigActionFlag::SA_RESTART)
-            && task.is_interrupted()
+            && task.is_interrupted() && action.sa_handler != SIG_DFL && action.sa_handler != SIG_IGN
         {
             // 回到用户调用ecall的指令
             log::warn!("[handle_signal] handle SA_RESTART");
