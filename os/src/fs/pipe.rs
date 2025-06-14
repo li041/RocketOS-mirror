@@ -598,6 +598,9 @@ impl FileOp for Pipe {
     fn fsync(&self) -> SyscallRet {
         return Err(Errno::EINVAL);
     }
+    fn add_wait_queue(&self, tid: Tid) {
+        self.inode.buffer.lock().add_waiter(tid);
+    }
     fn readable(&self) -> bool {
         self.readable
     }
