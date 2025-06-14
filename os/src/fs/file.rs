@@ -97,6 +97,9 @@ pub trait FileOp: Any + Send + Sync {
     fn writable(&self) -> bool {
         unimplemented!();
     }
+    fn add_wait_queue(&self, tid: usize) {
+        unimplemented!();
+    }
     fn hang_up(&self) -> bool {
         unimplemented!();
     }

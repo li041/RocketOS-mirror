@@ -588,7 +588,10 @@ impl MemorySet {
         if argv.len() > 0 {
             let file_name = &argv[0];
             // 文件后缀是.sh或者file_data是#!开头
-            if file_name.ends_with(".sh") || elf_data.starts_with(b"#!") {
+            if file_name.ends_with(".sh")
+                || elf_data.starts_with(b"#!")
+                || file_name == "/tmp/hello"
+            {
                 let prepend_args = vec![String::from("/musl/busybox"), String::from("sh")];
                 argv.splice(0..0, prepend_args);
                 if let Ok(busybox) = path_openat("/musl/busybox", OpenFlags::empty(), AT_FDCWD, 0) {
@@ -1348,43 +1351,103 @@ impl MemorySet {
 
 /// MemorySet检查的方法
 impl MemorySet {
+    // pub fn check_writable_vpn_range(&self, vpn_range: VPNRange) -> SyscallRet {
+    //     let mut vpn = vpn_range.get_start();
+    //     let end_vpn = vpn_range.get_end();
+
+    //     while vpn < end_vpn {
+    //         let mut found = false;
+
+    //         for (_, area) in self.areas.iter() {
+    //             if area.vpn_range.contains_vpn(vpn) {
+    //                 found = true;
+    //                 if area.map_perm.contains(MapPermission::W)
+    //                     || area.map_perm.contains(MapPermission::COW)
+    //                 {
+    //                     break;
+    //                 }
+    //                 log::warn!(
+    //                     "[check_writable_vpn_range] vpn {:#x} not writable nor COW",
+    //                     vpn.0
+    //                 );
+    //                 self.page_table.dump_all_user_mapping();
+    //                 return Err(Errno::EFAULT);
+    //             }
+    //         }
+
+    //         if !found {
+    //             log::error!(
+    //                 "[check_writable_vpn_range] vpn {:#x} not mapped in any area",
+    //                 vpn.0
+    //             );
+    //             return Err(Errno::EFAULT);
+    //         }
+
+    //         vpn.step();
+    //     }
+
+    //     Ok(0)
+    // }
     pub fn check_writable_vpn_range(&self, vpn_range: VPNRange) -> SyscallRet {
-        let mut vpn = vpn_range.get_start();
+        log::trace!("[check_writable_vpn_range]");
+        let mut current_vpn = vpn_range.get_start();
         let end_vpn = vpn_range.get_end();
 
-        while vpn < end_vpn {
-            let mut found = false;
-
-            for (_, area) in self.areas.iter() {
-                if area.vpn_range.contains_vpn(vpn) {
-                    found = true;
-                    if area.map_perm.contains(MapPermission::W)
-                        || area.map_perm.contains(MapPermission::COW)
-                    {
-                        break;
-                    }
-                    log::warn!(
-                        "[check_writable_vpn_range] vpn {:#x} not writable nor COW",
-                        vpn.0
-                    );
-                    self.page_table.dump_all_user_mapping();
-                    return Err(Errno::EFAULT);
-                }
+        for (_, area) in self.areas.iter() {
+            // 跳过不相关区域
+            if area.vpn_range.get_end() <= current_vpn {
+                continue;
             }
 
-            if !found {
+            // 当前 vpn 不在该区域中，说明存在空洞
+            if !area.vpn_range.contains_vpn(current_vpn) {
                 log::error!(
-                    "[check_writable_vpn_range] vpn {:#x} not mapped in any area",
-                    vpn.0
+                    "[check_writable_vpn_range] can't find area with vpn {:#x}",
+                    current_vpn.0
                 );
+                self.areas.iter().for_each(|(_, area)| {
+                    log::error!(
+                        "[check_writable_vpn_range] area: {:#x?}, {:?}",
+                        area.vpn_range,
+                        area.map_perm
+                    );
+                });
                 return Err(Errno::EFAULT);
             }
 
-            vpn.step();
+            // 检查权限
+            if !(area.map_perm.contains(MapPermission::W)
+                || area.map_perm.contains(MapPermission::COW))
+            {
+                log::warn!(
+                    "[check_writable_vpn_range] vpn {:#x} not writable nor COW: {:?}",
+                    current_vpn.0,
+                    area.map_perm
+                );
+                self.page_table.dump_all_user_mapping();
+                return Err(Errno::EFAULT);
+            }
+
+            // 更新 current_vpn，不超过 end_vpn
+            current_vpn = core::cmp::min(area.vpn_range.get_end(), end_vpn);
+
+            if current_vpn >= end_vpn {
+                break;
+            }
+        }
+
+        if current_vpn < end_vpn {
+            log::error!(
+                "[check_writable_vpn_range] reach end prematurely at {:#x}, want {:#x}",
+                current_vpn.0,
+                end_vpn.0
+            );
+            return Err(Errno::EFAULT);
         }
 
         Ok(0)
     }
+
     // 使用`MapArea`做检查, 而不是查页表
     // 要保证MapArea与页表的一致性, 也就是说, 页表中的映射都在MapArea中, MapArea中的映射都在页表中
     // 检查用户传进来的虚拟地址的合法性

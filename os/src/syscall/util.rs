@@ -5,7 +5,11 @@ use spin::Mutex;
 use super::errno::SyscallRet;
 use crate::{
     arch::mm::{copy_from_user, copy_to_user},
-    fs::{file::OpenFlags, namei::path_openat, uapi::{RLimit, Resource}},
+    fs::{
+        file::OpenFlags,
+        namei::path_openat,
+        uapi::{RLimit, Resource},
+    },
     syscall::errno::Errno,
     task::{
         add_real_timer, current_task, get_task, remove_timer, rusage::RUsage, update_real_timer,
@@ -28,7 +32,7 @@ pub struct Utsname {
     /// 域名
     pub machine: [u8; 65],
     ///domainname
-    pub domainname: [u8;65],
+    pub domainname: [u8; 65],
 }
 
 impl Default for Utsname {
@@ -39,7 +43,7 @@ impl Default for Utsname {
             release: Self::from_str("5.15.146.1-standard"),
             version: Self::from_str("#1 SMP Thu Jan"),
             machine: Self::from_str("RISC-V SiFive Freedom U740 SoC"),
-            domainname:Self::from_str("SHY"),
+            domainname: Self::from_str("SHY"),
         }
     }
 }
@@ -51,12 +55,12 @@ impl Utsname {
         data
     }
     pub fn set_nodename(&mut self, nodename: &[u8]) {
-        let len = core::cmp::min(nodename.len(), 64); 
+        let len = core::cmp::min(nodename.len(), 64);
         self.nodename = [0u8; 65];
         self.nodename[..len].copy_from_slice(&nodename[..len]);
     }
     pub fn set_domainname(&mut self, domainname: &[u8]) {
-        let len = core::cmp::min(domainname.len(), 64); 
+        let len = core::cmp::min(domainname.len(), 64);
         self.domainname = [0u8; 65];
         self.domainname[..len].copy_from_slice(&domainname[..len]);
     }
@@ -96,16 +100,16 @@ pub fn sys_uname(uts: usize) -> SyscallRet {
     //Todo!: check validarity
     let mut utsname = Utsname::default();
     //todo:还差其他的
-    let hostnamefile=path_openat("/etc/hostname", OpenFlags::O_CLOEXEC, -100, 0)?;
-    let nodename=hostnamefile.read_all();
-    log::error!("[sys_uname] nodename is {:?}",nodename);
-    if nodename.len()>0 {
+    let hostnamefile = path_openat("/etc/hostname", OpenFlags::O_CLOEXEC, -100, 0)?;
+    let nodename = hostnamefile.read_all();
+    log::error!("[sys_uname] nodename is {:?}", nodename);
+    if nodename.len() > 0 {
         utsname.set_nodename(nodename.as_slice());
     }
-    let domainnamefile=path_openat("/etc/domainname", OpenFlags::O_CLOEXEC, -100, 0)?;
-    let domainname=domainnamefile.read_all();
-    log::error!("[sys_uname] domainname is {:?}",domainname);
-    if domainname.len()>0 {
+    let domainnamefile = path_openat("/etc/domainname", OpenFlags::O_CLOEXEC, -100, 0)?;
+    let domainname = domainnamefile.read_all();
+    log::error!("[sys_uname] domainname is {:?}", domainname);
+    if domainname.len() > 0 {
         utsname.set_domainname(domainname.as_slice());
     }
     copy_to_user(uts, &utsname as *const Utsname, 1).unwrap();
@@ -241,14 +245,18 @@ pub fn sys_clock_gettime(clock_id: usize, timespec: *mut TimeSpec) -> SyscallRet
     if timespec.is_null() {
         return Ok(0);
     }
-    log::error!("[sys_clock_gettime] clock_id is {:?},timespec {:?}",clock_id,timespec);
+    log::error!(
+        "[sys_clock_gettime] clock_id is {:?},timespec {:?}",
+        clock_id,
+        timespec
+    );
     match clock_id {
         CLOCK_REALTIME | CLOCK_REALTIME_COARSE => {
             let time = TimeSpec::new_wall_time();
             // log::info!("[sys_clock_gettime] CLOCK_REALTIME: {:?}", time);
             copy_to_user(timespec, &time as *const TimeSpec, 1)?;
         }
-        CLOCK_MONOTONIC|CLOCK_MONOTONIC_RAW => {
+        CLOCK_MONOTONIC | CLOCK_MONOTONIC_RAW => {
             let time = TimeSpec::new_machine_time();
             // log::info!("[sys_clock_gettime] CLOCK_MONOTONIC: {:?}", time);
             copy_to_user(timespec, &time as *const TimeSpec, 1)?;
@@ -268,18 +276,18 @@ pub fn sys_clock_gettime(clock_id: usize, timespec: *mut TimeSpec) -> SyscallRet
     }
     Ok(0)
 }
-pub fn sys_clock_settime(clock_id: usize, timespec: *const TimeSpec)-> SyscallRet {
+pub fn sys_clock_settime(clock_id: usize, timespec: *const TimeSpec) -> SyscallRet {
     if timespec.is_null() {
         return Ok(0);
     }
-    log::error!("[sys_clock_settime] clock_id is {:?}",clock_id);
-    let mut time=TimeSpec::default();
+    log::error!("[sys_clock_settime] clock_id is {:?}", clock_id);
+    let mut time = TimeSpec::default();
     copy_from_user(timespec, &mut time as *mut TimeSpec, 1)?;
     match clock_id {
         CLOCK_REALTIME | CLOCK_REALTIME_COARSE => {
             return Ok(0);
         }
-        CLOCK_MONOTONIC|CLOCK_MONOTONIC_RAW => {
+        CLOCK_MONOTONIC | CLOCK_MONOTONIC_RAW => {
             return Ok(0);
         }
         CLOCK_PROCESS_CPUTIME_ID => {
@@ -292,7 +300,6 @@ pub fn sys_clock_settime(clock_id: usize, timespec: *const TimeSpec)-> SyscallRe
     }
     Ok(0)
 }
-
 
 pub fn sys_setitimer(
     which: i32,
@@ -351,6 +358,7 @@ pub fn sys_setitimer(
             }
             // 设置或更新已有定时器
             if should_update {
+                log::warn!("[sys_setitimer] update timer");
                 update_real_timer(task.tid(), new.it_value.into());
             } else {
                 add_real_timer(task.tid(), new.it_value.into());
@@ -430,16 +438,27 @@ pub fn sys_adjtimex(user_timex: *mut KernelTimex) -> SyscallRet {
     let task = current_task();
     log::error!("[sys_adjtimex] task uid: {:?}", task.euid());
     let mut kernel_timex = KernelTimex::default();
-    copy_from_user(user_timex as *const u8, &mut kernel_timex as *mut KernelTimex as *mut u8, size_of::<KernelTimex>())?;
+    copy_from_user(
+        user_timex as *const u8,
+        &mut kernel_timex as *mut KernelTimex as *mut u8,
+        size_of::<KernelTimex>(),
+    )?;
     log::error!("[sys_adjtimex] kernel_timex: {:?}", kernel_timex);
-    log::error!("[sys_adjtimex] kernel_timex modes: {:?}", kernel_timex.modes);
-    if kernel_timex.modes==0x8000 {
+    log::error!(
+        "[sys_adjtimex] kernel_timex modes: {:?}",
+        kernel_timex.modes
+    );
+    if kernel_timex.modes == 0x8000 {
         return Err(Errno::EINVAL);
     }
-    if kernel_timex.modes==0 {
+    if kernel_timex.modes == 0 {
         //只读
-        unsafe {log::error!("[sys_adjtimex] last_timex is {:?}",LAST_TIMEX);}
-        unsafe {copy_to_user(user_timex, &LAST_TIMEX as *const KernelTimex, 1)?;}
+        unsafe {
+            log::error!("[sys_adjtimex] last_timex is {:?}", LAST_TIMEX);
+        }
+        unsafe {
+            copy_to_user(user_timex, &LAST_TIMEX as *const KernelTimex, 1)?;
+        }
         return Ok(0);
     }
     //非只读模式下必须root权限
@@ -448,10 +467,12 @@ pub fn sys_adjtimex(user_timex: *mut KernelTimex) -> SyscallRet {
     }
     //保存非0设置的kernel_timex并在只读中返回回去
     let status = do_adjtimex(&mut kernel_timex)?;
-    kernel_timex.tick=10000;
+    kernel_timex.tick = 10000;
     //写回到last_timex
     unsafe { LAST_TIMEX.clone_from(&kernel_timex) };
-    unsafe {log::error!("[sys_adjtimex] last_timex is {:?}",LAST_TIMEX);}
+    unsafe {
+        log::error!("[sys_adjtimex] last_timex is {:?}", LAST_TIMEX);
+    }
     let out_from = &kernel_timex as *const KernelTimex;
     copy_to_user(user_timex, out_from, 1)?;
     Ok(status as usize)
@@ -466,8 +487,12 @@ pub fn sys_clock_adjtime(clock_id: i32, user_timex: *mut KernelTimex) -> Syscall
     if user_timex.is_null() {
         return Err(Errno::EINVAL);
     }
-    let task=current_task();
-    log::error!("[sys_clock_adjtime] euid {:?},egid {:?}",task.euid(),task.egid());
+    let task = current_task();
+    log::error!(
+        "[sys_clock_adjtime] euid {:?},egid {:?}",
+        task.euid(),
+        task.egid()
+    );
     let clock_type = ClockIdFlags::from_clockid(clock_id)?;
     if clock_type.contains(ClockIdFlags::REALTIME) {
         // 调整实时时钟
@@ -479,4 +504,3 @@ pub fn sys_clock_adjtime(clock_id: i32, user_timex: *mut KernelTimex) -> Syscall
         unimplemented!()
     }
 }
-

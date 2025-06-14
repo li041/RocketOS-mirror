@@ -2,18 +2,20 @@ use super::{current_task, Task, Tid};
 use crate::{
     arch::switch,
     task::{
-        dump_wait_queue, handle_timeout, manager::dump_time_manager, processor::{current_tp, Processor}
+        dump_wait_queue, handle_timeout,
+        manager::dump_time_manager,
+        processor::{current_tp, Processor},
     },
 };
 use alloc::{collections::vec_deque::VecDeque, sync::Arc};
 use bitflags::bitflags;
-use core::{fmt::Debug, panic, sync::atomic::compiler_fence};
+use core::{cell::SyncUnsafeCell, fmt::Debug, panic, sync::atomic::compiler_fence};
 use lazy_static::lazy_static;
 use spin::Mutex;
 
 // 初始化调度器
 lazy_static! {
-    static ref SCHEDULER: Mutex<Scheduler> = Mutex::new(Scheduler::new());
+    static ref SCHEDULER: SyncUnsafeCell<Scheduler> = SyncUnsafeCell::new(Scheduler::new());
 }
 
 /// 添加新任务到就绪队列
@@ -22,36 +24,45 @@ pub fn add_task(task: Arc<Task>) {
     // SCHEDULER.lock().ready_queue.len(), task.tid());
     //assert_eq!(2 , Arc::strong_count(&task));
     debug_assert!(task.is_ready());
-    SCHEDULER.lock().add(task);
+    // SCHEDULER.lock().add(task);
+    let scheduler = unsafe { &mut *SCHEDULER.get() };
+    scheduler.add(task);
 }
 /// 从就绪队列中取出队首任务
 pub fn fetch_task() -> Option<Arc<Task>> {
-    SCHEDULER.lock().fetch()
+    // SCHEDULER.lock().fetch()
+    let scheduler = unsafe { &mut *SCHEDULER.get() };
+    scheduler.fetch()
 }
 
 /// 从就绪队列中移除任务
 pub fn remove_task(tid: Tid) {
-    SCHEDULER.lock().remove(tid);
+    // SCHEDULER.lock().remove(tid);
+    let scheduler = unsafe { &mut *SCHEDULER.get() };
+    scheduler.remove(tid);
 }
 
 /// 查看调度器中任务数量
 pub fn get_scheduler_len() -> usize {
-    SCHEDULER.lock().len()
+    // SCHEDULER.lock().len()
+    let scheduler = unsafe { &*SCHEDULER.get() };
+    scheduler.len()
 }
 
 /// 打印调度器中任务信息
 pub fn dump_scheduler() {
-    let scheduler = SCHEDULER.lock();
-    log::error!("task {} is running", current_task().tid());
-    log::error!("**************************** dump scheduler ****************************");
+    // let scheduler = SCHEDULER.lock();
+    let scheduler = unsafe { &*SCHEDULER.get() };
+    println!("task {} is running", current_task().tid());
+    println!("**************************** dump scheduler ****************************");
     for task in &scheduler.ready_queue {
-        log::error!(
+        println!(
             "task {} in schduler \tstrong count: {}",
             task.tid(),
             Arc::strong_count(task)
         );
     }
-    log::error!("**************************** dump scheduler ****************************");
+    println!("**************************** dump scheduler ****************************");
     dump_wait_queue();
 }
 
