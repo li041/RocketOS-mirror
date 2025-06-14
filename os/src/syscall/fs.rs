@@ -541,6 +541,7 @@ pub fn sys_fstat(dirfd: i32, statbuf: *mut Stat) -> SyscallRet {
     if let Some(file) = current_task().fd_table().get_file(dirfd as usize) {
         let inode = file.get_inode();
         let stat = Stat::from(inode.getattr());
+        log::error!("[sys_fstat] stat is {:?}",stat);
         if let Err(e) = copy_to_user(statbuf, &stat as *const Stat, 1) {
             log::error!("fstat: copy_to_user failed: {:?}", e);
             return Err(e);
