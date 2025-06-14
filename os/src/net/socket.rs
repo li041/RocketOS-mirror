@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-03 16:40:04
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-11 11:15:11
+ * @LastEditTime: 2025-06-12 17:21:54
  * @FilePath: /RocketOS_netperfright/os/src/net/socket.rs
  * @Description: socket file
  *
@@ -21,9 +21,7 @@ use crate::{
     arch::{config::SysResult, mm::copy_to_user},
     fs::{fdtable::FdFlags, file::OpenFlags, namei::path_openat, pipe::Pipe, uapi::IoVec},
     net::{
-        alg::{encode_text, AlgType},
-        udp::get_ephemeral_port,
-        unix::PasswdEntry,
+        alg::{encode_text, AlgType}, socketpair::{BufferEnd, SocketPairBuffer}, udp::get_ephemeral_port, unix::PasswdEntry
     },
     task::{current_task, yield_current_task},
     timer::TimeSpec,
@@ -130,7 +128,7 @@ pub struct Socket {
     //setsockopt需要设置timeout,这里可以加一个
     recvtimeout: Mutex<Option<TimeSpec>>,
     dont_route: bool,
-    pub buffer: Option<Arc<Pipe>>,
+    pub buffer: Option<Arc<BufferEnd>>,
     //用于send中flag为msg_more时存储，否则为none
     pub pend_send: Mutex<Option<Vec<u8>>>,
     isaf_alg: AtomicBool,
@@ -644,17 +642,16 @@ impl Socket {
 
         let binding = self.get_socket_path();
         let s_path = core::str::from_utf8(binding.as_slice()).unwrap();
+        log::error!("[accept_unix] s_path is {:?}",s_path);
         let mut count = 0;
         loop {
             let file = path_openat(s_path, OpenFlags::O_CLOEXEC, -100, 0)?;
             if file.r_ready() {
                 let n = file.read(peer_path.as_mut_slice())?;
+                log::error!("[accept_unix] accept len is {:?}",n);
                 if peer_path[..n].iter().all(|&b| b == 0) {
                     log::error!("[Socket_accept_unix] wait for connect");
                     yield_current_task();
-                    if count > 50 {
-                        return Err(Errno::ETIMEDOUT);
-                    }
                 } else {
                     peer_path.truncate(n);
                     break;
@@ -664,9 +661,11 @@ impl Socket {
             }
             count += 1;
         }
+        //
         let file = self.get_unix_file();
         let tmp: Vec<u8> = vec![0; 120];
         file.pwrite(tmp.as_slice(), 0)?;
+        println!("3");
         log::error!("[Socket_accept_unix] peer path is {:?}", peer_path);
         let peer_ucred = UCred::from_last_bytes(peer_path.as_slice())?;
         self.set_peer_ucred(peer_ucred.pid, peer_ucred.uid, peer_ucred.gid);
@@ -1535,7 +1534,15 @@ impl FileOp for Socket {
                 return self.buffer.as_ref().unwrap().r_ready();
             }
             log::error!("[sokcet_readable]:unix socket readable");
-            return true;
+            if self.socket_nscdrequest.lock().is_some() {
+                return true;
+            }
+            else {
+                let path=self.get_socket_path();
+                let s_path=core::str::from_utf8(path.as_slice()).unwrap();
+                let file=path_openat(s_path, OpenFlags::O_CLOEXEC, -100, 0).unwrap();
+                return file.get_offset()>0;
+            }
         }
         // yield_current_task();
         poll_interfaces();
@@ -2112,3 +2119,6 @@ pub struct MessageHeaderRaw {
     pub control_len: u32, // control 缓冲区的大小
     pub flags: i32,       // recvmsg/sendmsg 时的 flags
 }
+
+
+

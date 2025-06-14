@@ -53,7 +53,7 @@ use crate::{
     fs::{
         kstat::{Stat, Statx},
         uapi::{IoVec, PollFd, RLimit, StatFs},
-    }, futex::robust_list::{sys_get_robust_list, sys_set_robust_list}, mm::shm::ShmId, signal::{SigInfo, SigSet}, syscall::net::{syscall_setdomainname, syscall_sethostname}, task::rusage::RUsage, time::KernelTimex, timer::{ITimerVal, TimeSpec}
+    }, futex::robust_list::{sys_get_robust_list, sys_set_robust_list}, mm::shm::ShmId, signal::{SigInfo, SigSet}, syscall::{net::{syscall_setdomainname, syscall_sethostname}, util::sys_clock_settime}, task::rusage::RUsage, time::KernelTimex, timer::{ITimerVal, TimeSpec}
 };
 pub use fs::FcntlOp;
 pub use fs::AT_SYMLINK_NOFOLLOW;
@@ -121,6 +121,7 @@ const SYSCALL_SET_ROBUST_LIST: usize = 99;
 const SYSCALL_GET_ROBUST_LIST: usize = 100;
 const SYSCALL_NANOSLEEP: usize = 101;
 const SYSCALL_SETITIMER: usize = 103;
+const SYSCALL_CLOCK_SETTIME:usize=112;
 const SYSCALL_CLOCK_GETTIME: usize = 113;
 const SYSCALL_CLOCK_GETRES: usize = 114;
 const SYSCALL_CLOCK_NANOSLEEP: usize = 115;
@@ -308,6 +309,7 @@ pub fn syscall(
         SYSCALL_GET_ROBUST_LIST => sys_get_robust_list(a0, a1, a2),
         SYSCALL_NANOSLEEP => sys_nanosleep(a0, a1),
         SYSCALL_SETITIMER => sys_setitimer(a0 as i32, a1 as *const ITimerVal, a2 as *mut ITimerVal),
+        SYSCALL_CLOCK_SETTIME=>sys_clock_settime(a0, a1 as *const TimeSpec),
         SYSCALL_CLOCK_GETTIME => sys_clock_gettime(a0, a1 as *mut TimeSpec),
         SYSCALL_CLOCK_GETRES => sys_clock_getres(a0, a1),
         SYSCALL_CLOCK_NANOSLEEP => sys_clock_nansleep(a0, a1 as i32, a2, a3),

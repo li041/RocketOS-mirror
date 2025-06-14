@@ -1,4 +1,6 @@
-use core::time;
+use core::{cell::UnsafeCell, time};
+
+use spin::Mutex;
 
 use super::errno::SyscallRet;
 use crate::{
@@ -9,10 +11,9 @@ use crate::{
         add_real_timer, current_task, get_task, remove_timer, rusage::RUsage, update_real_timer,
         ITIMER_PROF, ITIMER_REAL, ITIMER_VIRTUAL,
     },
-    time::{config::ClockIdFlags, do_adjtimex, KernelTimex},
+    time::{config::ClockIdFlags, do_adjtimex, KernelTimex, LAST_TIMEX},
     timer::{ITimerVal, TimeSpec, TimeVal},
 };
-
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct Utsname {
@@ -240,13 +241,14 @@ pub fn sys_clock_gettime(clock_id: usize, timespec: *mut TimeSpec) -> SyscallRet
     if timespec.is_null() {
         return Ok(0);
     }
+    log::error!("[sys_clock_gettime] clock_id is {:?},timespec {:?}",clock_id,timespec);
     match clock_id {
         CLOCK_REALTIME | CLOCK_REALTIME_COARSE => {
             let time = TimeSpec::new_wall_time();
             // log::info!("[sys_clock_gettime] CLOCK_REALTIME: {:?}", time);
             copy_to_user(timespec, &time as *const TimeSpec, 1)?;
         }
-        CLOCK_MONOTONIC => {
+        CLOCK_MONOTONIC|CLOCK_MONOTONIC_RAW => {
             let time = TimeSpec::new_machine_time();
             // log::info!("[sys_clock_gettime] CLOCK_MONOTONIC: {:?}", time);
             copy_to_user(timespec, &time as *const TimeSpec, 1)?;
@@ -260,12 +262,37 @@ pub fn sys_clock_gettime(clock_id: usize, timespec: *mut TimeSpec) -> SyscallRet
             copy_to_user(timespec, &time as *const TimeSpec, 1)?;
         }
         _ => {
-            panic!("[sys_clock_gettime] invalid clock_id: {}", clock_id);
+            // panic!("[sys_clock_gettime] invalid clock_id: {}", clock_id);
             return Err(Errno::EINVAL);
         }
     }
     Ok(0)
 }
+pub fn sys_clock_settime(clock_id: usize, timespec: *const TimeSpec)-> SyscallRet {
+    if timespec.is_null() {
+        return Ok(0);
+    }
+    log::error!("[sys_clock_settime] clock_id is {:?}",clock_id);
+    let mut time=TimeSpec::default();
+    copy_from_user(timespec, &mut time as *mut TimeSpec, 1)?;
+    match clock_id {
+        CLOCK_REALTIME | CLOCK_REALTIME_COARSE => {
+            return Ok(0);
+        }
+        CLOCK_MONOTONIC|CLOCK_MONOTONIC_RAW => {
+            return Ok(0);
+        }
+        CLOCK_PROCESS_CPUTIME_ID => {
+            return Ok(0);
+        }
+        _ => {
+            // panic!("[sys_clock_gettime] invalid clock_id: {}", clock_id);
+            return Err(Errno::EINVAL);
+        }
+    }
+    Ok(0)
+}
+
 
 pub fn sys_setitimer(
     which: i32,
@@ -403,22 +430,28 @@ pub fn sys_adjtimex(user_timex: *mut KernelTimex) -> SyscallRet {
     let task = current_task();
     log::error!("[sys_adjtimex] task uid: {:?}", task.euid());
     let mut kernel_timex = KernelTimex::default();
-
-    //todo
+    copy_from_user(user_timex as *const u8, &mut kernel_timex as *mut KernelTimex as *mut u8, size_of::<KernelTimex>())?;
+    log::error!("[sys_adjtimex] kernel_timex: {:?}", kernel_timex);
+    log::error!("[sys_adjtimex] kernel_timex modes: {:?}", kernel_timex.modes);
     if kernel_timex.modes==0x8000 {
         return Err(Errno::EINVAL);
     }
+    if kernel_timex.modes==0 {
+        //只读
+        unsafe {log::error!("[sys_adjtimex] last_timex is {:?}",LAST_TIMEX);}
+        unsafe {copy_to_user(user_timex, &LAST_TIMEX as *const KernelTimex, 1)?;}
+        return Ok(0);
+    }
+    //非只读模式下必须root权限
     if kernel_timex.modes != 0 && task.euid() != 0 {
         return Err(Errno::EPERM);
     }
-    if kernel_timex.modes == 16384 {
-        let tick_val = kernel_timex.tick as i64;
-        if tick_val < 9000 || tick_val > 11000 {
-            return Err(Errno::EINVAL);
-        }
-    }
-    log::error!("[sys_adjtimex] kernel_timex: {:?}", kernel_timex);
+    //保存非0设置的kernel_timex并在只读中返回回去
     let status = do_adjtimex(&mut kernel_timex)?;
+    kernel_timex.tick=10000;
+    //写回到last_timex
+    unsafe { LAST_TIMEX.clone_from(&kernel_timex) };
+    unsafe {log::error!("[sys_adjtimex] last_timex is {:?}",LAST_TIMEX);}
     let out_from = &kernel_timex as *const KernelTimex;
     copy_to_user(user_timex, out_from, 1)?;
     Ok(status as usize)
@@ -433,6 +466,8 @@ pub fn sys_clock_adjtime(clock_id: i32, user_timex: *mut KernelTimex) -> Syscall
     if user_timex.is_null() {
         return Err(Errno::EINVAL);
     }
+    let task=current_task();
+    log::error!("[sys_clock_adjtime] euid {:?},egid {:?}",task.euid(),task.egid());
     let clock_type = ClockIdFlags::from_clockid(clock_id)?;
     if clock_type.contains(ClockIdFlags::REALTIME) {
         // 调整实时时钟
@@ -444,3 +479,4 @@ pub fn sys_clock_adjtime(clock_id: i32, user_timex: *mut KernelTimex) -> Syscall
         unimplemented!()
     }
 }
+
