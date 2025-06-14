@@ -99,6 +99,12 @@ pub fn pipe(pipe: *mut i32, flags: i32) -> isize {
 pub fn chdir(path: &str) -> isize {
     sys_chdir(path)
 }
+pub fn socketpair(domain: usize,
+    sockettype: usize,
+    protocol: usize,
+    socketfds: *mut i32)->isize{
+    sys_socketpair(domain, sockettype, protocol, socketfds)
+}
 
 // pub fn exec(path: &str) -> isize {
 //     sys_exec(path)

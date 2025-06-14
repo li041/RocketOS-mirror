@@ -25,10 +25,7 @@ use mm::{
     sys_munmap, sys_shmat, sys_shmctl, sys_shmdt, sys_shmget,
 };
 use net::{
-    syscall_accept, syscall_accept4, syscall_bind, syscall_connect, syscall_getpeername,
-    syscall_getsocketopt, syscall_getsockname, syscall_listen, syscall_recvfrom, syscall_recvmsg,
-    syscall_send, syscall_sendmsg, syscall_setsocketopt, syscall_shutdown, syscall_socket,
-    syscall_socketpair,
+    syscall_accept, syscall_accept4, syscall_bind, syscall_connect, syscall_getpeername, syscall_getsocketopt, syscall_getsockname, syscall_listen, syscall_recvfrom, syscall_recvmsg, syscall_send, syscall_sendmsg, syscall_setdomainname, syscall_sethostname, syscall_setsocketopt, syscall_shutdown, syscall_socket, syscall_socketpair
 };
 use sched::{
     sys_sched_getaffinity, sys_sched_getparam, sys_sched_getscheduler, sys_sched_setscheduler,
@@ -45,8 +42,8 @@ use task::{
     sys_setresgid, sys_setresuid, sys_setreuid, sys_setsid, sys_setuid, sys_waitpid, sys_yield,
 };
 use util::{
-    sys_adjtimex, sys_clock_adjtime, sys_clock_getres, sys_clock_gettime, sys_getrusage,
-    sys_prlimit64, sys_setitimer, sys_syslog, sys_times, sys_uname,
+    sys_adjtimex, sys_clock_adjtime, sys_clock_getres, sys_clock_gettime, sys_clock_settime,
+    sys_getrusage, sys_prlimit64, sys_setitimer, sys_syslog, sys_times, sys_uname,
 };
 
 use crate::{
@@ -127,6 +124,7 @@ const SYSCALL_SET_ROBUST_LIST: usize = 99;
 const SYSCALL_GET_ROBUST_LIST: usize = 100;
 const SYSCALL_NANOSLEEP: usize = 101;
 const SYSCALL_SETITIMER: usize = 103;
+const SYSCALL_CLOCK_SETTIME: usize = 112;
 const SYSCALL_CLOCK_GETTIME: usize = 113;
 const SYSCALL_CLOCK_GETRES: usize = 114;
 const SYSCALL_CLOCK_NANOSLEEP: usize = 115;
@@ -163,6 +161,8 @@ const SYSCALL_GETPGID: usize = 155;
 const SYSCALL_GETGROUPS: usize = 158;
 const SYSCALL_SETGROUPS: usize = 159;
 const SYSCALL_UNAME: usize = 160;
+const SYSCALL_SETHOSTNAME: usize = 161;
+const SYSCALL_SETDOMAINNAME: usize = 162;
 const SYSCALL_GETRUSAGE: usize = 165;
 const SYSCALL_UMASK: usize = 166;
 const SYSCALL_GET_TIME: usize = 169;
@@ -225,7 +225,6 @@ const SYSCALL_FACCESSAT2: usize = 439;
 const CARELESS_SYSCALLS: [usize; 9] = [62, 63, 64, 72, 113, 124, 129, 165, 260];
 // const SYSCALL_NUM_2_NAME: [(&str, usize); 4] = [
 const SYSCALL_NUM_2_NAME: [(usize, &str); 1] = [(SYSCALL_SIGALTSTACK, "SYS_SIGALTSTACK")];
-
 #[no_mangle]
 pub fn syscall(
     a0: usize,
@@ -316,6 +315,7 @@ pub fn syscall(
         SYSCALL_GET_ROBUST_LIST => sys_get_robust_list(a0, a1, a2),
         SYSCALL_NANOSLEEP => sys_nanosleep(a0, a1),
         SYSCALL_SETITIMER => sys_setitimer(a0 as i32, a1 as *const ITimerVal, a2 as *mut ITimerVal),
+        SYSCALL_CLOCK_SETTIME => sys_clock_settime(a0, a1 as *const TimeSpec),
         SYSCALL_CLOCK_GETTIME => sys_clock_gettime(a0, a1 as *mut TimeSpec),
         SYSCALL_CLOCK_GETRES => sys_clock_getres(a0, a1),
         SYSCALL_CLOCK_NANOSLEEP => sys_clock_nanosleep(a0, a1 as i32, a2, a3),
@@ -419,6 +419,8 @@ pub fn syscall(
         SYSCALL_RECVMSG => syscall_recvmsg(a0, a1, a2),
         SYSCALL_OPENAT2 => sys_openat2(a0 as i32, a1 as *const u8, a2 as *const u8, a3 as usize),
         SYSCALL_FACCESSAT2 => sys_faccessat(a0 as usize, a1 as *const u8, a2 as i32, a3 as i32),
+        SYSCALL_SETDOMAINNAME => syscall_setdomainname(a0 as *const u8, a1),
+        SYSCALL_SETHOSTNAME => syscall_sethostname(a0 as *const u8, a1),
         _ => {
             log::warn!(
                 "Unsupported syscall_id: {}, {}",

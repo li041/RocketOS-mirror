@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-02 23:04:54
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-09 17:13:13
+ * @LastEditTime: 2025-06-14 10:56:53
  * @FilePath: /RocketOS_netperfright/os/src/syscall/net.rs
  * @Description: net syscall
  *
@@ -22,11 +22,8 @@ use crate::{
         addr::{from_ipendpoint_to_socketaddr, LOOP_BACK_IP},
         alg::encode,
         socket::{
-            check_alg, socket_address_from, socket_address_from_af_alg, socket_address_from_unix,
-            socket_address_to, socket_address_tounix, ALG_Option, Domain, IpOption, Ipv6Option,
-            MessageHeaderRaw, Socket, SocketOption, SocketOptionLevel, SocketType, TcpSocketOption,
-            SOCK_CLOEXEC, SOCK_NONBLOCK,
-        },
+            check_alg, socket_address_from, socket_address_from_af_alg, socket_address_from_unix, socket_address_to, socket_address_tounix, ALG_Option, Domain, IpOption, Ipv6Option, MessageHeaderRaw, SockAddrIn, Socket, SocketOption, SocketOptionLevel, SocketType, TcpSocketOption, SOCK_CLOEXEC, SOCK_NONBLOCK
+        }, socketpair::create_buffer_ends,
     },
     syscall::task::{sys_getresgid, sys_nanosleep},
     task::{current_task, yield_current_task},
@@ -36,7 +33,7 @@ use alloc::{sync::Arc, task, vec::Vec};
 use bitflags::Flags;
 use core::{
     fmt::Result,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
     sync::atomic::{AtomicUsize, Ordering},
 };
 use hashbrown::Equivalent;
@@ -130,9 +127,10 @@ pub fn syscall_bind(socketfd: usize, socketaddr: usize, socketlen: usize) -> Sys
         socketlen,
     )?;
     let family_bytes = [kernel_addr_from_user[0], kernel_addr_from_user[1]];
+    log::error!("[syscall_bind] family bytes is {:?}",family_bytes);
     let family = Domain::try_from(u16::from_ne_bytes(family_bytes) as usize).unwrap();
-    log::error!("[socket_address_from] parsed sa_family = {:?}", family);
-    if socket.domain != family {
+    log::error!("[syscall_bind] parsed sa_family = {:?}", family);
+    if socket.domain != family && socket.domain!=Domain::AF_RDS {
         return Err(Errno::EAFNOSUPPORT);
     }
     log::error!(
@@ -257,17 +255,6 @@ pub fn syscall_accept(socketfd: usize, socketaddr: usize, socketlen: usize) -> S
         log::error!("[syscall_accept_af_unix]: alloc fd {} to socket", fd);
         return Ok(fd);
     }
-    if socket.domain == Domain::AF_UNIX {
-        log::error!("[syscall_accept]: AF UNIX domain socket supported");
-        //需要直接克隆一个fd继承所有socket的所有内容
-        let fd_table = task.fd_table();
-        let new_socket = socket.accept_unix()?;
-        let fd = fd_table
-            .alloc_fd(Arc::new(new_socket), FdFlags::empty())
-            .unwrap();
-        log::error!("[syscall_accept_af_unix]: alloc fd {} to socket", fd);
-        return Ok(fd);
-    }
     match socket.accept() {
         Ok((new_socket, addr)) => {
             let fd_table = task.fd_table();
@@ -277,7 +264,6 @@ pub fn syscall_accept(socketfd: usize, socketaddr: usize, socketlen: usize) -> S
                 .unwrap();
             Ok(fd)
         }
-        //TODO socket accept err
         Err(e) => Err(e),
     }
 }
@@ -378,6 +364,10 @@ pub fn syscall_connect(socketfd: usize, socketaddr: usize, socketlen: usize) -> 
         //向这个路径的写自己的路径
         socket.set_is_af_unix(true);
         socket.set_socket_peer_path(path.as_slice());
+        if s_path.eq("/var/run/nscd/socket") {
+            socket.set_unix_path(path.as_slice());
+            return Ok(0);
+        }
         let peer_file = path_openat(s_path, OpenFlags::O_CLOEXEC, -100, 0)?;
         socket.set_peer_unix_file(peer_file);
         let mut self_path = socket.get_socket_path();
@@ -398,7 +388,7 @@ pub fn syscall_connect(socketfd: usize, socketaddr: usize, socketlen: usize) -> 
             || socket.socket_type == SocketType::SOCK_RAW
         {
             let file = socket.get_peer_unix_file();
-            if file.w_ready() {
+            if file.as_ref().w_ready() {
                 log::error!(
                     "[syscall_connect]: unix domain write self path is {:?}",
                     core::str::from_utf8(self_path.as_slice()).unwrap()
@@ -413,7 +403,9 @@ pub fn syscall_connect(socketfd: usize, socketaddr: usize, socketlen: usize) -> 
                         core::mem::size_of_val(&ucred),
                     )
                 };
+                log::error!("[syscall_connect] ucred bytes is {:?}",ucred_bytes);
                 file.pwrite(ucred_bytes, self_path.len() + 1)?;
+                drop(file);
             }
         } else if socket.socket_type == SocketType::SOCK_DGRAM {
             //server不会使用accept去接受，这里遍历fd来判断哪个是建立在对于path的路径上的socket
@@ -510,6 +502,11 @@ pub fn syscall_send(
         // let path=socket.get_so();
         // let s_path=core::str::from_utf8(path.as_slice()).unwrap();
         // log::error!("[syscall_send] send to path {:?}",s_path);
+        let peer_path=socket.get_socket_peer_path();
+        let s_path = core::str::from_utf8(peer_path.as_slice()).unwrap();
+        if s_path.eq("/var/run/nscd/socket") {
+            return socket.unix_send(kernel_buf.as_slice());
+        }
         let file = socket.get_peer_unix_file();
         if file.w_ready() {
             let res = file.pwrite(kernel_buf.as_slice(), 0)?;
@@ -694,7 +691,7 @@ pub fn syscall_setsocketopt(
     );
     let Ok(level) = SocketOptionLevel::try_from(level) else {
         log::error!("[setsockopt()] level {level} not supported");
-        unimplemented!();
+        return Err(Errno::EOPNOTSUPP);
     };
 
     let curr = current_task();
@@ -981,7 +978,6 @@ pub fn syscall_socketpair(
     // 3) 计算要拷贝的字节数：2 * sizeof(int)
     let byte_count = core::mem::size_of::<i32>() * user_fds.len();
 
-    // 注意：需要把指针都转换成 u8 指针
     let dst = socketfds as *mut u8;
     let src = user_fds.as_ptr() as *const u8;
 
@@ -998,14 +994,14 @@ pub fn make_socketpair(
     let s_type = SocketType::try_from(sockettype & SOCKET_TYPE_MASK).unwrap();
     let mut fd1 = Socket::new(domain.clone(), s_type);
     let mut fd2 = Socket::new(domain.clone(), s_type);
-    let (pipe1, pipe2) = make_pipe(pipe_flag);
-    fd1.buffer = Some(pipe1);
-    fd2.buffer = Some(pipe2);
+    let (pipe1, pipe2) = create_buffer_ends(pipe_flag);
+    fd1.buffer = Some(Arc::new(pipe1));
+    fd2.buffer = Some(Arc::new(pipe2));
     (Arc::new(fd1), Arc::new(fd2))
 }
 pub fn syscall_sendmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallRet {
-    log::error!("[syscall_sendmsg]: begin sendmsg");
-    log::error!(
+    println!("[syscall_sendmsg]: begin sendmsg");
+    println!(
         "[syscall_sendmsg]: socketfd: {}, msg_ptr: {}, flag: {}",
         socketfd,
         msg_ptr,
@@ -1032,13 +1028,15 @@ pub fn syscall_sendmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallR
         control_len: 0,
         flags: 0,
     };
+    println!("[1a]");
     copy_from_user(
         msg_ptr as *const MessageHeaderRaw,
         &mut user_hdr as *mut MessageHeaderRaw,
         1,
     )?;
-
-    // 2. 准备 name buffer
+    println!("[1b]");
+    // 2. 准备 name buffer，获得对端地址
+    //kernel name for af_alg,peer_addr for tcp/udp,peer_path for unix
     let mut kernel_name = Vec::new();
     if user_hdr.name_len > 0 {
         kernel_name.resize(user_hdr.name_len as usize, 0);
@@ -1048,7 +1046,33 @@ pub fn syscall_sendmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallR
             user_hdr.name_len as usize,
         )?;
     }
-
+    let mut peer_addr: Option<SocketAddr> = None;
+    println!("[1c]");
+    if socket.domain != Domain::AF_ALG && socket.domain != Domain::AF_UNIX {
+        if user_hdr.name_len>0 {
+            let addr = unsafe {
+            socket_address_from(
+                user_hdr.name as *const u8,
+                user_hdr.name_len as usize,
+                socket,
+                )
+            }?;
+            println!("[syscall_sendmsg] name addr is {:?}", addr);
+            peer_addr = Some(addr);
+        }
+        else {
+            peer_addr=Some(socket.peer_name()?);
+        }
+        
+    }
+    println!("[1c]");
+    let mut peer_path=Vec::new();
+    if socket.domain==Domain::AF_UNIX {
+        println!("[1d]");
+        peer_path=unsafe { socket_address_from_unix(user_hdr.name as *const u8, user_hdr.name_len as usize, socket) }?;
+        println!("[syscall_sendmsg] path addr is peer path is {:?}",peer_path);
+    }
+    
     // 3. 从用户空间读取 iovec 数组
     let iovec_ptr = user_hdr.iovec as *const IoVec;
     let iovec_count = user_hdr.iovec_len as usize;
@@ -1062,7 +1086,7 @@ pub fn syscall_sendmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallR
             let src_ptr = unsafe { iovec_ptr.add(idx) };
             copy_from_user(src_ptr, &mut kernel_iovecs[idx] as *mut IoVec, 1)?;
         }
-        log::error!(
+        println!(
             "[syscall_sendmsg]: read {} iovecs: {:?}",
             iovec_count,
             kernel_iovecs
@@ -1099,7 +1123,7 @@ pub fn syscall_sendmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallR
                     unsafe { kernel_buf.as_mut_ptr().add(offset) },
                     len,
                 )?;
-                log::error!(
+                println!(
                     "[syscall_sendmsg]: copied {} bytes from user iovec at base={:?} to kernel_buf+{}",
                     len,
                     iov.base,
@@ -1109,12 +1133,12 @@ pub fn syscall_sendmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallR
             }
         }
     }
-    log::error!(
+    println!(
         "[syscall_sendmsg]: final kernel_buf (len={}): {:?}",
         total_len,
         kernel_buf
     );
-    log::error!(
+    println!(
         "[syscall_sendmsg]: control_buf (len={}): {:?}",
         kernel_control.len(),
         kernel_control
@@ -1130,11 +1154,39 @@ pub fn syscall_sendmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallR
             kernel_control.as_mut_slice(),
         );
     }
-    let Ok(addr) = socket.peer_name() else {
-        log::error!("[syscall_sendmsg]:get peer name error");
-        // return Err(Errno::ENOTCONN);
-        // 出于/etc/passwd的要求, 改为返回ENOENT
-        return Err(Errno::ENOENT);
+    //sendto peer path
+    if socket.domain==Domain::AF_UNIX {
+        if socket.buffer.is_some() {
+            return socket.buffer.as_ref().unwrap().write(kernel_buf.as_slice());
+        }
+        // //check当前的对于unix的send,直接写入文件即可
+        // let path=socket.get_so();
+        // let s_path=core::str::from_utf8(path.as_slice()).unwrap();
+        // log::error!("[syscall_send] send to path {:?}",s_path);
+        //注意这里的peer_path
+        if peer_path.len()==0 {
+            peer_path=socket.get_socket_peer_path();
+        }
+        let s_path = core::str::from_utf8(peer_path.as_slice()).unwrap();
+        if s_path.eq("/var/run/nscd/socket") {
+            return socket.unix_send(kernel_buf.as_slice());
+        }
+        let file = socket.get_peer_unix_file();
+        if file.w_ready() {
+            println!("[0]");
+            let res = file.pwrite(kernel_buf.as_slice(), 0)?;
+            println!("[1]");
+            file.pwrite(&[1], 128)?;
+            return Ok(res);
+        } else {
+            return Err(Errno::EBADF);
+        }
+    }
+    let addr = match peer_addr {
+        Some(a) => a,
+        None  => {
+            socket.peer_name()?
+        }
     };
     match socket.send(kernel_buf.as_slice(), addr) {
         Ok(size) => Ok(size),
@@ -1144,13 +1196,26 @@ pub fn syscall_sendmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallR
         }
     }
 }
-pub fn syscall_recvmsg(socketfd: usize, msg_ptr: usize, _flags: usize) -> SyscallRet {
+pub fn syscall_recvmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallRet {
     log::debug!("[syscall_recvmsg]: begin recvmsg");
     log::debug!(
         "[syscall_recvmsg]: socketfd: {}, msg_ptr: {}",
         socketfd,
         msg_ptr
     );
+    let flags = MsgFlags::from_bits(flag as u32).ok_or(Errno::EINVAL)?; // 如果有未定义的位，直接当 EINVAL
+    log::error!(
+        "[syscall_recvfrom] flag is {:#x},flags is {:?}",
+        flag,
+        flags
+    );
+    // 2. 如果带了 MSG_OOB，就立刻失败
+    if flags.contains(MsgFlags::MSG_OOB) {
+        return Err(Errno::EINVAL);
+    }
+    if flags.contains(MsgFlags::MSG_ERRQUEUE) {
+        return Err(Errno::EAGAIN);
+    }
 
     // 1. 获取当前任务并检查文件描述符
     let task = current_task();
@@ -1178,19 +1243,28 @@ pub fn syscall_recvmsg(socketfd: usize, msg_ptr: usize, _flags: usize) -> Syscal
         &mut user_hdr as *mut MessageHeaderRaw,
         1,
     )?;
-    log::debug!("[syscall_recvmsg]: user_hdr: {:?}", user_hdr);
-
-    // 3. 从用户空间拷贝 iovec 数组到内核
-    let iovec_count = user_hdr.iovec_len as usize;
-    if iovec_count == 0 {
+    log::error!("[syscall_recvmsg]: user_hdr: {:?}", user_hdr);
+    if (user_hdr.name_len as i32 )<0||(user_hdr.control_len as i32 )<0{
         return Err(Errno::EINVAL);
     }
-    let mut kernel_iovecs: Vec<IoVec> = Vec::with_capacity(iovec_count);
+    if user_hdr.name_len as usize > size_of::<SockAddrIn>() {
+        let user_msghdr = unsafe { &mut *(msg_ptr as *mut MessageHeaderRaw) };
+        user_msghdr.name_len = size_of::<SockAddrIn>() as u32;
+    }
+    // 3. 从用户空间拷贝 iovec 数组到内核
+    let iovec_count = user_hdr.iovec_len as i32;
+    if iovec_count <= 0 {
+        return Err(Errno::EMSGSIZE);
+    }
+    let mut kernel_iovecs: Vec<IoVec> = Vec::with_capacity(iovec_count as usize);
     for _ in 0..iovec_count {
         kernel_iovecs.push(IoVec { base: 0, len: 0 });
     }
     let user_iovec_ptr = user_hdr.iovec as *const IoVec;
-    for i in 0..iovec_count {
+    if (user_iovec_ptr as i32)<=0 {
+        return Err(Errno::EFAULT);
+    }
+    for i in 0..iovec_count as usize {
         copy_from_user(
             unsafe { user_iovec_ptr.add(i) },
             &mut kernel_iovecs[i] as *mut IoVec,
@@ -1202,6 +1276,9 @@ pub fn syscall_recvmsg(socketfd: usize, msg_ptr: usize, _flags: usize) -> Syscal
             kernel_iovecs[i].base,
             kernel_iovecs[i].len
         );
+        if (kernel_iovecs[i].base as isize)<0 {
+            return Err(Errno::EFAULT);
+        }
     }
 
     // 4. 计算总长度
@@ -1267,4 +1344,44 @@ pub fn syscall_recvmsg(socketfd: usize, msg_ptr: usize, _flags: usize) -> Syscal
     }
     // 8. 返回接收的字节数
     Ok(copied)
+}
+
+pub fn syscall_setdomainname(domainname:*const u8,len: usize)->SyscallRet {
+    log::error!("[syscall_setdomainname] domainname is {:?} len is {:?}",domainname,len);
+    if (len as isize) < 0 || (len as isize)>64{
+        return Err(Errno::EINVAL);
+    }
+    if domainname.is_null() {
+        return Err(Errno::EFAULT);
+    }
+    let task=current_task();
+    println!("[syscall_setdomainname]task egid {:?},task euid {:?}",task.egid(),task.euid());
+    if task.egid() != 0 || task.euid() != 0 {
+
+        return Err(Errno::EPERM);
+    }
+    let mut kernel_domainname: Vec<u8>=vec![0;len];
+    copy_from_user(domainname, kernel_domainname.as_mut_ptr(), len)?;
+    let file=path_openat("/etc/domainname", OpenFlags::O_CLOEXEC, -100, 0)?;
+    file.pwrite(kernel_domainname.as_slice(), 0)?;
+    Ok(0)
+}
+pub fn syscall_sethostname(hostname:*const u8,len: usize)->SyscallRet {
+    log::error!("[syscall_sethostname] hostname is {:?} len is {:?}",hostname,len);
+    if (len as isize) < 0 || (len as isize)>64{
+        return Err(Errno::EINVAL);
+    }
+    if hostname.is_null() {
+        return Err(Errno::EFAULT);
+    }
+    let task=current_task();
+    if task.egid() != 0 || task.euid() != 0 {
+        return Err(Errno::EPERM);
+    }
+    let mut kernel_hostname: Vec<u8>=vec![0;len];
+    copy_from_user(hostname, kernel_hostname.as_mut_ptr(), len)?;
+    log::error!("[syscall_sethostname] hostname is {:?}",kernel_hostname);
+    let file=path_openat("/etc/hostname", OpenFlags::O_CLOEXEC, -100, 0)?;
+    file.pwrite(kernel_hostname.as_slice(), 0)?;
+    Ok(0)
 }

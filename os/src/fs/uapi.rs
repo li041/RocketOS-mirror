@@ -75,6 +75,9 @@ impl DevT {
     pub fn new_encode_dev(major: u32, minor: u32) -> Self {
         Self(((major as u64) << 20) | (minor as u64 & 0xFFFFF))
     }
+    pub fn new_encode_dev_old(major: u32, minor: u32)->Self{
+        Self(((major as u64) << 3) | (minor as u64 & 0xFFFFF))
+    }
     /// 从dev_t中获取设备号
     // pub fn major(&self) -> u32 {
     //     ((self.0 >> 20) & 0xfff) as u32

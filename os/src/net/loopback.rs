@@ -127,7 +127,7 @@ impl Device for LoopbackDev {
     fn capabilities(&self) -> DeviceCapabilities {
         let mut cap = DeviceCapabilities::default();
 
-        cap.max_transmission_unit = 300000;
+        cap.max_transmission_unit = 3000000;
         cap.medium = self.medium;
 
         cap

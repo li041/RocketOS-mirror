@@ -17,7 +17,7 @@ const SYSCALL_WAITPID: usize = 260;
 const SYSCALL_PIPE2: usize = 59;
 const SYSCALL_CHDIR: usize = 49;
 const SYSCALL_GETCWD: usize = 17;
-
+const SYSCALL_SOCKETPAIR: usize = 199;
 #[cfg(target_arch = "riscv64")]
 fn syscall(id: usize, args: [usize; 6]) -> isize {
     let mut ret: isize;
@@ -100,6 +100,14 @@ pub fn sys_yield() -> isize {
 
 pub fn sys_get_time() -> isize {
     syscall(SYSCALL_GET_TIME, [0, 0, 0, 0, 0, 0])
+}
+
+
+pub fn sys_socketpair(  domain: usize,
+    sockettype: usize,
+    protocol: usize,
+    socketfds: *mut i32)->isize {
+    syscall(SYSCALL_SOCKETPAIR, [domain,sockettype,protocol,socketfds as usize,0,0])
 }
 
 pub fn sys_getpid() -> isize {

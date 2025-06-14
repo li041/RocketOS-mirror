@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-30 16:26:05
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-03 17:02:17
+ * @LastEditTime: 2025-06-12 20:22:58
  * @FilePath: /RocketOS_netperfright/os/src/net/mod.rs
  * @Description: net mod for interface wrapper,socketset
  *
@@ -46,6 +46,7 @@ pub mod socket;
 pub mod tcp;
 pub mod udp;
 pub mod unix;
+pub mod socketpair;
 
 ///用于在使用函数返回错误时返回，如果是true可以yield_now,反之必须退出，可能等待没有意义
 /// 任何使用block_on返回是如果是err必须返回是否需要继续阻塞
@@ -62,8 +63,8 @@ static ETH0: LazyInit<InterfaceWrapper> = LazyInit::new();
 static LOOPBACK_DEV: LazyInit<Mutex<LoopbackDev>> = LazyInit::new();
 static LOOPBACK: LazyInit<Mutex<Interface>> = LazyInit::new();
 static LISTEN_TABLE: LazyInit<ListenTable> = LazyInit::new();
-const TCP_RX_BUF_LEN_IPERF: usize = 64 * 1024;
-const TCP_TX_BUF_LEN_IPERF: usize = 64 * 1024;
+const TCP_RX_BUF_LEN_IPERF: usize = 128 * 1024;
+const TCP_TX_BUF_LEN_IPERF: usize = 128 * 1024;
 const UDP_RX_BUF_LEN: usize = 64 * 1024;
 const UDP_TX_BUF_LEN: usize = 64 * 1024;
 const DNS_SEVER: &str = "8.8.8.8";

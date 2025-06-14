@@ -641,6 +641,7 @@ impl Task {
 
         // 初始化用户栈, 压入args和envs
         let argc = args_vec.len();
+        log::error!("[kernel_execve_lazily] argc {:?}",argc);
         if args_vec.is_empty() {
             args_vec.push(String::from(exe_path));
         }

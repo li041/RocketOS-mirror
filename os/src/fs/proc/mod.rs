@@ -135,7 +135,6 @@ pub fn init_procfs(root_path: Arc<Path>) {
             panic!("create {} failed: {:?}", osrelease_path, e);
         }
     }
-
     let pid_max_path = "/proc/sys/kernel/pid_max";
     let pid_max_mode = S_IFREG as u16 | 0o444;
     nd = Nameidata {

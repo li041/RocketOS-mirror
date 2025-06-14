@@ -731,6 +731,7 @@ pub fn sys_fstat(dirfd: i32, statbuf: *mut Stat) -> SyscallRet {
     if let Some(file) = current_task().fd_table().get_file(dirfd as usize) {
         let inode = file.get_inode();
         let stat = Stat::from(inode.getattr());
+        log::error!("[sys_fstat] stat is {:?}",stat);
         if let Err(e) = copy_to_user(statbuf, &stat as *const Stat, 1) {
             log::error!("fstat: copy_to_user failed: {:?}", e);
             return Err(e);
@@ -1228,6 +1229,7 @@ pub fn sys_pselect6(
         } else if timeout > 0 {
             if get_time_ms() / 1000 > timeout as usize {
                 // 超时了, 返回
+                // println!("[sys_pselect] get_time_ms {:?},timeout {:?}",get_time_ms(),timeout);
                 log::error!("[sys_pselect]:timeout");
                 break;
             }
