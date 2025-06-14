@@ -222,7 +222,6 @@ const SYSCALL_FACCESSAT2: usize = 439;
 const CARELESS_SYSCALLS: [usize; 9] = [62, 63, 64, 72, 113, 124, 129, 165, 260];
 // const SYSCALL_NUM_2_NAME: [(&str, usize); 4] = [
 const SYSCALL_NUM_2_NAME: [(usize, &str); 1] = [(SYSCALL_SIGALTSTACK, "SYS_SIGALTSTACK")];
-
 #[no_mangle]
 pub fn syscall(
     a0: usize,
@@ -296,14 +295,14 @@ pub fn syscall(
         SYSCALL_PPOLL => sys_ppoll(a0 as *mut PollFd, a1, a2 as *const TimeSpec, a3),
         SYSCALL_READLINKAT => {
             sys_readlinkat(a0 as i32, a1 as *const u8, a2 as *mut u8, a3 as isize)
-        }
+        },
         SYSCALL_FSTATAT => sys_fstatat(a0 as i32, a1 as *const u8, a2 as *mut Stat, a3 as i32),
         SYSCALL_FSTAT => sys_fstat(a0 as i32, a1 as *mut Stat),
         SYSCALL_SYNC => sys_sync(a0),
         SYSCALL_FSYNC => sys_fsync(a0),
         SYSCALL_UTIMENSAT => {
             sys_utimensat(a0 as i32, a1 as *const u8, a2 as *const TimeSpec, a3 as i32)
-        }
+        },
         SYSCALL_ACCT => sys_acct(a0 as *const u8),
         SYSCALL_EXIT => sys_exit(a0 as i32),
         SYSCALL_EXIT_GROUP => sys_exit_group(a0 as i32),
