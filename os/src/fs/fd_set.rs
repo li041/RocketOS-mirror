@@ -27,20 +27,20 @@ impl FdSet {
 
     /// 从用户空间地址初始化（核心方法）
     pub fn from_user(addr: usize, len: usize) -> Result<Self, Errno> {
-        if len > MAX_FDS || len == 0 {
+        if len > MAX_FDS {
             return Err(Errno::EINVAL);
         }
 
         let kernel_len = core::cmp::min(len, 15);
         // 创建内核缓冲区并拷贝数据
         let mut kernel_buf = vec![0; kernel_len];
-
-        copy_from_user(
-            addr as *const i32,
-            kernel_buf.as_mut_ptr() as *mut i32,
-            kernel_len,
-        )?;
-
+        if kernel_len>0 {
+                copy_from_user(
+                addr as *const i32,
+                kernel_buf.as_mut_ptr() as *mut i32,
+                kernel_len,
+            )?;
+        }
         Ok(FdSet {
             addr: kernel_buf.as_mut_ptr(),
             len: kernel_len,
@@ -78,9 +78,11 @@ impl FdSet {
         self.addr as usize != 0
     }
     pub fn clear(&self) {
-        for i in 0..=(self.len - 1) / 64 {
-            unsafe {
-                *(self.addr.add(i)) = 0;
+        if self.len>0 {
+            for i in 0..=(self.len - 1) / 64 {
+                unsafe {
+                    *(self.addr.add(i)) = 0;
+                }
             }
         }
     }
