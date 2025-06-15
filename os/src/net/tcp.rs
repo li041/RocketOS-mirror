@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-30 16:26:09
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-14 10:56:04
+ * @LastEditTime: 2025-06-15 11:56:17
  * @FilePath: /RocketOS_netperfright/os/src/net/tcp.rs
  * @Description: tcp file 
  * 
@@ -16,7 +16,7 @@ use core::{cell::UnsafeCell, net::SocketAddr,sync::atomic::{AtomicBool, AtomicU8
 use smoltcp::{iface::SocketHandle, socket::tcp::{self, ConnectError, RecvError, SendError, State}, wire::{IpEndpoint, IpListenEndpoint, Ipv4Address}};
 use spin::Mutex;
 
-use crate::{arch::timer::get_time, net::{addr::{from_sockaddr_to_ipendpoint, is_unspecified, LOOP_BACK_ENDPOINT}, ETH0, LOOPBACK}, syscall::errno::Errno, task::{current_task, yield_current_task}};
+use crate::{arch::timer::get_time, net::{addr::{from_sockaddr_to_ipendpoint, is_unspecified, LOOP_BACK_ENDPOINT}, ETH0, LOOPBACK}, syscall::errno::{Errno, SyscallRet}, task::{current_task, yield_current_task}};
 
 use super::{addr::UNSPECIFIED_ENDPOINT, listentable::ListenTable, poll_interfaces, SocketSetWrapper, LISTEN_TABLE, SOCKET_SET};
 pub struct PollState{
@@ -24,7 +24,6 @@ pub struct PollState{
     pub readable:bool,
     pub writeable:bool
 }
-
 
 /// TcpSocket结构体
 pub struct TcpSocket{
@@ -147,6 +146,7 @@ impl TcpSocket {
         let mut writeable=false;
         // let mut looptime=0;
         // loop {
+        log::error!("[poll_stream] local addr is {:?} remote_addr is {:?}",self.local_addr().unwrap(),self.remote_addr().unwrap());
             SOCKET_SET.with_socket::<_,tcp::Socket,_>(handle, |socket|{
                 log::error!("[poll_stream]:socket may recv {},can recv{},can send {}",socket.may_recv(),socket.can_recv(),socket.can_send());
                 readable=!socket.may_recv() || socket.can_recv();
@@ -161,7 +161,7 @@ impl TcpSocket {
     fn poll_listening(&self)->PollState {
         // poll_interfaces();
         let port=unsafe { self.loacl_addr.get().read().port };
-        let readable=LISTEN_TABLE.can_accept(port);
+        let mut readable=LISTEN_TABLE.can_accept(port);
         log::error!("[poll_listening]:readable is {:?}",readable);
         PollState { readable: readable
             , writeable: false }        
@@ -191,7 +191,9 @@ impl TcpSocket {
                             // let tid=task.tid();
                             // log::error!("[block_on] the current task is {:?}",tid);
                             // drop(task);
+                            // log::trace!("[tcp_block_on]");
                             yield_current_task();
+                            // log::trace!("[tcp_block_on]");
                         }
                         else {
                             return Err(res);
@@ -388,8 +390,8 @@ impl TcpSocket {
 
 
     //函数将会监听一个地址并写回listentable
-    pub fn listen(&self) {
-        let _ = self.update_state(STATE_CLOSED, STATE_LISTENING,||{
+    pub fn listen(&self)->SyscallRet {
+        self.update_state(STATE_CLOSED, STATE_LISTENING,||{
             let bound_endpoint=self.bound_endpoint();
             log::error!("[TcpSocket]:listen on bound_endpoint {:?}",bound_endpoint);
             unsafe { (*self.loacl_addr.get()).port=bound_endpoint.port };
@@ -400,9 +402,8 @@ impl TcpSocket {
             //     //listens
             //     let _ = socket.listen(bound_endpoint);
             // });
-            LISTEN_TABLE.listen(bound_endpoint);
-            Ok(())
-        });
+            LISTEN_TABLE.listen(bound_endpoint)
+        })
     }
     
     //函数将会阻塞线程，要求服务端必须处于listen中，listentable.accept接受

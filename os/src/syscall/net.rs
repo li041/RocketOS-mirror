@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-02 23:04:54
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-14 10:56:53
+ * @LastEditTime: 2025-06-15 11:44:46
  * @FilePath: /RocketOS_netperfright/os/src/syscall/net.rs
  * @Description: net syscall
  *
@@ -102,9 +102,9 @@ pub fn syscall_socket(domain: usize, sockettype: usize, protocol: usize) -> Sysc
 
 pub fn syscall_bind(socketfd: usize, socketaddr: usize, socketlen: usize) -> SyscallRet {
     log::error!("[syscall_bind]:begin bind");
-    if socketlen < 16 {
-        return Err(Errno::EINVAL);
-    }
+    // if socketlen < 16 {
+    //     return Err(Errno::EINVAL);
+    // }
     let task = current_task();
     let file = match task.fd_table().get_file(socketfd) {
         Some(f) => f,
@@ -207,8 +207,9 @@ pub fn syscall_listen(socketfd: usize, _backlog: usize) -> SyscallRet {
     if socket.domain == Domain::AF_UNIX {
         return Ok(0);
     }
-    socket.listen();
-    Ok(0)
+    let a=socket.listen();
+    log::error!("[syscall_listen] return {:?}",a);
+    a
 }
 
 pub fn syscall_accept(socketfd: usize, socketaddr: usize, socketlen: usize) -> SyscallRet {
@@ -1000,8 +1001,8 @@ pub fn make_socketpair(
     (Arc::new(fd1), Arc::new(fd2))
 }
 pub fn syscall_sendmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallRet {
-    println!("[syscall_sendmsg]: begin sendmsg");
-    println!(
+    log::error!("[syscall_sendmsg]: begin sendmsg");
+    log::error!(
         "[syscall_sendmsg]: socketfd: {}, msg_ptr: {}, flag: {}",
         socketfd,
         msg_ptr,
@@ -1028,13 +1029,11 @@ pub fn syscall_sendmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallR
         control_len: 0,
         flags: 0,
     };
-    println!("[1a]");
     copy_from_user(
         msg_ptr as *const MessageHeaderRaw,
         &mut user_hdr as *mut MessageHeaderRaw,
         1,
     )?;
-    println!("[1b]");
     // 2. 准备 name buffer，获得对端地址
     //kernel name for af_alg,peer_addr for tcp/udp,peer_path for unix
     let mut kernel_name = Vec::new();
@@ -1047,7 +1046,6 @@ pub fn syscall_sendmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallR
         )?;
     }
     let mut peer_addr: Option<SocketAddr> = None;
-    println!("[1c]");
     if socket.domain != Domain::AF_ALG && socket.domain != Domain::AF_UNIX {
         if user_hdr.name_len>0 {
             let addr = unsafe {
@@ -1057,7 +1055,7 @@ pub fn syscall_sendmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallR
                 socket,
                 )
             }?;
-            println!("[syscall_sendmsg] name addr is {:?}", addr);
+            log::error!("[syscall_sendmsg] name addr is {:?}", addr);
             peer_addr = Some(addr);
         }
         else {
@@ -1065,12 +1063,12 @@ pub fn syscall_sendmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallR
         }
         
     }
-    println!("[1c]");
+    log::error!("[1c]");
     let mut peer_path=Vec::new();
     if socket.domain==Domain::AF_UNIX {
-        println!("[1d]");
+        log::error!("[1d]");
         peer_path=unsafe { socket_address_from_unix(user_hdr.name as *const u8, user_hdr.name_len as usize, socket) }?;
-        println!("[syscall_sendmsg] path addr is peer path is {:?}",peer_path);
+        log::error!("[syscall_sendmsg] path addr is peer path is {:?}",peer_path);
     }
     
     // 3. 从用户空间读取 iovec 数组
@@ -1086,7 +1084,7 @@ pub fn syscall_sendmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallR
             let src_ptr = unsafe { iovec_ptr.add(idx) };
             copy_from_user(src_ptr, &mut kernel_iovecs[idx] as *mut IoVec, 1)?;
         }
-        println!(
+        log::error!(
             "[syscall_sendmsg]: read {} iovecs: {:?}",
             iovec_count,
             kernel_iovecs
@@ -1123,7 +1121,7 @@ pub fn syscall_sendmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallR
                     unsafe { kernel_buf.as_mut_ptr().add(offset) },
                     len,
                 )?;
-                println!(
+                log::error!(
                     "[syscall_sendmsg]: copied {} bytes from user iovec at base={:?} to kernel_buf+{}",
                     len,
                     iov.base,
@@ -1133,12 +1131,12 @@ pub fn syscall_sendmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallR
             }
         }
     }
-    println!(
+    log::error!(
         "[syscall_sendmsg]: final kernel_buf (len={}): {:?}",
         total_len,
         kernel_buf
     );
-    println!(
+    log::error!(
         "[syscall_sendmsg]: control_buf (len={}): {:?}",
         kernel_control.len(),
         kernel_control
@@ -1173,9 +1171,7 @@ pub fn syscall_sendmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallR
         }
         let file = socket.get_peer_unix_file();
         if file.w_ready() {
-            println!("[0]");
             let res = file.pwrite(kernel_buf.as_slice(), 0)?;
-            println!("[1]");
             file.pwrite(&[1], 128)?;
             return Ok(res);
         } else {
@@ -1355,7 +1351,7 @@ pub fn syscall_setdomainname(domainname:*const u8,len: usize)->SyscallRet {
         return Err(Errno::EFAULT);
     }
     let task=current_task();
-    println!("[syscall_setdomainname]task egid {:?},task euid {:?}",task.egid(),task.euid());
+    log::error!("[syscall_setdomainname]task egid {:?},task euid {:?}",task.egid(),task.euid());
     if task.egid() != 0 || task.euid() != 0 {
 
         return Err(Errno::EPERM);

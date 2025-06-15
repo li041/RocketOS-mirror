@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-02 12:09:33
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-14 11:07:18
+ * @LastEditTime: 2025-06-15 11:04:45
  * @FilePath: /RocketOS_netperfright/os/src/net/udp.rs
  * @Description: udp socket
  * 
@@ -175,6 +175,7 @@ use super::SOCKET_SET;
         log::error!("[udp_recv_from]begin recv");
         let mut binding = vec![0;1528];
         let kernel_buf=binding.as_mut_slice();
+
         self.recv_impl(|socket| match socket.recv_slice(kernel_buf) {
             Ok((len, meta)) => {
                 // log::error!("[udp_recv_from]recv buf {:?}",buf);
@@ -182,6 +183,7 @@ use super::SOCKET_SET;
                     let copy_len = core::cmp::min(len, buf.len()); 
                     log::error!("[udp_recv_from] copy len is {:?}",copy_len);
                     buf[..copy_len].copy_from_slice(&kernel_buf[..copy_len]); 
+                    log::trace!("[udp_block_on] loop");
                     Ok((copy_len, from_ipendpoint_to_socketaddr(meta.endpoint)))}
                 },
             Err(e) => {
@@ -295,7 +297,7 @@ use super::SOCKET_SET;
         }
         let mut times=0;
         self.block_on(|| {
-            log::error!("[recv_impl]recv impl begin");
+            // log::error!("[recv_impl]recv impl begin");
             let handle=unsafe { self.handle.get().read().unwrap() };
             SOCKET_SET.with_socket_mut::<_, udp::Socket, _>(handle, |socket| {
                 if times>5 {
@@ -308,6 +310,7 @@ use super::SOCKET_SET;
                 } else if socket.can_recv() {
                     // data available
                     op(socket)
+
                 } else {
                     // no more data
                     Err(Errno::EAGAIN)
@@ -350,15 +353,18 @@ use super::SOCKET_SET;
         }
         else {
             loop {
-                poll_interfaces();
+                log::trace!("[udp_block_on] loop");
+                yield_current_task();
+                poll_interfaces(); 
                 match f() {
-                    Ok(res) => {return Ok(res);},
+                    Ok(res) => {
+                        return Ok(res);
+                    },
                     Err(e)=>{
-                        log::trace!("[udp_block_on] error is {:?}",e);
                         if e ==Errno::EAGAIN {
-                            // println!("[block_on] current task is {}",current_task().tid());
+                            log::trace!("[udp_block_on] loop");
                             yield_current_task();
-                            log::trace!("[udp_block_on] error is {:?}",e);
+                            log::trace!("[udp_block_on] loop");
                         }
                         else {
                             return Err(e);
