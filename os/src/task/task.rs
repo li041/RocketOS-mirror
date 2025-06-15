@@ -85,7 +85,7 @@ pub struct Task {
     tid: RwLock<TidHandle>,                                 // 线程id
     tgid: AtomicUsize,                                      // 线程组id
     tid_address: SpinNoIrqLock<TidAddress>,                 // 线程id地址
-    status: SpinNoIrqLock<TaskStatus>,                      // 任务状态
+    status: Mutex<TaskStatus>,                              // 任务状态
     time_stat: SyncUnsafeCell<TimeStat>,                    // 任务时间统计
     parent: Arc<SpinNoIrqLock<Option<Weak<Task>>>>,         // 父任务
     children: Arc<SpinNoIrqLock<BTreeMap<Tid, Arc<Task>>>>, // 子任务
@@ -148,7 +148,7 @@ impl Task {
             tid: RwLock::new(TidHandle(0)),
             tgid: AtomicUsize::new(0),
             tid_address: SpinNoIrqLock::new(TidAddress::new()),
-            status: SpinNoIrqLock::new(TaskStatus::Ready),
+            status: Mutex::new(TaskStatus::Ready),
             time_stat: SyncUnsafeCell::new(TimeStat::default()),
             parent: Arc::new(SpinNoIrqLock::new(None)),
             children: Arc::new(SpinNoIrqLock::new(BTreeMap::new())),
@@ -211,7 +211,7 @@ impl Task {
             tid: RwLock::new(tid),
             tgid,
             tid_address: SpinNoIrqLock::new(TidAddress::new()),
-            status: SpinNoIrqLock::new(TaskStatus::Ready),
+            status: Mutex::new(TaskStatus::Ready),
             time_stat: SyncUnsafeCell::new(TimeStat::default()),
             parent: Arc::new(SpinNoIrqLock::new(None)),
             // 注：children结构中保留了对任务的Arc引用
@@ -275,7 +275,7 @@ impl Task {
         let tid = tid_alloc();
         let tid_address = SpinNoIrqLock::new(TidAddress::new());
         let exit_code = AtomicI32::new(0);
-        let status = SpinNoIrqLock::new(TaskStatus::Ready);
+        let status = Mutex::new(TaskStatus::Ready);
         let tgid;
         let mut kstack;
         let mut parent;
@@ -641,7 +641,7 @@ impl Task {
 
         // 初始化用户栈, 压入args和envs
         let argc = args_vec.len();
-        log::error!("[kernel_execve_lazily] argc {:?}",argc);
+        log::error!("[kernel_execve_lazily] argc {:?}", argc);
         if args_vec.is_empty() {
             args_vec.push(String::from(exe_path));
         }
@@ -1529,7 +1529,7 @@ pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
     // task.op_sig_pending_mut(|pending| {
     //     pending.clear();
     // });
-    
+
     // 向父进程发送SIGCHID
     if task.thread_group.lock().len() == 0 {
         log::warn!(

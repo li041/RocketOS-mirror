@@ -104,7 +104,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
         | Trap::Exception(Exception::PageModifyFault)
         | Trap::Exception(Exception::PageInvalidLoad) => {
             let badv = register::BadV::read().get_vaddr();
-            log::error!("{:?} at {:#x}", cause, badv);
+            // log::error!("{:?} at {:#x}", cause, badv);
             let va = VirtAddr::from(badv);
             let cause = PageFaultCause::from(cause);
             let task = current_task();

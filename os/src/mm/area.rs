@@ -148,21 +148,34 @@ impl MapArea {
     pub fn map(&mut self, page_table: &mut PageTable) {
         let mut ppn: PhysPageNum;
         let pte_flags = PTEFlags::from(self.map_perm);
+        let start_vpn = self.vpn_range.get_start();
+        let end_vpn = self.vpn_range.get_end();
         match self.map_type {
             // 对于riscv是线性偏移, loongarch64是直接映射
             MapType::Linear => {
-                for vpn in self.vpn_range {
-                    ppn = PhysPageNum(vpn.0 - (KERNEL_BASE >> PAGE_SIZE_BITS));
-                    page_table.map(vpn, ppn, pte_flags.clone());
-                }
+                // for vpn in self.vpn_range {
+                //     ppn = PhysPageNum(vpn.0 - (KERNEL_BASE >> PAGE_SIZE_BITS));
+                //     page_table.map(vpn, ppn, pte_flags.clone());
+                // }
+                let start_ppn = PhysPageNum(start_vpn.0 - (KERNEL_BASE >> PAGE_SIZE_BITS));
+                page_table.map_range_continuous(start_vpn, end_vpn, start_ppn, pte_flags.clone());
             }
             MapType::Framed => {
-                for vpn in self.vpn_range {
-                    let page = Page::new_framed(None);
-                    ppn = page.ppn();
-                    self.pages.insert(vpn, Arc::new(page));
-                    page_table.map(vpn, ppn, pte_flags.clone());
-                }
+                // for vpn in self.vpn_range {
+                //     let page = Page::new_framed(None);
+                //     ppn = page.ppn();
+                //     self.pages.insert(vpn, Arc::new(page));
+                //     page_table.map(vpn, ppn, pte_flags.clone());
+                // }
+                let page_count = end_vpn.0 - start_vpn.0;
+                let pages = Page::new_frameds(page_count);
+                page_table.map_range_any(start_vpn, end_vpn, &pages, pte_flags);
+                self.pages.extend(
+                    pages
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, page)| (VirtPageNum(start_vpn.0 + i), page)),
+                );
             }
             MapType::Filebe => {
                 let file = self.backend_file.as_ref().unwrap();
@@ -188,12 +201,21 @@ impl MapArea {
             }
             MapType::Heap => {
                 // 堆映射, 除了初次分配, 后续都是懒分配
-                for vpn in self.vpn_range {
-                    let page = Page::new_framed(None);
-                    ppn = page.ppn();
-                    self.pages.insert(vpn, Arc::new(page));
-                    page_table.map(vpn, ppn, pte_flags.clone());
-                }
+                // for vpn in self.vpn_range {
+                //     let page = Page::new_framed(None);
+                //     ppn = page.ppn();
+                //     self.pages.insert(vpn, Arc::new(page));
+                //     page_table.map(vpn, ppn, pte_flags.clone());
+                // }
+                let page_count = end_vpn.0 - start_vpn.0;
+                let pages = Page::new_frameds(page_count);
+                page_table.map_range_any(start_vpn, end_vpn, &pages, pte_flags);
+                self.pages.extend(
+                    pages
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, page)| (VirtPageNum(start_vpn.0 + i), page)),
+                );
             }
         }
     }

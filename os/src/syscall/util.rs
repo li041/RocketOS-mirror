@@ -245,11 +245,11 @@ pub fn sys_clock_gettime(clock_id: usize, timespec: *mut TimeSpec) -> SyscallRet
     if timespec.is_null() {
         return Ok(0);
     }
-    log::error!(
-        "[sys_clock_gettime] clock_id is {:?},timespec {:?}",
-        clock_id,
-        timespec
-    );
+    // log::error!(
+    //     "[sys_clock_gettime] clock_id is {:?},timespec {:?}",
+    //     clock_id,
+    //     timespec
+    // );
     match clock_id {
         CLOCK_REALTIME | CLOCK_REALTIME_COARSE => {
             let time = TimeSpec::new_wall_time();

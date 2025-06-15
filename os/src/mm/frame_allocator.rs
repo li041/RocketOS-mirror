@@ -44,6 +44,8 @@ impl Drop for FrameTracker {
 trait FrameAllocator {
     fn new() -> Self;
     fn alloc(&mut self) -> Option<PhysPageNum>;
+    fn alloc_range(&mut self, n: usize) -> Option<PhysPageNum>;
+    fn alloc_range_any(&mut self, n: usize) -> Option<Vec<PhysPageNum>>;
     fn dealloc(&mut self, ppn: PhysPageNum);
 }
 
@@ -85,6 +87,43 @@ impl FrameAllocator for StackFrameAllocator {
         } else {
             self.current += 1;
             Some((self.current - 1).into())
+        }
+    }
+    fn alloc_range(&mut self, n: usize) -> Option<PhysPageNum> {
+        if self.current + n > self.end {
+            println!(
+                "[StackFrameAllocator] alloc_range failed, current: {:#x}, end: {:#x}, n: {}",
+                self.current, self.end, n
+            );
+            return None; // not enough space
+        }
+        let start = self.current;
+        self.current += n;
+        return Some(PhysPageNum(start));
+    }
+    /// 分配 n 个任意的页帧（允许不连续）
+    fn alloc_range_any(&mut self, n: usize) -> Option<Vec<PhysPageNum>> {
+        let mut result = Vec::with_capacity(n);
+
+        // 尽量从 recycled 拿
+        while !self.recycled.is_empty() && result.len() < n {
+            result.push(self.recycled.pop().unwrap().into());
+        }
+
+        // 还需要额外分配
+        while self.current < self.end && result.len() < n {
+            self.current += 1;
+            result.push((self.current - 1).into());
+        }
+
+        if result.len() == n {
+            Some(result)
+        } else {
+            // 回滚
+            for ppn in result {
+                self.dealloc(ppn);
+            }
+            None
         }
     }
     fn dealloc(&mut self, ppn: PhysPageNum) {
@@ -142,6 +181,15 @@ pub fn frame_alloc_ppn() -> PhysPageNum {
     //     ppn
     // }
     FRAME_ALLOCATOR.lock().alloc().unwrap()
+}
+
+/// 分配连续的 n 个 frame
+pub fn frame_alloc_range(n: usize) -> Option<PhysPageNum> {
+    FRAME_ALLOCATOR.lock().alloc_range(n)
+}
+
+pub fn frame_alloc_range_any(n: usize) -> Option<Vec<PhysPageNum>> {
+    FRAME_ALLOCATOR.lock().alloc_range_any(n)
 }
 
 /// deallocate a frame
