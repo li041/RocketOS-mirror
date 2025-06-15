@@ -136,7 +136,7 @@ impl Pipe {
             is_named_pipe,
         });
         let mut buffer = inode.buffer.lock();
-        buffer.set_read_end(&read_end);
+        buffer.set_read_end(read_end.clone());
         if is_named_pipe {
             if buffer.write_end.is_some() {
                 let waiter = buffer.get_one_waiter();
@@ -170,7 +170,7 @@ impl Pipe {
             is_named_pipe,
         });
         let mut buffer = inode.buffer.lock();
-        buffer.set_write_end(&write_end);
+        buffer.set_write_end(write_end.clone());
         if is_named_pipe {
             if buffer.read_end.is_some() {
                 let waiter = buffer.get_one_waiter();
@@ -207,8 +207,8 @@ impl Pipe {
             is_named_pipe,
         });
         let mut buffer = inode.buffer.lock();
-        buffer.set_read_end(&rw_end);
-        buffer.set_write_end(&rw_end);
+        buffer.set_read_end(rw_end.clone());
+        buffer.set_write_end(rw_end.clone());
         Ok(rw_end)
     }
     /// 创建匿名管道的读写端
@@ -228,8 +228,8 @@ impl Pipe {
             is_named_pipe: false,
         });
         let mut buffer = inode.buffer.lock();
-        buffer.set_read_end(&read_end);
-        buffer.set_write_end(&write_end);
+        buffer.set_read_end(read_end.clone());
+        buffer.set_write_end(write_end.clone());
         (read_end, write_end)
     }
     pub fn get_size(&self) -> usize {
@@ -255,11 +255,11 @@ pub enum RingBufferStatus {
 pub struct PipeRingBuffer {
     // arr: Box<[u8; RING_DEFAULT_BUFFER_SIZE]>,
     arr: Vec<u8>,
-    head: usize,
-    tail: usize,
+    pub head: usize,
+    pub tail: usize,
     pub(crate) status: RingBufferStatus,
-    pub(crate) write_end: Option<Weak<Pipe>>,
-    pub(crate) read_end: Option<Weak<Pipe>>,
+    pub(crate) write_end: Option<Weak<dyn FileOp>>,
+    pub(crate) read_end: Option<Weak<dyn FileOp>>,
     pub(crate) waiter: Vec<Tid>,
     size: usize, // 用于记录管道的大小
 }
@@ -337,11 +337,11 @@ impl PipeRingBuffer {
         };
         write_bytes
     }
-    fn set_write_end(&mut self, write_end: &Arc<Pipe>) {
-        self.write_end = Some(Arc::downgrade(write_end));
+    pub fn set_write_end(&mut self, write_end: Arc<dyn FileOp>) {
+        self.write_end = Some(Arc::downgrade(&write_end));
     }
-    fn set_read_end(&mut self, read_end: &Arc<Pipe>) {
-        self.read_end = Some(Arc::downgrade(read_end));
+    pub fn set_read_end(&mut self, read_end: Arc<dyn FileOp>) {
+        self.read_end = Some(Arc::downgrade(&read_end));
     }
     pub fn all_write_ends_closed(&self) -> bool {
         log::trace!("[all_write_ends_closed]");

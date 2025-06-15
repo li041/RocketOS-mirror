@@ -15,11 +15,40 @@ MODE ?= release
 
 # all: clean run
 all : 
-	@cd ./img && make all
-	@cp ./img/disk.img ./disk.img && cp ./img/disk-la.img ./disk-la.img
-	@cd ./os && make build ARCH=riscv64 MODE=release && make build ARCH=loongarch64 MODE=release
+	@cd ./img && tar -xf disks.tar.xz -C ..
+	@cd ./user && make build ARCH=riscv64 MODE=release
+	@cd ./os && make build ARCH=riscv64 MODE=release 
+	@cd ./user && make build ARCH=loongarch64 MODE=release
+	@cd ./os && make build ARCH=loongarch64 MODE=release
 	@cp ./os/target/riscv64gc-unknown-none-elf/release/os.bin ./kernel-rv && cp ./os/target/loongarch64-unknown-none/release/os ./kernel-la
 	
+run-riscv:
+	qemu-system-riscv64 \
+		-machine virt \
+		-m 1024M \
+		-kernel kernel-rv \
+		-nographic \
+		-smp 2 \
+		-bios default \
+		-drive file=./img/sdcard.img,if=none,format=raw,id=x0 \
+		-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
+		-device virtio-net-device,netdev=net -netdev user,id=net,hostfwd=tcp::5555-:5555,hostfwd=udp::5555-:5555 \
+		-drive file=disk-rv.img,if=none,format=raw,id=x1 \
+		-device virtio-blk-device,drive=x1,bus=virtio-mmio-bus.1
+
+run-loongarch:
+	qemu-system-loongarch64 \
+		-kernel kernel-la \
+		-m 1024M \
+		-nographic \
+		-smp 1 \
+		-machine virt \
+		-no-reboot \
+		-drive file=./img/sdcard-la.img,if=none,format=raw,id=x0 \
+		-device virtio-blk-pci,drive=x0 \
+		-drive file=disk-la.img,if=none,format=raw,id=x1 \
+		-device virtio-blk-pci,drive=x1 \
+        -device virtio-net-pci,netdev=net -netdev user,id=net,hostfwd=tcp::5556-:5555,hostfwd=udp::5556-:5555 \
 
 pre2024: 
 	@cd ./img && make pre2024
@@ -36,6 +65,10 @@ custom:
 run: 
 	@cd ./user && make build ARCH=$(ARCH) MODE=$(MODE)
 	@cd ./os && make run ARCH=$(ARCH) MODE=$(MODE)
+
+bench: 
+	@cd ./user && make build ARCH=$(ARCH) MODE=$(MODE)
+	@cd ./os && make bench ARCH=$(ARCH) MODE=$(MODE)
 
 gdbserver: 
 	@cd ./user && make build

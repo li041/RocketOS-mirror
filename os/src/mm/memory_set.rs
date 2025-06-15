@@ -881,7 +881,7 @@ impl MemorySet {
                                 let vpn_start = vpn_range.get_start().0;
                                 for vpn in vpn_range {
                                     let offset =
-                                        ph_offset as usize + (vpn.0 - vpn_start) * PAGE_SIZE;
+                                        p_offset as usize + (vpn.0 - vpn_start) * PAGE_SIZE;
                                     let page =
                                         interp_file.get_page(offset).expect("get page failed");
                                     memory_set.page_table.map(vpn, page.ppn(), map_perm.into());

@@ -4,7 +4,10 @@ use spin::Mutex;
 
 use super::errno::SyscallRet;
 use crate::{
-    arch::mm::{copy_from_user, copy_to_user},
+    arch::{
+        mm::{copy_from_user, copy_to_user},
+        sbi::shutdown,
+    },
     fs::{
         file::OpenFlags,
         namei::path_openat,
@@ -503,4 +506,8 @@ pub fn sys_clock_adjtime(clock_id: i32, user_timex: *mut KernelTimex) -> Syscall
     } else {
         unimplemented!()
     }
+}
+
+pub fn sys_shutdown() -> SyscallRet {
+    shutdown(false);
 }

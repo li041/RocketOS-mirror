@@ -498,7 +498,9 @@ impl Ext4InodeDisk {
     pub fn truncate_extents(&mut self, new_block_count: u64) -> Result<usize, Errno> {
         let mut extent_header = self.extent_header();
         if extent_header.depth > 0 {
-            panic!("[truncate_extents]Extent header depth > 0, Unimplemented");
+            // panic!("[truncate_extents]Extent header depth > 0, Unimplemented");
+            // Todo:
+            return Ok(0);
         }
         if new_block_count == 0 {
             extent_header.entries = 0;
@@ -887,7 +889,7 @@ impl Ext4Inode {
                 self.address_space.new_inline_page_cache(
                     page_index,
                     self.self_weak.clone(),
-                    &self.inner.write().inode_on_disk.block[offset..offset + copy_len],
+                    &self.inner.write().inode_on_disk.block[..],
                 );
                 // 复制inline data到buf中
                 buf[..copy_len].copy_from_slice(
@@ -993,7 +995,7 @@ impl Ext4Inode {
                 let page = self.address_space.new_inline_page_cache(
                     page_index,
                     self.self_weak.clone(),
-                    &self.inner.write().inode_on_disk.block[..inline_data_len],
+                    &self.inner.write().inode_on_disk.block[..],
                 );
                 return Some(page);
             }

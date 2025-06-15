@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-02 12:09:33
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-15 11:04:45
+ * @LastEditTime: 2025-06-17 17:38:12
  * @FilePath: /RocketOS_netperfright/os/src/net/udp.rs
  * @Description: udp socket
  * 
@@ -257,7 +257,7 @@ use super::SOCKET_SET;
         let handle=unsafe { self.handle.get().read().unwrap() };
         SOCKET_SET.with_socket_mut::<_,udp::Socket,_>(handle, |socket|{
             socket.close();
-        })
+        });
     }
     pub fn poll(&self)->PollState {
         // println!("[udp_poll]begin poll");
@@ -390,4 +390,13 @@ use super::SOCKET_SET;
         *curr += 1;
     }
     port
+}
+
+impl Drop for UdpSocket {
+    fn drop(&mut self) {
+        // println!("drop udp socket");
+        self.shutdown();
+        let handle=unsafe { self.handle.get().read().unwrap() };
+        SOCKET_SET.remove(handle);
+    }
 }

@@ -116,6 +116,9 @@ pub fn extract_cstrings(ptr: *const usize) -> Result<Vec<String>, Errno> {
     use crate::{mm::VirtAddr, task::current_task};
 
     let mut vec: Vec<String> = Vec::new();
+    if ptr.is_null() {
+        return Ok(vec);
+    }
     let mut current = current_task().op_memory_set(|memory_set| unsafe {
         memory_set
             .translate_va_to_pa(VirtAddr::from(ptr as usize))

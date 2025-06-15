@@ -25,7 +25,7 @@ use user_lib::{chdir, close, dup3, fork, pipe, waitpid};
 
 fn print_prompt() {
     let cwd = user_lib::getcwd(); // 假设你有这个系统调用
-    print!("{}RROS:{}$ {}", THEME_COLOR, cwd, RESET_COLOR);
+    print!("{}RocketOS:{}$ {}", THEME_COLOR, cwd, RESET_COLOR);
 }
 
 #[no_mangle]

@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-30 16:26:09
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-15 16:34:18
+ * @LastEditTime: 2025-06-19 17:45:14
  * @FilePath: /RocketOS_netperfright/os/src/net/tcp.rs
  * @Description: tcp file 
  * 
@@ -492,10 +492,6 @@ impl TcpSocket {
             SOCKET_SET.poll_interfaces();
             Ok(())
         });
-
-        // ignore for other states
-        // Ok(())
-        // 0
     }
 
     pub fn close(&self) {
@@ -527,8 +523,8 @@ impl TcpSocket {
 
             // log::error!("[]")
             SOCKET_SET.with_socket_mut::<_,tcp::Socket,_>(handle,|socket|{
-                log::error!("[Tcp recv] recv queue len is{:?}",socket.recv_queue());
-                log::error!("[Tcp recv] socket state is {:?}",socket.state());
+                log::trace!("[Tcp recv] recv queue len is{:?}",socket.recv_queue());
+                log::trace!("[Tcp recv] socket state is {:?}",socket.state());
                 if times>10 {
                     // socket.close();
                     return Ok(0);
@@ -549,7 +545,7 @@ impl TcpSocket {
                     Ok(len)
                 }
                 else if !socket.is_active() {
-                    log::error!("[Tcpsocket]:connection is not active");
+                    log::trace!("[Tcpsocket]:connection is not active");
                     Err(Errno::ECONNREFUSED)
                 }
                 else if !socket.may_recv() {
@@ -558,10 +554,11 @@ impl TcpSocket {
                     socket.close();
                     Ok(0)
                 }
-                else if socket.recv_queue()==0{
-                    Ok(0)
-                }
+                // else if socket.recv_queue()==0{
+                //     Ok(0)
+                // }
                 else{
+                    log::trace!("[recv again]");
                     Err(Errno::EAGAIN)
                 }
             })
@@ -730,4 +727,13 @@ fn get_ephemeral_port() -> u16 {
     }
     panic!("no avaliable port");
 }
-
+impl Drop for TcpSocket {
+    fn drop(&mut self) {
+        // println!("drop tcp socket");
+        self.shutdown();
+        // Safe because we have mut reference to `self`.
+        if let Some(handle) = unsafe { self.handle.get().read() } {
+            SOCKET_SET.remove(handle);
+        }
+    }
+}

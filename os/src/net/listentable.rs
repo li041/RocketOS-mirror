@@ -4,7 +4,7 @@ use core::{ops::{Deref, DerefMut}, pin};
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-31 22:34:08
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-15 12:01:31
+ * @LastEditTime: 2025-06-17 17:34:14
  * @FilePath: /RocketOS_netperfright/os/src/net/listentable.rs
  * @Description: listentable file
  * 
@@ -115,7 +115,7 @@ impl ListenTable {
             if current_task().tid()==entry.clone().unwrap().task_id||current_task().exe_path().contains("netserver") ||current_task().exe_path().contains("netperf"){
                 return Ok(0);
             }
-            println!("[listen_table_listen] Err(Errno::EADDRINUSE) task path is {:?}",current_task().exe_path());
+            // println!("[listen_table_listen] Err(Errno::EADDRINUSE) task path is {:?}",current_task().exe_path());
             // #[cfg(target_arch="riscv64")]
             return Err(Errno::EADDRINUSE);
         }

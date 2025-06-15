@@ -103,6 +103,7 @@ pub fn schedule() {
     } else {
         // 如果没有下一个任务, 则busyloop等待计时器超时
         loop {
+            log::trace!("[schedule] no next task, waiting for timeout");
             if let Some(next_task) = fetch_task() {
                 let next_task_kernel_stack = next_task.kstack();
                 {

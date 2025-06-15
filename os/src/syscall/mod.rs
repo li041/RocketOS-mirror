@@ -25,10 +25,14 @@ use mm::{
     sys_munmap, sys_shmat, sys_shmctl, sys_shmdt, sys_shmget,
 };
 use net::{
-    syscall_accept, syscall_accept4, syscall_bind, syscall_connect, syscall_getpeername, syscall_getsocketopt, syscall_getsockname, syscall_listen, syscall_recvfrom, syscall_recvmsg, syscall_send, syscall_sendmsg, syscall_setdomainname, syscall_sethostname, syscall_setsocketopt, syscall_shutdown, syscall_socket, syscall_socketpair
+    syscall_accept, syscall_accept4, syscall_bind, syscall_connect, syscall_getpeername,
+    syscall_getsocketopt, syscall_getsockname, syscall_listen, syscall_recvfrom, syscall_recvmsg,
+    syscall_send, syscall_sendmsg, syscall_setdomainname, syscall_sethostname,
+    syscall_setsocketopt, syscall_shutdown, syscall_socket, syscall_socketpair,
 };
 use sched::{
-    sys_sched_getaffinity, sys_sched_getparam, sys_sched_getscheduler, sys_sched_setscheduler,
+    sys_sched_getaffinity, sys_sched_getparam, sys_sched_getscheduler, sys_sched_setaffinity,
+    sys_sched_setscheduler,
 };
 use signal::{
     sys_kill, sys_rt_sigaction, sys_rt_sigpending, sys_rt_sigprocmask, sys_rt_sigreturn,
@@ -43,7 +47,7 @@ use task::{
 };
 use util::{
     sys_adjtimex, sys_clock_adjtime, sys_clock_getres, sys_clock_gettime, sys_clock_settime,
-    sys_getrusage, sys_prlimit64, sys_setitimer, sys_syslog, sys_times, sys_uname,
+    sys_getrusage, sys_prlimit64, sys_setitimer, sys_shutdown, sys_syslog, sys_times, sys_uname,
 };
 
 use crate::{
@@ -132,6 +136,7 @@ const SYSCALL_SYSLOG: usize = 116;
 const SYSCALL_SCHED_SETSCHEDULER: usize = 119;
 const SYSCALL_SCHED_GETSCHEDULER: usize = 120;
 const SYSCALL_SCHED_GETPARAM: usize = 121;
+const SYSCALL_SCHED_SETAFFINITY: usize = 122;
 const SYSCALL_SCHED_GETAFFINITY: usize = 123;
 const SYSCALL_YIELD: usize = 124;
 const SYSCALL_KILL: usize = 129;
@@ -221,6 +226,7 @@ const SYSCALL_CLOCKADJTIME: usize = 266;
 const SYSCALL_CLOSE_RANGE: usize = 436;
 const SYSCALL_OPENAT2: usize = 437;
 const SYSCALL_FACCESSAT2: usize = 439;
+const SYSCALL_SHUTDOMN: usize = 666;
 
 const CARELESS_SYSCALLS: [usize; 9] = [62, 63, 64, 72, 113, 124, 129, 165, 260];
 // const SYSCALL_NUM_2_NAME: [(&str, usize); 4] = [
@@ -238,9 +244,9 @@ pub fn syscall(
 ) -> SyscallRet {
     // 神奇小咒语
     log::trace!("[syscall]");
-    // if !CARELESS_SYSCALLS.contains(&syscall_id) {
-    //     log::warn!("syscall_id: {}", syscall_id);
-    // }
+    if !CARELESS_SYSCALLS.contains(&syscall_id) {
+        log::warn!("syscall_id: {}", syscall_id);
+    }
     // if syscall_id == SYSCALL_WAIT4 {
     // log::warn!("syscall_id: {}", syscall_id);
     // }
@@ -323,6 +329,7 @@ pub fn syscall(
         SYSCALL_SCHED_SETSCHEDULER => sys_sched_setscheduler(a0 as isize, a1 as i32, a2),
         SYSCALL_SCHED_GETSCHEDULER => sys_sched_getscheduler(a0 as isize),
         SYSCALL_SCHED_GETPARAM => sys_sched_getparam(a0 as isize, a1),
+        SYSCALL_SCHED_SETAFFINITY => sys_sched_setaffinity(a0 as isize, a1, a2),
         SYSCALL_SCHED_GETAFFINITY => sys_sched_getaffinity(a0 as isize, a1, a2),
         SYSCALL_YIELD => sys_yield(),
         SYSCALL_KILL => sys_kill(a0 as isize, a1 as i32),
@@ -421,6 +428,7 @@ pub fn syscall(
         SYSCALL_FACCESSAT2 => sys_faccessat(a0 as usize, a1 as *const u8, a2 as i32, a3 as i32),
         SYSCALL_SETDOMAINNAME => syscall_setdomainname(a0 as *const u8, a1),
         SYSCALL_SETHOSTNAME => syscall_sethostname(a0 as *const u8, a1),
+        SYSCALL_SHUTDOMN => sys_shutdown(),
         _ => {
             log::warn!(
                 "Unsupported syscall_id: {}, {}",
