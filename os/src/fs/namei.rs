@@ -41,6 +41,7 @@ use crate::{
             fd::{record_fd, FD_FILE},
             pid::{record_target_pid, TARGERT_PID},
             pid_max::PIDMAX,
+            smaps::SMAPS,
             tainted::TAINTED,
         },
         AT_FDCWD,
@@ -502,6 +503,11 @@ fn create_file_from_dentry(
             let maps: Arc<dyn FileOp> = MAPS.get().unwrap().clone();
             maps.seek(0, super::uapi::Whence::SeekSet).unwrap();
             return Ok(maps);
+        }
+        if dentry.absolute_path == "/proc/self/smaps" {
+            let smaps: Arc<dyn FileOp> = SMAPS.get().unwrap().clone();
+            smaps.seek(0, super::uapi::Whence::SeekSet).unwrap();
+            return Ok(smaps);
         }
         if dentry.absolute_path == "/proc/self/pagemap" {
             let pagemap: Arc<dyn FileOp> = PAGEMAP.get().unwrap().clone();

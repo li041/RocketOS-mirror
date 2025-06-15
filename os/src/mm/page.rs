@@ -3,6 +3,7 @@ use core::{alloc::Layout, ops::Add};
 use alloc::{
     alloc::{alloc, dealloc},
     sync::{Arc, Weak},
+    vec::Vec,
 };
 use virtio_drivers::PAGE_SIZE;
 
@@ -18,7 +19,11 @@ use spin::RwLock;
 use crate::arch::config::PAGE_SIZE_BITS;
 use crate::mm::PhysPageNum;
 
-use super::{frame_allocator::frame_alloc_ppn, frame_dealloc};
+use super::{
+    frame_alloc_range,
+    frame_allocator::{frame_alloc_ppn, frame_alloc_range_any},
+    frame_dealloc,
+};
 
 pub enum PageKind {
     Framed,
@@ -109,6 +114,37 @@ impl Page {
                 page_kind: PageKind::Framed,
             };
         }
+    }
+    /// 批量创建多个 Framed 页面（不带初始数据，全部清 0）
+    pub fn new_frameds(n: usize) -> Vec<Arc<Page>> {
+        // let start_ppn = frame_alloc_range(n)
+        //     .expect("Failed to allocate frame range")
+        //     .0;
+        // (0..n)
+        //     .map(|i| {
+        //         let ppn = PhysPageNum(start_ppn + i);
+        //         let vaddr = (ppn.0 << PAGE_SIZE_BITS) + KERNEL_BASE;
+        //         let buf = unsafe { core::slice::from_raw_parts_mut(vaddr as *mut u8, PAGE_SIZE) };
+        //         buf.fill(0);
+        //         Arc::new(Page {
+        //             vaddr: vaddr as usize,
+        //             page_kind: PageKind::Framed,
+        //         })
+        //     })
+        //     .collect()
+        let frames = frame_alloc_range_any(n).expect("Failed to allocate frame range");
+        frames
+            .into_iter()
+            .map(|ppn| {
+                let vaddr = (ppn.0 << PAGE_SIZE_BITS) + KERNEL_BASE;
+                let buf = unsafe { core::slice::from_raw_parts_mut(vaddr as *mut u8, PAGE_SIZE) };
+                buf.fill(0); // 清空页
+                Arc::new(Page {
+                    vaddr: vaddr as usize,
+                    page_kind: PageKind::Framed,
+                })
+            })
+            .collect()
     }
     /// fs_block_id和inner_offset用于回写block cache
     pub fn new_inline(inode: Weak<dyn InodeOp>, inline_data: &[u8]) -> Self {

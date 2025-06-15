@@ -32,6 +32,7 @@ pub mod mounts;
 pub mod pagemap;
 pub mod pid;
 pub mod pid_max;
+pub mod smaps;
 pub mod status;
 pub mod tainted;
 
@@ -324,6 +325,32 @@ pub fn init_procfs(root_path: Arc<Path>) {
         }
         Err(e) => {
             panic!("create {} failed: {:?}", maps_path, e);
+        }
+    }
+    // /proc/self/smaps
+    let smaps_path = "/proc/self/smaps";
+    let smaps_mode = S_IFREG as u16 | 0o444;
+    nd = Nameidata {
+        path_segments: parse_path(smaps_path),
+        dentry: root_path.dentry.clone(),
+        mnt: root_path.mnt.clone(),
+        depth: 0,
+    };
+    match filename_create(&mut nd, 0) {
+        Ok(dentry) => {
+            let parent_inode = nd.dentry.get_inode();
+            parent_inode.create(dentry.clone(), smaps_mode);
+            // 现在dentry的inode指向/proc/self/smaps
+            let smaps_file = smaps::SMapsFile::new(
+                Path::new(root_path.mnt.clone(), dentry.clone()),
+                dentry.get_inode().clone(),
+                OpenFlags::empty(),
+            );
+            smaps::SMAPS.call_once(|| smaps_file.clone());
+            insert_core_dentry(dentry.clone());
+        }
+        Err(e) => {
+            panic!("create {} failed: {:?}", smaps_path, e);
         }
     }
     // /proc/self/pagemap

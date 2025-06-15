@@ -142,8 +142,8 @@ pub fn sys_brk(brk: usize) -> SyscallRet {
                         {
                             // 删除堆区域
                             log::info!(
-                                "[sys_brk] remove area: {:?} with vpn_range: {:?}",
-                                area.map_type,
+                                "[sys_brk] remove area: {:?}, vpn_range: {:?}",
+                                remove_range,
                                 area.vpn_range
                             );
                             Some(area.vpn_range.get_start())
@@ -154,39 +154,38 @@ pub fn sys_brk(brk: usize) -> SyscallRet {
                     .collect();
                 for start_vpn in areas_to_remove {
                     let mut area = memory_set.areas.remove(&start_vpn).expect("area not found");
-                    log::warn!(
-                        "[sys_brk] complete remove area: {:?} contains in {:?}  ",
-                        area.vpn_range,
-                        remove_range
-                    );
                     // 如果完全覆盖, 则从memory_set中删除
                     if remove_range.is_contain(&area.vpn_range) {
+                        log::warn!(
+                            "[sys_brk] complete remove area: {:?} contains in {:?}  ",
+                            area.vpn_range,
+                            remove_range
+                        );
                     } else {
-                        // 如果部分覆盖, 则只删除部分, 注意看是覆盖前部分还是后一部分
+                        // sys_brk的调整, 如果是部分覆盖, 只有可能是覆盖后部分, 因为brk是向上增长的, remove_range是(brk, current_brk)
                         log::warn!(
                             "[sys_brk] partial remove area: {:?} contains in {:?}  ",
                             area.vpn_range,
                             remove_range
                         );
-                        if area.vpn_range.get_end() < remove_range.get_end() {
-                            // 覆盖后部分
-                            for vpn in
-                                VPNRange::new(area.vpn_range.get_end(), remove_range.get_start())
-                            {
-                                area.dealloc_one_page(&mut memory_set.page_table, vpn);
-                            }
-                            area.vpn_range.set_end(remove_range.get_start());
-                            memory_set.areas.insert(area.vpn_range.get_start(), area);
-                        } else {
-                            // 覆盖前部分
-                            for vpn in
-                                VPNRange::new(remove_range.get_start(), area.vpn_range.get_end())
-                            {
-                                area.dealloc_one_page(&mut memory_set.page_table, vpn);
-                            }
-                            area.vpn_range.set_start(remove_range.get_end());
-                            memory_set.areas.insert(area.vpn_range.get_start(), area);
+                        // if area.vpn_range.get_end() < remove_range.get_end() {
+                        // 覆盖后部分
+                        for vpn in VPNRange::new(remove_range.get_start(), area.vpn_range.get_end())
+                        {
+                            area.dealloc_one_page(&mut memory_set.page_table, vpn);
                         }
+                        area.vpn_range.set_end(remove_range.get_start());
+                        memory_set.areas.insert(area.vpn_range.get_start(), area);
+                        // } else {
+                        //     // 覆盖前部分
+                        //     for vpn in
+                        //         VPNRange::new(remove_range.get_start(), area.vpn_range.get_end())
+                        //     {
+                        //         area.dealloc_one_page(&mut memory_set.page_table, vpn);
+                        //     }
+                        //     area.vpn_range.set_start(remove_range.get_end());
+                        //     memory_set.areas.insert(area.vpn_range.get_start(), area);
+                        // }
                     }
                 }
             }

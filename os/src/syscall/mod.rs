@@ -238,9 +238,9 @@ pub fn syscall(
 ) -> SyscallRet {
     // 神奇小咒语
     log::trace!("[syscall]");
-    if !CARELESS_SYSCALLS.contains(&syscall_id) {
-        log::warn!("syscall_id: {}", syscall_id);
-    }
+    // if !CARELESS_SYSCALLS.contains(&syscall_id) {
+    //     log::warn!("syscall_id: {}", syscall_id);
+    // }
     // if syscall_id == SYSCALL_WAIT4 {
     // log::warn!("syscall_id: {}", syscall_id);
     // }

@@ -8,7 +8,7 @@ use core::{
 
 use crate::{
     arch::config::{KERNEL_DIRECT_OFFSET, PAGE_SIZE_BITS, USER_MAX_VA},
-    mm::FrameTracker,
+    mm::{frame_alloc_range, FrameTracker, Page},
 };
 use crate::{
     arch::mm::sfence_vma_vaddr,
@@ -16,11 +16,12 @@ use crate::{
 };
 use bitflags::bitflags;
 
-use alloc::vec::Vec;
 use alloc::{string::String, vec};
+use alloc::{sync::Arc, vec::Vec};
+use riscv::{addr::page, paging};
 
 bitflags! {
-    #[derive(Clone)]
+    #[derive(Clone, Copy)]
     pub struct PTEFlags: u16 {
         const V = 1 << 0;
         const R = 1 << 1;
@@ -365,6 +366,130 @@ impl PageTable {
     /// Get root ppn
     pub fn token(&self) -> usize {
         8usize << 60 | self.root_ppn.0
+    }
+}
+
+// 优化
+impl PageTable {
+    /// 返回vpn所在的第三级页表数组（512个PTE），用于批量map
+    pub fn find_pte_array_mut(&mut self, vpn: VirtPageNum) -> Option<&mut [PageTableEntry]> {
+        let idxs = vpn.indexes();
+        let mut ppn = self.root_ppn;
+        for (i, &idx) in idxs.iter().enumerate() {
+            let pte = &mut ppn.get_pte_array()[idx];
+            if i == 1 {
+                // 最后一层，返回这个页表
+                if !pte.is_valid() {
+                    let frame = frame_alloc().unwrap();
+                    *pte = PageTableEntry::new(frame.ppn, PTEFlags::V);
+                    self.frames.push(frame);
+                }
+                return Some(pte.ppn().get_pte_array());
+            }
+            if !pte.is_valid() {
+                let frame = frame_alloc().unwrap();
+                *pte = PageTableEntry::new(frame.ppn, PTEFlags::V);
+                self.frames.push(frame);
+            }
+            ppn = pte.ppn();
+        }
+        None
+    }
+    /// 映射一段连续的虚拟页
+    pub fn map_anony_range(
+        &mut self,
+        start_vpn: VirtPageNum,
+        end_vpn: VirtPageNum,
+        flags: PTEFlags,
+    ) {
+        assert!(start_vpn.0 <= end_vpn.0);
+        let mut vpn = start_vpn.0;
+        let page_count = end_vpn.0 - start_vpn.0;
+
+        let mut pte_arr = self.find_pte_array_mut(start_vpn).unwrap();
+        let mut ppn = frame_alloc_range(page_count)
+            .expect("Failed to allocate frames for mapping")
+            .0;
+        while vpn < end_vpn.0 {
+            let cur_vpn = VirtPageNum(vpn);
+            let idxs = cur_vpn.indexes();
+            // 当前vpn在当前pte_arr中
+            let idx = idxs[2];
+            pte_arr.as_mut()[idx] = PageTableEntry::new(
+                PhysPageNum(ppn),
+                flags | PTEFlags::V | PTEFlags::A | PTEFlags::D,
+            );
+            vpn += 1;
+            ppn += 1;
+            // 如果跨页表了，重新查找
+            if idxs[2] >= 511 {
+                // 重新查找pte数组
+                pte_arr = self.find_pte_array_mut(VirtPageNum(vpn)).unwrap();
+            }
+        }
+    }
+    /// 事先分配好物理页, 然后批量映射
+    pub fn map_range_continuous(
+        &mut self,
+        start_vpn: VirtPageNum,
+        end_vpn: VirtPageNum,
+        start_ppn: PhysPageNum,
+        flags: PTEFlags,
+    ) {
+        assert!(start_vpn.0 <= end_vpn.0);
+        let mut vpn = start_vpn.0;
+        let end_vpn = end_vpn.0;
+        let mut ppn = start_ppn.0;
+
+        let mut pte_arr = self.find_pte_array_mut(start_vpn).unwrap();
+        while vpn < end_vpn {
+            let cur_vpn = VirtPageNum(vpn);
+            let idxs = cur_vpn.indexes();
+            // 当前vpn在当前pte_arr中
+            let idx = idxs[2];
+            pte_arr.as_mut()[idx] = PageTableEntry::new(
+                PhysPageNum(ppn),
+                flags | PTEFlags::V | PTEFlags::A | PTEFlags::D,
+            );
+            vpn += 1;
+            ppn += 1;
+
+            // 如果跨页表了，重新查找
+            if idxs[2] >= 511 {
+                // 重新查找pte数组
+                pte_arr = self.find_pte_array_mut(VirtPageNum(vpn)).unwrap();
+            }
+        }
+    }
+    pub fn map_range_any(
+        &mut self,
+        start_vpn: VirtPageNum,
+        end_vpn: VirtPageNum,
+        pages: &Vec<Arc<Page>>,
+        flags: PTEFlags,
+    ) {
+        assert!(start_vpn.0 <= end_vpn.0);
+        let mut pte_arr = self.find_pte_array_mut(start_vpn).unwrap();
+        let mut vpn = start_vpn.0;
+        let start_vpn = start_vpn.0;
+        let end_vpn = end_vpn.0;
+
+        while vpn < end_vpn {
+            let cur_vpn = VirtPageNum(vpn);
+            let idxs = cur_vpn.indexes();
+            // 当前vpn在当前pte_arr中
+            let idx = idxs[2];
+            let page = pages[vpn - start_vpn].clone();
+            pte_arr.as_mut()[idx] =
+                PageTableEntry::new(page.ppn(), flags | PTEFlags::V | PTEFlags::A | PTEFlags::D);
+            vpn += 1;
+
+            // 如果跨页表了，重新查找
+            if idxs[2] >= 511 {
+                // 重新查找pte数组
+                pte_arr = self.find_pte_array_mut(VirtPageNum(vpn)).unwrap();
+            }
+        }
     }
 }
 

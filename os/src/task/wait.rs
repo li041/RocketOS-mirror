@@ -41,14 +41,14 @@ impl WaitQueue {
     }
     // 打印队列中所有内容
     pub fn dump_queue(&self) {
-        log::error!("**************************** dump queue ****************************");
+        println!("**************************** dump queue ****************************");
         for task in self.queue.iter() {
-            log::error!(
+            println!(
                 "task {} in queue\t strong count: {}",
                 task.tid(),
                 Arc::strong_count(task)
             );
         }
-        log::error!("**************************** dump queue ****************************");
+        println!("**************************** dump queue ****************************");
     }
 }
