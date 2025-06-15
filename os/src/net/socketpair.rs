@@ -3,10 +3,10 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicI32, Ordering};
 use spin::Mutex;
 
-use crate::syscall::errno::{Errno, SyscallRet};
-use crate::task::{current_task, wait, wakeup, Tid};
 use crate::fs::file::{FileOp, OpenFlags};
 use crate::fs::pipe::{PipeRingBuffer, RingBufferStatus};
+use crate::syscall::errno::{Errno, SyscallRet};
+use crate::task::{current_task, wait, wakeup, Tid};
 
 /// 全双工 SocketPairBuffer 使用两个 PipeRingBuffer
 pub struct SocketPairBuffer {
@@ -19,8 +19,8 @@ pub struct SocketPairBuffer {
 impl SocketPairBuffer {
     pub fn new() -> Self {
         Self {
-            a_to_b: Arc::new(Mutex::new(PipeRingBuffer::new())),
-            b_to_a: Arc::new(Mutex::new(PipeRingBuffer::new())),
+            a_to_b: Arc::new(Mutex::new(PipeRingBuffer::new(128))),
+            b_to_a: Arc::new(Mutex::new(PipeRingBuffer::new(128))),
         }
     }
 }
@@ -56,11 +56,7 @@ impl BufferEnd {
     }
 
     /// 根据 endpoint 0/1 生成对应的 BufferEnd
-    pub fn from_pair(
-        buf: &SocketPairBuffer,
-        endpoint: usize,
-        flags: OpenFlags,
-    ) -> Self {
+    pub fn from_pair(buf: &SocketPairBuffer, endpoint: usize, flags: OpenFlags) -> Self {
         if endpoint == 0 {
             BufferEnd::new(buf.b_to_a.clone(), buf.a_to_b.clone(), flags)
         } else {
@@ -89,8 +85,7 @@ impl FileOp for BufferEnd {
         if self.readable {
             let ring = self.read_buf.lock();
             ring.status != RingBufferStatus::EMPTY
-        }
-        else {
+        } else {
             false
         }
     }
@@ -100,8 +95,7 @@ impl FileOp for BufferEnd {
         if self.readable {
             let ring = self.write_buf.lock();
             ring.status != RingBufferStatus::FULL
-        }
-        else {
+        } else {
             false
         }
     }
@@ -109,22 +103,22 @@ impl FileOp for BufferEnd {
     fn read<'a>(&'a self, buf: &'a mut [u8]) -> SyscallRet {
         debug_assert!(self.readable());
         //检查对端是否打开
-        let mut guard= self.read_buf.lock();
+        let mut guard = self.read_buf.lock();
         let nonblock = self.flags.load(Ordering::Relaxed) & OpenFlags::O_NONBLOCK.bits() != 0;
-        if guard.write_end.is_none(){
+        if guard.write_end.is_none() {
             //如果没有
             if nonblock {
                 return Err(Errno::EAGAIN);
             }
-           guard.add_waiter(current_task().tid());
-           drop(guard);
+            guard.add_waiter(current_task().tid());
+            drop(guard);
             if wait() == -1 {
                 return Err(Errno::ERESTARTSYS);
             }
-        }else {
+        } else {
             drop(guard);
         }
-        
+
         loop {
             let mut ring = self.read_buf.lock();
             if ring.status == RingBufferStatus::EMPTY {
@@ -151,19 +145,19 @@ impl FileOp for BufferEnd {
     fn write<'a>(&'a self, buf: &'a [u8]) -> SyscallRet {
         debug_assert!(self.writable());
         let nonblock = self.flags.load(Ordering::Relaxed) & OpenFlags::O_NONBLOCK.bits() != 0;
-        let mut guard= self.write_buf.lock();
+        let mut guard = self.write_buf.lock();
         let nonblock = self.flags.load(Ordering::Relaxed) & OpenFlags::O_NONBLOCK.bits() != 0;
-        if guard.read_end.is_none(){
+        if guard.read_end.is_none() {
             //如果没有
             if nonblock {
                 return Err(Errno::EAGAIN);
             }
-           guard.add_waiter(current_task().tid());
-           drop(guard);
+            guard.add_waiter(current_task().tid());
+            drop(guard);
             if wait() == -1 {
                 return Err(Errno::ERESTARTSYS);
             }
-        }else {
+        } else {
             drop(guard);
         }
         loop {
@@ -174,7 +168,9 @@ impl FileOp for BufferEnd {
                     crate::signal::SigInfo::new(
                         crate::signal::Sig::SIGPIPE.raw(),
                         crate::signal::SigInfo::KERNEL,
-                        crate::signal::SiField::Kill { tid: current_task().tid() },
+                        crate::signal::SiField::Kill {
+                            tid: current_task().tid(),
+                        },
                     ),
                     false,
                 );

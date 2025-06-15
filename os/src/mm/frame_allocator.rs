@@ -123,6 +123,10 @@ impl FrameAllocator for StackFrameAllocator {
             for ppn in result {
                 self.dealloc(ppn);
             }
+            println!(
+                "[StackFrameAllocator] alloc_range_any failed, current: {:#x}, end: {:#x}, n: {}",
+                self.current, self.end, n
+            );
             None
         }
     }
