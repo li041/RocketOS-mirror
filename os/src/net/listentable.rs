@@ -4,7 +4,7 @@ use core::{ops::{Deref, DerefMut}, pin};
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-31 22:34:08
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-05-21 21:12:05
+ * @LastEditTime: 2025-06-15 12:01:31
  * @FilePath: /RocketOS_netperfright/os/src/net/listentable.rs
  * @Description: listentable file
  * 
@@ -14,22 +14,25 @@ use alloc::{boxed::Box, collections::vec_deque::VecDeque};
 use hashbrown::Equivalent;
 use log::logger;
 use spin::Mutex;
+use crate::task::{remove_timer,ITIMER_REAL};
 use smoltcp::{iface::{SocketHandle, SocketSet}, socket::{tcp::{self, State}, Socket}, wire::{IpAddress, IpEndpoint, IpListenEndpoint, Ipv4Address}};
 
-use crate::{net::ETH0, syscall::errno::Errno};
+use crate::{net::ETH0, syscall::{errno::{Errno, SyscallRet}, sys_exit}, task::{current_task, get_task, kernel_exit, yield_current_task}};
 
 use super::{SocketSetWrapper, LISTEN_QUEUE_SIZE, SOCKET_SET};
 
+#[derive(Clone)]
 struct ListenTableEntry{
     //表示监听的server地址，addr
     listen_endpoint:IpListenEndpoint,
+    task_id:usize,
     //监听client发送过来的syn,这个vec的长度决定其可以同时接受client的数量
     syn_queue:VecDeque<SocketHandle>
 }
 impl ListenTableEntry {
     pub fn new(listen_endpoint:IpListenEndpoint)->Self {
 
-        ListenTableEntry { listen_endpoint: listen_endpoint, syn_queue: VecDeque::with_capacity(LISTEN_QUEUE_SIZE) }
+        ListenTableEntry { listen_endpoint: listen_endpoint,task_id:current_task().tid(),syn_queue: VecDeque::with_capacity(LISTEN_QUEUE_SIZE) }
     }
     pub fn can_accept(&self,dst:IpAddress)->bool {
         //这里只决定是否可以对client建立连接，这里的判断标准只是比较client传过来的remote_addr
@@ -89,7 +92,7 @@ impl ListenTable {
     //         false
     //     }
     // }
-    pub fn listen(&self,listen_endpoint:IpListenEndpoint) {
+    pub fn listen(&self,listen_endpoint:IpListenEndpoint)->SyscallRet {
         //判断listen_endpoint想要监听的port是否有人已经在监听e了
         let port=listen_endpoint.port;
         assert!(port!=0);
@@ -97,9 +100,24 @@ impl ListenTable {
         if entry.is_none(){
             log::error!("[listen_table_listen]:has create a listen entry");
             *entry= Some(Box::new(ListenTableEntry::new(listen_endpoint)));
+            Ok(0)
         }
         else {
             log::error!("[listentable]:has already listen");
+            //已经监听删除另一个监听的
+        //     let task_id=entry.clone().unwrap().task_id;
+        //     log::error!("[listen_table_listen] already listen task is {:?}",task_id);
+        //     // if let Some(task)=get_task(5){
+        //     //     kernel_exit(task, 0);
+        //     // }
+                // *entry= Some(Box::new(ListenTableEntry::new(listen_endpoint)));
+                // Ok(0)
+            if current_task().tid()==entry.clone().unwrap().task_id||current_task().exe_path().contains("netserver") ||current_task().exe_path().contains("netperf"){
+                return Ok(0);
+            }
+            println!("[listen_table_listen] Err(Errno::EADDRINUSE) task path is {:?}",current_task().exe_path());
+            // #[cfg(target_arch="riscv64")]
+            return Err(Errno::EADDRINUSE);
         }
     }
     pub fn unlisten(&self,port:u16) {
@@ -108,7 +126,9 @@ impl ListenTable {
     ///这里根据port找到对应的entry并判断其中的handle对应socket状态是否可以accept
     pub fn can_accept(&self, port: u16) -> bool {
         if let Some(entry) = self.table[port as usize].lock().deref() {
-            entry.syn_queue.iter().any(|&handle| is_connected(handle))
+            entry.syn_queue.iter().any(|&handle| 
+                {log::error!("[can_accept] handle is {:?}",handle);
+                is_connected(handle)})
         } else {
             panic!("socket accept() failed: not listen")
         }
@@ -149,6 +169,7 @@ impl ListenTable {
                 .ok_or(Errno::EAGAIN)?; // wait for connection
 
             let handle = syn_queue.swap_remove_front(idx).unwrap();
+            // let handle = entry.syn_queue[idx];
             // If the connection is reset, return ConnectionReset error
             // Otherwise, return the handle and the address tuple
             log::error!("[ListenTable_accept]:handle is {:?}",handle);

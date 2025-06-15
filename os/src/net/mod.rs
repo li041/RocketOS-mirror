@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-30 16:26:05
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-12 20:22:58
+ * @LastEditTime: 2025-06-15 12:46:26
  * @FilePath: /RocketOS_netperfright/os/src/net/mod.rs
  * @Description: net mod for interface wrapper,socketset
  *
@@ -131,6 +131,8 @@ pub fn init(net_device: Option<VirtioNetDevice<32, HalImpl, MmioTransport>>) {
 }
 pub fn init_la<T: Transport + 'static>(net_device: Option<VirtioNetDevice<32, HalImpl, T>>) {
     //初始化网卡
+    //需要添加这个trace 否则会panic在uninit lazyinit
+    log::trace!("[init_la]");
     SOCKET_SET.init_once(SocketSetWrapper::new());
     println!("[init_la]socketset init complete");
     if let Some(dev) = net_device {

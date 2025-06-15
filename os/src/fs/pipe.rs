@@ -246,7 +246,7 @@ impl Pipe {
 pub const RING_DEFAULT_BUFFER_SIZE: usize = 65536;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
-enum RingBufferStatus {
+pub enum RingBufferStatus {
     FULL,
     EMPTY,
     NORMAL,
@@ -257,7 +257,7 @@ pub struct PipeRingBuffer {
     arr: Vec<u8>,
     head: usize,
     tail: usize,
-    status: RingBufferStatus,
+    pub(crate) status: RingBufferStatus,
     write_end: Option<Weak<Pipe>>,
     read_end: Option<Weak<Pipe>>,
     pub(crate) waiter: Vec<Tid>,
@@ -265,7 +265,7 @@ pub struct PipeRingBuffer {
 }
 
 impl PipeRingBuffer {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             arr: vec![0u8; RING_DEFAULT_BUFFER_SIZE],
             head: 0,
@@ -293,7 +293,7 @@ impl PipeRingBuffer {
         }
     }
     #[inline]
-    fn buffer_read(&mut self, buf: &mut [u8]) -> usize {
+    pub fn buffer_read(&mut self, buf: &mut [u8]) -> usize {
         // get range
         let begin = self.head;
         let end = if self.tail <= self.head {
@@ -315,7 +315,7 @@ impl PipeRingBuffer {
         read_bytes
     }
     #[inline]
-    fn buffer_write(&mut self, buf: &[u8]) -> usize {
+    pub fn buffer_write(&mut self, buf: &[u8]) -> usize {
         // get range
         let begin = self.tail;
         let end = if self.tail < self.head {
@@ -342,19 +342,19 @@ impl PipeRingBuffer {
     fn set_read_end(&mut self, read_end: &Arc<Pipe>) {
         self.read_end = Some(Arc::downgrade(read_end));
     }
-    fn all_write_ends_closed(&self) -> bool {
+    pub fn all_write_ends_closed(&self) -> bool {
         log::trace!("[all_write_ends_closed]");
         self.write_end.as_ref().unwrap().upgrade().is_none()
     }
-    fn all_read_ends_closed(&self) -> bool {
+    pub fn all_read_ends_closed(&self) -> bool {
         log::trace!("[all_read_ends_closed]");
         self.read_end.as_ref().unwrap().upgrade().is_none()
     }
-    fn get_one_waiter(&mut self) -> Tid {
+    pub fn get_one_waiter(&mut self) -> Tid {
         log::warn!("[PipeRingBuffer::get_one_waiter] get one waiter");
         self.waiter.pop().unwrap_or(0) // 如果没有等待者，返回0
     }
-    fn add_waiter(&mut self, waiter: Tid) {
+    pub fn add_waiter(&mut self, waiter: Tid) {
         log::warn!("[PipeRingBuffer::add_waiter] add waiter: {}", waiter);
         self.waiter.push(waiter);
     }

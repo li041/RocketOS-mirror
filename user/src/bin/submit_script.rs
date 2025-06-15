@@ -5,16 +5,18 @@ extern crate user_lib;
 
 // ltp 暂且没塞
 static TEST_LIST: &[&str] = &[
-    // "libcbench_testcode.sh\0",
-    // "lua_testcode.sh\0",
-    "basic_testcode.sh\0",
+    // "basic_testcode.sh\0",
     // "busybox_testcode.sh\0",
-    // "cyclictest_testcode.sh\0",
-    // "iozone_testcode.sh\0",
-    // "iperf_testcode.sh\0",
+    "cyclictest_testcode.sh\0",
+
+    "iperf_testcode.sh\0",
+    "iozone_testcode.sh\0",
+    // "libcbench_testcode.sh\0",
+     "netperf_testcode.sh\0",
     // "libctest_testcode.sh\0",
     // "lmbench_testcode.sh\0",
-    // "netperf_testcode.sh\0",
+    // "lua_testcode.sh\0",
+
     // "ltp_testcode.sh\0",
 ];
 
