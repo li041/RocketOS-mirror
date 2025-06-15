@@ -518,9 +518,9 @@ pub fn clean_dentry_cache() {
     let mut cache_map = cache.cache.write(); // 需要写锁来删除
     let mut lru = cache.lru_list.lock();
 
-    if lru.len() < 100 {
-        return;
-    }
+    // if lru.len() < 100 {
+    //     return;
+    // }
 
     for name in lru.iter() {
         if let Some(dentry) = cache_map.get(name) {
@@ -529,10 +529,10 @@ pub fn clean_dentry_cache() {
             //     "[DentryCache] Key: {}, Path: {:?}, Strong Count: {}, pages: {}",
             //     name, dentry.absolute_path, strong_count, count
             // );
-            // if name.contains("iozone") {
-            //     // 特例处理, 保留 iozone*
-            //     continue;
-            // }
+            if name.contains("iozone") {
+                // 特例处理, 保留 iozone*
+                continue;
+            }
             if strong_count == 1 {
                 // 没有其他强引用，可以安全移除
                 cache_map.remove(name);

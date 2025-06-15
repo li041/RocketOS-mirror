@@ -1280,16 +1280,17 @@ impl MemorySet {
                         unimplemented!();
                     } else {
                         // 处理匿名区域的懒分配
-                        // 目前只有mmap匿名区域是懒分配
-                        let page = Page::new_framed(None);
-                        let mut map_perm = area.map_perm;
-                        map_perm.remove(MapPermission::COW);
-                        map_perm.insert(MapPermission::W);
-                        let pte_flags = PTEFlags::from(map_perm);
-                        let ppn = page.ppn();
-                        self.page_table.map(vpn, ppn, pte_flags);
-                        area.pages.insert(vpn, Arc::new(page));
+                        // 按需调整
                         if area.map_type == MapType::Stack {
+                            // 只恢复一页
+                            let page = Page::new_framed(None);
+                            let mut map_perm = area.map_perm;
+                            map_perm.remove(MapPermission::COW);
+                            map_perm.insert(MapPermission::W);
+                            let pte_flags = PTEFlags::from(map_perm);
+                            let ppn = page.ppn();
+                            self.page_table.map(vpn, ppn, pte_flags);
+                            area.pages.insert(vpn, Arc::new(page));
                             // 栈区域的懒分配, 如果是vpn_range的第一个vpn, 则需要向下增长
                             if area.vpn_range.get_start() == vpn {
                                 // 找到前一个区域
@@ -1322,12 +1323,50 @@ impl MemorySet {
                                 area.vpn_range.set_start(new_start_vpn);
                                 self.areas.insert(new_start_vpn, area);
                             }
+                        } else {
+                            // 批处理
+                            let max_alloc_page = 4;
+                            let start_vpn = vpn.0 + 1;
+                            let end_vpn = area.vpn_range.get_end().0.min(vpn.0 + max_alloc_page);
+                            let pages = &mut area.pages;
+                            let pte_flags = PTEFlags::from(area.map_perm);
+
+                            // 分配一页
+                            let page = Page::new_framed(None);
+                            let mut map_perm = area.map_perm;
+                            map_perm.remove(MapPermission::COW);
+                            map_perm.insert(MapPermission::W);
+                            let ppn = page.ppn();
+                            self.page_table.map(vpn, ppn, pte_flags);
+                            pages.insert(vpn, Arc::new(page));
+                            // 格外处理懒分配区域
+                            // 查看(start_vpn, end_vpn)范围内是否有懒分配的区域
+                            for vpn in start_vpn..end_vpn {
+                                let vpn = VirtPageNum(vpn);
+                                if let Some(page) = pages.get(&vpn) {
+                                    // 如果已经有页了, 则跳过
+                                    log::warn!(
+                                        "[handle_lazy_allocation_area] lazy alloc area, vpn: {:#x}, ppn: {:#x} already exists",
+                                        vpn.0,
+                                        page.ppn().0
+                                    );
+                                    continue;
+                                }
+                                // 分配一页
+                                let page = Page::new_framed(None);
+                                let mut map_perm = area.map_perm;
+                                map_perm.remove(MapPermission::COW);
+                                map_perm.insert(MapPermission::W);
+                                let ppn = page.ppn();
+                                self.page_table.map(vpn, ppn, pte_flags);
+                                pages.insert(vpn, Arc::new(page));
+                            }
+                            log::error!(
+                                "[handle_lazy_allocation_area] lazy alloc area, vpn_range: {:#x} ~ {:#x}",
+                                    start_vpn,
+                                    end_vpn,
+                            );
                         }
-                        // log::error!(
-                        //     "[handle_lazy_allocation_area] lazy alloc area, vpn: {:#x}, ppn: {:#x}",
-                        //     vpn.0,
-                        //     ppn.0
-                        // );
                         return Ok(());
                     }
                 }
@@ -1553,81 +1592,183 @@ impl MemorySet {
 
         Ok(0)
     }
+    // pub fn pre_handle_cow_and_lazy_alloc(&mut self, vpn_range: VPNRange) -> SyscallRet {
+    //     let mut vpn = vpn_range.get_start();
+    //     while vpn < vpn_range.get_end() {
+    //         if let Some(pte) = self.page_table.find_pte(vpn) {
+    //             if pte.is_cow() {
+    //                 debug_assert!(!pte.is_shared());
+    //                 log::warn!(
+    //                     "[pre_handle_cow_and_lazy_alloc] pre handle cow page fault, vpn {:#x}, pte: {:#x?}",
+    //                     vpn.0,
+    //                     pte
+    //                 );
+    //                 if let Some((_, area)) = self.areas.range_mut(..=vpn).next_back() {
+    //                     if area.vpn_range.contains_vpn(vpn) {
+    //                         let data_frame = area.pages.get(&vpn).unwrap();
+    //                         if Arc::strong_count(data_frame) == 1 {
+    //                             log::warn!("[pre_handle_cow_and_lazy_alloc] arc strong count == 1");
+    //                             let mut flags = pte.flags();
+    //                             flags.remove(PTEFlags::COW);
+    //                             flags.insert(PTEFlags::W);
+    //                             #[cfg(target_arch = "loongarch64")]
+    //                             flags.insert(PTEFlags::D);
+    //                             *pte = PageTableEntry::new(pte.ppn(), flags);
+    //                         } else {
+    //                             log::warn!("arc strong count > 1");
+    //                             let page = Page::new_framed(None);
+    //                             let src_frame = pte.ppn().get_bytes_array();
+    //                             let dst_frame = page.ppn().get_bytes_array();
+    //                             log::warn!("dst_frame: {:#x}", page.ppn().0);
+    //                             dst_frame.copy_from_slice(src_frame);
+    //                             let mut flags = pte.flags();
+    //                             flags.remove(PTEFlags::COW);
+    //                             flags.insert(PTEFlags::W);
+    //                             #[cfg(target_arch = "loongarch64")]
+    //                             flags.insert(PTEFlags::D);
+    //                             *pte = PageTableEntry::new(page.ppn(), flags);
+    //                             area.pages.insert(vpn, Arc::new(page));
+    //                         }
+    //                         unsafe {
+    //                             sfence_vma_vaddr(vpn.0 << PAGE_SIZE_BITS);
+    //                         }
+    //                     }
+    //                 }
+    //             }
+    //         } else {
+    //             // 页表中没有对应的页表项, 可能是lazy allocation区域
+    //             if let Some((_, area)) = self.areas.range_mut(..=vpn).next_back() {
+    //                 if area.vpn_range.contains_vpn(vpn) {
+    //                     log::warn!(
+    //                         "[pre_handle_cow_and_lazy_alloc] lazy allocation area, vpn: {:#x}, area: {:#x?}",
+    //                         vpn.0,
+    //                         area.vpn_range
+    //                     );
+    //                     // 处理lazy allocation区域
+    //                     if let Err(sig) = self.handle_lazy_allocation_area(
+    //                         VirtAddr::from(vpn.0 << PAGE_SIZE_BITS),
+    //                         PageFaultCause::STORE,
+    //                     ) {
+    //                         log::error!(
+    //                             "[pre_handle_cow_and_lazy_alloc] handle lazy allocation area failed: {:?}",
+    //                             sig
+    //                         );
+    //                         return Err(Errno::EFAULT);
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //         // 继续处理下一页
+    //         vpn.step();
+    //     }
+    //     return Ok(0);
+    // }
     // 检查是否是COW或者lazy_allocation的区域
     // 逐页处理
     // used by `copy_to_user`, 不仅会检查, 还会提前处理, 避免实际写的时候发生page fault
     // 由调用者保证pte存在
     pub fn pre_handle_cow_and_lazy_alloc(&mut self, vpn_range: VPNRange) -> SyscallRet {
         let mut vpn = vpn_range.get_start();
-        while vpn < vpn_range.get_end() {
-            if let Some(pte) = self.page_table.find_pte(vpn) {
-                if pte.is_cow() {
-                    debug_assert!(!pte.is_shared());
-                    log::warn!(
-                        "[pre_handle_cow_and_lazy_alloc] pre handle cow page fault, vpn {:#x}, pte: {:#x?}",
-                        vpn.0,
-                        pte
-                    );
-                    if let Some((_, area)) = self.areas.range_mut(..=vpn).next_back() {
-                        if area.vpn_range.contains_vpn(vpn) {
-                            let data_frame = area.pages.get(&vpn).unwrap();
-                            if Arc::strong_count(data_frame) == 1 {
-                                log::warn!("[pre_handle_cow_and_lazy_alloc] arc strong count == 1");
-                                let mut flags = pte.flags();
-                                flags.remove(PTEFlags::COW);
-                                flags.insert(PTEFlags::W);
-                                #[cfg(target_arch = "loongarch64")]
-                                flags.insert(PTEFlags::D);
-                                *pte = PageTableEntry::new(pte.ppn(), flags);
-                            } else {
-                                log::warn!("arc strong count > 1");
-                                let page = Page::new_framed(None);
-                                let src_frame = pte.ppn().get_bytes_array();
-                                let dst_frame = page.ppn().get_bytes_array();
-                                log::warn!("dst_frame: {:#x}", page.ppn().0);
-                                dst_frame.copy_from_slice(src_frame);
-                                let mut flags = pte.flags();
-                                flags.remove(PTEFlags::COW);
-                                flags.insert(PTEFlags::W);
-                                #[cfg(target_arch = "loongarch64")]
-                                flags.insert(PTEFlags::D);
-                                *pte = PageTableEntry::new(page.ppn(), flags);
-                                area.pages.insert(vpn, Arc::new(page));
+        let end_vpn = vpn_range.get_end();
+
+        while vpn < end_vpn {
+            // 尝试获取当前vpn所在的第三级页表数组
+            let l3_idx = vpn.indexes()[2];
+            let mut idx = l3_idx;
+
+            if let Some(pte_arr) = self.page_table.find_pte_array_mut(vpn) {
+                while idx < 512 && vpn < end_vpn {
+                    let pte = &mut pte_arr[idx];
+
+                    if pte.is_valid() && pte.is_cow() {
+                        // === 写时复制处理 ===
+                        if let Some((_, area)) = self.areas.range_mut(..=vpn).next_back() {
+                            if area.vpn_range.contains_vpn(vpn) {
+                                let data_frame = area.pages.get(&vpn).unwrap();
+                                if Arc::strong_count(data_frame) == 1 {
+                                    log::warn!(
+                                    "[pre_handle_cow_and_lazy_alloc] arc strong count == 1, vpn: {:#x}",
+                                    vpn.0
+                                );
+                                    let mut flags = pte.flags();
+                                    flags.remove(PTEFlags::COW);
+                                    flags.insert(PTEFlags::W);
+                                    #[cfg(target_arch = "loongarch64")]
+                                    flags.insert(PTEFlags::D);
+                                    *pte = PageTableEntry::new(pte.ppn(), flags);
+                                } else {
+                                    log::warn!(
+                                    "[pre_handle_cow_and_lazy_alloc] arc strong count > 1, vpn: {:#x}",
+                                    vpn.0
+                                );
+                                    let page = Page::new_framed(None);
+                                    let src_frame = pte.ppn().get_bytes_array();
+                                    let dst_frame = page.ppn().get_bytes_array();
+                                    dst_frame.copy_from_slice(src_frame);
+                                    let mut flags = pte.flags();
+                                    flags.remove(PTEFlags::COW);
+                                    flags.insert(PTEFlags::W);
+                                    #[cfg(target_arch = "loongarch64")]
+                                    flags.insert(PTEFlags::D);
+                                    *pte = PageTableEntry::new(page.ppn(), flags);
+                                    area.pages.insert(vpn, Arc::new(page));
+                                }
+                                unsafe {
+                                    sfence_vma_vaddr(vpn.0 << PAGE_SIZE_BITS);
+                                }
                             }
-                            unsafe {
-                                sfence_vma_vaddr(vpn.0 << PAGE_SIZE_BITS);
+                        }
+                    } else if !pte.is_valid() {
+                        // === 懒分配处理 ===
+                        if let Some((_, area)) = self.areas.range_mut(..=vpn).next_back() {
+                            if area.vpn_range.contains_vpn(vpn) {
+                                let offset = area.offset
+                                    + (vpn.0 - area.vpn_range.get_start().0) * PAGE_SIZE;
+                                if area.map_type == MapType::Filebe {
+                                    if let Some(page) =
+                                        area.backend_file.as_ref().unwrap().clone().get_page(offset)
+                                    {
+                                        let pte_flags = PTEFlags::from(area.map_perm);
+                                        let ppn = page.ppn();
+                                        *pte = PageTableEntry::new(ppn, pte_flags);
+                                        area.pages.insert(vpn, page);
+                                    } else {
+                                        return Err(Errno::EFAULT);
+                                    }
+                                } else {
+                                    // 匿名映射
+                                    let page = Page::new_framed(None);
+                                    let mut map_perm = area.map_perm;
+                                    map_perm.remove(MapPermission::COW);
+                                    map_perm.insert(MapPermission::W);
+                                    let pte_flags = PTEFlags::from(map_perm);
+                                    let ppn = page.ppn();
+                                    *pte = PageTableEntry::new(ppn, pte_flags);
+                                    area.pages.insert(vpn, Arc::new(page));
+                                }
+                                unsafe {
+                                    sfence_vma_vaddr(vpn.0 << PAGE_SIZE_BITS);
+                                }
                             }
                         }
                     }
+
+                    vpn.step();
+                    idx += 1;
                 }
             } else {
-                // 页表中没有对应的页表项, 可能是lazy allocation区域
-                if let Some((_, area)) = self.areas.range_mut(..=vpn).next_back() {
-                    if area.vpn_range.contains_vpn(vpn) {
-                        log::warn!(
-                            "[pre_handle_cow_and_lazy_alloc] lazy allocation area, vpn: {:#x}, area: {:#x?}",
-                            vpn.0,
-                            area.vpn_range
-                        );
-                        // 处理lazy allocation区域
-                        if let Err(sig) = self.handle_lazy_allocation_area(
-                            VirtAddr::from(vpn.0 << PAGE_SIZE_BITS),
-                            PageFaultCause::STORE,
-                        ) {
-                            log::error!(
-                                "[pre_handle_cow_and_lazy_alloc] handle lazy allocation area failed: {:?}",
-                                sig
-                            );
-                            return Err(Errno::EFAULT);
-                        }
-                    }
-                }
+                // 理论上不应该出现
+                log::error!(
+                    "[pre_handle_cow_and_lazy_alloc] failed to get pte array for vpn {:#x}",
+                    vpn.0
+                );
+                return Err(Errno::EFAULT);
             }
-            // 继续处理下一页
-            vpn.step();
         }
-        return Ok(0);
+
+        Ok(0)
     }
+
     /// 处理可恢复的缺页异常
     /// 1. Cow区域
     /// 2. lazy allocation区域(目前只有file backend mmap area是lazy allocation)
@@ -1648,6 +1789,14 @@ impl MemorySet {
                     pte,
                     current_task().tid()
                 );
+                if va.0 == 0x97020 {
+                    log::error!(
+                        "[handle_recoverable_page_fault] COW: {:#x}, pte: {:#x?}, tid: {:#x}",
+                        va.0,
+                        pte,
+                        current_task().tid()
+                    );
+                }
                 // 1. fork COW area
                 // 如果refcnt == 1, 则直接修改pte, 否则, 分配新的frame, 修改pte, 更新MemorySet
                 // debug!("handle cow page fault(cow), vpn {:#x}", vpn.0);

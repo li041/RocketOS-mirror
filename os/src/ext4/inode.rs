@@ -959,7 +959,7 @@ impl Ext4Inode {
             });
             current_read += copy_len;
             // 读取到文件末尾
-            if remaining_file_size < PAGE_SIZE {
+            if current_read + offset >= inode_size {
                 return Ok(current_read);
             }
             page_index += 1;
