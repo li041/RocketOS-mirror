@@ -120,6 +120,7 @@ pub fn init_net_dev_la<T: Transport + 'static>(transport: T) {
         transport.device_type()
     );
     let dev = VirtioNetDevice::<32, HalImpl, T>::new(transport);
+    log::trace!("[init_net_dev_la] must init net la");
     crate::net::init_la(Some(dev));
 }
 

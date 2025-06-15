@@ -258,8 +258,8 @@ pub struct PipeRingBuffer {
     head: usize,
     tail: usize,
     pub(crate) status: RingBufferStatus,
-    write_end: Option<Weak<Pipe>>,
-    read_end: Option<Weak<Pipe>>,
+    pub(crate) write_end: Option<Weak<Pipe>>,
+    pub(crate) read_end: Option<Weak<Pipe>>,
     pub(crate) waiter: Vec<Tid>,
     size: usize, // 用于记录管道的大小
 }

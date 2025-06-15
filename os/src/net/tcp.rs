@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-30 16:26:09
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-15 11:56:17
+ * @LastEditTime: 2025-06-15 16:34:18
  * @FilePath: /RocketOS_netperfright/os/src/net/tcp.rs
  * @Description: tcp file 
  * 
@@ -300,6 +300,7 @@ impl TcpSocket {
             //     //如果没有错误这里remote_addr应该是remote_endpoint,local_addr:bound_endpoint
             //     Ok::<(IpEndpoint, IpEndpoint), Errno>((socket.local_endpoint().unwrap(),socket.remote_endpoint().unwrap()))
             // }).unwrap();
+            log::trace!("[tcp_connect]");
             let (local_endpoint, remote_endpoint) =
                 SOCKET_SET.with_socket_mut::<_, tcp::Socket, Result<(IpEndpoint, IpEndpoint), Errno>>(handle, |socket| {
                     socket
