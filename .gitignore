@@ -23,3 +23,7 @@ user/vendor/
 testsuits-for-oskernel/
 os/.cargo/
 user/.cargo/
+./disk.img
+./disk-la.img
+./kernel-la
+./kernel

@@ -29,12 +29,11 @@ pub fn console_getchar() -> usize {
     }
 }
 
-pub fn shutdown() -> ! {
+pub fn shutdown(fauilure: bool) -> ! {
     println!("Shutdown...");
-    loop {}
     // // 电源管理模块设置为s5状态，软关机
-    // unsafe {
-    //     ((0x1FE27000 + 0x14) as *mut u32).write_volatile(0b1111 << 10);
-    // }
+    unsafe {
+        (0x100e_001c as *mut u8).write_volatile(0x34);
+    }
     panic!("Unreachable in shutdown");
 }

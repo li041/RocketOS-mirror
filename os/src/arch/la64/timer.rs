@@ -16,10 +16,10 @@ impl TimeSpec {
     pub fn new_machine_time() -> Self {
         log::trace!("new machine time");
         // new a time spec with machine time
-        let current_time = get_time_ms();
+        let current_time = get_time_us();
         Self {
-            sec: current_time / 1000,
-            nsec: (current_time % 1000) * 1000000,
+            sec: current_time / 1000000,
+            nsec: (current_time % 1000000) * 1000,
         }
     }
     pub fn new_wall_time() -> Self {
@@ -27,16 +27,16 @@ impl TimeSpec {
         // let rtc_ticks = unsafe { read_volatile(base.byte_add(SYS_RTCREAD0) as *const u32) as u64 };
         // let sec = rtc_ticks / LS7A_RTC_FREQ; // 转换为秒
         // let nsec = (rtc_ticks % LS7A_RTC_FREQ) * 1000000000 / LS7A_RTC_FREQ; // 转换为纳秒
-        let mut date_time = TimeSpec::from(&unsafe { read_rtc() });
+        // let mut date_time = TimeSpec::from(&unsafe { read_rtc() });
         // let mut time_spec = TimeSpec::default();
+        let mut base_time = TimeSpec {
+            sec: 1_757_088_000,
+            nsec: 0,
+        };
         let current_time = get_time_ms();
-        date_time.nsec += (current_time % 1000) * 1000000;
-        if date_time.nsec >= 1_000_000_000 {
-            date_time.sec += 1;
-            date_time.nsec -= 1_000_000_000;
-        }
-        date_time.sec += current_time / 1000;
-        date_time
+        base_time.nsec += (current_time % 1000) * 1000000;
+        base_time.sec += current_time / 1000;
+        base_time
     }
     pub fn from_nanos(nanos: usize) -> Self {
         let sec = nanos / 1_000_000_000;
@@ -56,11 +56,14 @@ impl TimeVal {
         }
     }
     pub fn new_wall_time() -> Self {
-        let mut time_val = TimeVal::default();
+        let mut base_time = TimeVal {
+            sec: 1_757_088_000,
+            usec: 0,
+        };
         let current_time = get_time_ms();
-        time_val.sec = current_time / 1000;
-        time_val.usec = (current_time % 1000) * 1000;
-        time_val
+        base_time.sec = current_time / 1000;
+        base_time.usec = (current_time % 1000) * 1000;
+        base_time
     }
 }
 
@@ -93,6 +96,22 @@ pub fn get_time_ms() -> usize {
     unsafe {
         debug_assert!(CLOCK_FREQ != 0, "CLOCK_FREQ is not initialized");
         get_time() / (CLOCK_FREQ / MSEC_PER_SEC)
+    }
+}
+
+pub fn get_time_us() -> usize {
+    log::trace!("get_time_us");
+    unsafe {
+        debug_assert!(CLOCK_FREQ != 0, "CLOCK_FREQ is not initialized");
+        get_time() / (CLOCK_FREQ / 1000000)
+    }
+}
+
+pub fn get_time_ns() -> usize {
+    log::trace!("get_time_ns");
+    unsafe {
+        debug_assert!(CLOCK_FREQ != 0, "CLOCK_FREQ is not initialized");
+        get_time() * (1_000_000_000 / CLOCK_FREQ)
     }
 }
 

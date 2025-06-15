@@ -5,6 +5,7 @@ use core::{
 
 pub const TICKS_PER_SEC: usize = 100;
 pub const MSEC_PER_SEC: usize = 1000;
+pub const USEC_PER_SEC: usize = 1_000_000;
 
 #[derive(Clone, Copy, Debug, Default)]
 #[repr(C)]

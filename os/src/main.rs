@@ -141,6 +141,7 @@ pub fn rust_main() -> ! {
     use arch::{
         bootstrap_init,
         drivers::pci,
+        sbi::shutdown,
         trap::{
             self,
             timer::{enable_timer_interrupt, set_next_trigger},

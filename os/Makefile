@@ -77,6 +77,7 @@ else ifeq ($(ARCH), loongarch64)
     QEMU_ARGS = 	-kernel $(KERNEL_ELF) -m $(MEM_SIZE) -nographic \
                     -smp 1\
                     -machine virt \
+                    -rtc base=utc \
                     -no-reboot \
                     -drive file=$(FS),if=none,format=raw,id=x0 \
                     -device virtio-blk-pci,drive=x0 \
@@ -119,6 +120,9 @@ build: move-cargo
 	
 run: build 
 	$(QEMU_CMD) $(QEMU_ARGS)
+
+bench: build 
+	time $(QEMU_CMD) $(QEMU_ARGS) 2>&1 | tee qemu_output.log
 
 clean:
 	@$(shell which cargo)  clean

@@ -518,9 +518,9 @@ pub fn clean_dentry_cache() {
     let mut cache_map = cache.cache.write(); // 需要写锁来删除
     let mut lru = cache.lru_list.lock();
 
-    // if lru.len() < 100 {
-    //     return;
-    // }
+    if lru.len() < 100 {
+        return;
+    }
 
     for name in lru.iter() {
         if let Some(dentry) = cache_map.get(name) {

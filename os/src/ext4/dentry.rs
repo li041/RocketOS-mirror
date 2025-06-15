@@ -59,7 +59,7 @@ impl Ext4DirEntry {
         buf[4..6].copy_from_slice(&self.rec_len.to_le_bytes());
         buf[6] = self.name_len;
         buf[7] = self.file_type;
-        buf[8..(8 + self.name_len as usize)].copy_from_slice(&self.name[..]);
+        buf[8..(8 + self.name_len as usize)].copy_from_slice(&self.name[..self.name_len as usize]);
     }
     // Convert the name field to a String
     pub fn get_name(&self) -> String {

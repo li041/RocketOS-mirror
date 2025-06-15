@@ -163,3 +163,8 @@ pub fn getcwd() -> String {
         .trim_end_matches('\0')
         .to_string()
 }
+
+pub fn shutdown() -> ! {
+    sys_shutdown();
+    loop {}
+}

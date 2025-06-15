@@ -102,12 +102,16 @@ pub fn sys_get_time() -> isize {
     syscall(SYSCALL_GET_TIME, [0, 0, 0, 0, 0, 0])
 }
 
-
-pub fn sys_socketpair(  domain: usize,
+pub fn sys_socketpair(
+    domain: usize,
     sockettype: usize,
     protocol: usize,
-    socketfds: *mut i32)->isize {
-    syscall(SYSCALL_SOCKETPAIR, [domain,sockettype,protocol,socketfds as usize,0,0])
+    socketfds: *mut i32,
+) -> isize {
+    syscall(
+        SYSCALL_SOCKETPAIR,
+        [domain, sockettype, protocol, socketfds as usize, 0, 0],
+    )
 }
 
 pub fn sys_getpid() -> isize {
@@ -152,4 +156,8 @@ pub fn sys_waitpid(pid: isize, exit_code: *mut i32) -> isize {
         SYSCALL_WAITPID,
         [pid as usize, exit_code as usize, 0, 0, 0, 0],
     )
+}
+
+pub fn sys_shutdown() -> isize {
+    syscall(666, [0, 0, 0, 0, 0, 0])
 }
