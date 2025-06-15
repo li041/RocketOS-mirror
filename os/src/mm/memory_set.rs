@@ -576,43 +576,50 @@ impl MemorySet {
     /// Todo: elf_data是完整的, 还要lazy_allocation?
     pub fn from_elf_lazily(
         mut elf_file: Arc<dyn FileOp>,
-        mut elf_data: Vec<u8>,
         argv: &mut Vec<String>,
-    ) -> (Self, usize, usize, usize, Vec<AuxHeader>) {
+    ) -> Result<(Self, usize, usize, usize, Vec<AuxHeader>), Errno> {
         #[cfg(target_arch = "riscv64")]
         let mut memory_set = Self::from_global();
         #[cfg(target_arch = "loongarch64")]
         let mut memory_set = Self::new_bare();
 
+        // 判断加载的是否为.sh文件
+        let mut sh_head = vec![0u8; 2];
+        elf_file.pread(&mut sh_head, 0)?;
+
         // 处理 .sh 文件
         if argv.len() > 0 {
             let file_name = &argv[0];
             // 文件后缀是.sh或者file_data是#!开头
-            if file_name.ends_with(".sh")
-                || elf_data.starts_with(b"#!")
-                || file_name == "/tmp/hello"
+            if file_name.ends_with(".sh") || sh_head.starts_with(b"#!") || file_name == "/tmp/hello"
             {
                 let prepend_args = vec![String::from("/musl/busybox"), String::from("sh")];
                 argv.splice(0..0, prepend_args);
                 if let Ok(busybox) = path_openat("/musl/busybox", OpenFlags::empty(), AT_FDCWD, 0) {
-                    elf_data = busybox.read_all();
                     elf_file = busybox;
                 }
             }
         }
-        // 创建`TaskContext`时使用
+
+        // 为了每次仅读取load段中的内容，因此以下全部改为手动解析
+        let mut elf_head = vec![0u8; 64];
+        elf_file.pread(&mut elf_head, 0)?;
+        let ph_offset = u64::from_le_bytes(elf_head[32..40].try_into().unwrap());
+        let ph_count = u16::from_le_bytes(elf_head[56..58].try_into().unwrap());
+        let ph_entsize = u16::from_le_bytes(elf_head[54..56].try_into().unwrap());
+
+        // 只读取头部信息
+        let elf = xmas_elf::ElfFile::new(&elf_head).unwrap();
+
+        // 只有解析elf头部信息时可以使用库了
         let pgtbl_ppn = memory_set.page_table.token();
-        // map program segments of elf, with U flag
-        let elf = xmas_elf::ElfFile::new(&elf_data).unwrap();
         let elf_header = elf.header;
         let magic = elf_header.pt1.magic;
         assert_eq!(magic, [0x7f, 0x45, 0x4c, 0x46], "invalid elf!");
-        let ph_count = elf_header.pt2.ph_count();
-        let ph_entsize = elf_header.pt2.ph_entry_size() as usize;
         let mut entry_point = elf_header.pt2.entry_point() as usize;
         let mut aux_vec: Vec<AuxHeader> = Vec::with_capacity(64);
-
         let mut ph_va = 0;
+
         /* 映射程序头 */
         // 程序头表在内存中的起始虚拟地址
         // 程序头表一般是从LOAD段(且是代码段)开始
@@ -620,13 +627,28 @@ impl MemorySet {
         let mut need_dl: bool = false;
         let mut first_load: bool = true;
 
+        // 读取程序头内容
+        let ph_total_size = ph_count * ph_entsize;
+        let ph_data = {
+            let mut ph_data = vec![0u8; ph_total_size as usize];
+            elf_file.pread(&mut ph_data, ph_offset as usize)?;
+            ph_data
+        };
+
+        // 手动解析程序头
         for i in 0..ph_count {
-            // 程序头部的类型是Load, 代码段或数据段
-            let ph = elf.program_header(i).unwrap();
-            let ph_type = ph.get_type().unwrap();
-            if ph_type == Type::Load {
-                let start_va: VirtAddr = (ph.virtual_addr() as usize).into();
-                let end_va: VirtAddr = (ph.virtual_addr() as usize + ph.mem_size() as usize).into();
+            let base = (i * ph_entsize) as usize;
+            let ph_type = u32::from_le_bytes(ph_data[base..base + 4].try_into().unwrap());
+            let ph_flags = u32::from_le_bytes(ph_data[base + 4..base + 8].try_into().unwrap());
+            let ph_offset = u64::from_le_bytes(ph_data[base + 8..base + 16].try_into().unwrap());
+            let ph_vaddr = u64::from_le_bytes(ph_data[base + 16..base + 24].try_into().unwrap());
+            let ph_filesz = u64::from_le_bytes(ph_data[base + 32..base + 40].try_into().unwrap());
+            let ph_memsz = u64::from_le_bytes(ph_data[base + 40..base + 48].try_into().unwrap());
+
+            if ph_type == 1 {
+                // PT_LOAD
+                let start_va: VirtAddr = (ph_vaddr as usize).into();
+                let end_va: VirtAddr = (ph_vaddr as usize + ph_memsz as usize).into();
                 if first_load {
                     // 这里是第一个LOAD段, 需要计算phdr的值
                     ph_va = start_va.0 + elf_header.pt2.ph_offset() as usize;
@@ -635,14 +657,14 @@ impl MemorySet {
 
                 // 注意用户要带U标志
                 let mut map_perm = MapPermission::U;
-                let ph_flags = ph.flags();
-                if ph_flags.is_read() {
+                let ph_flags = ph_flags;
+                if ph_flags & 0x4 != 0 {
                     map_perm |= MapPermission::R;
                 }
-                if ph_flags.is_write() {
+                if ph_flags & 0x2 != 0 {
                     map_perm |= MapPermission::W;
                 }
-                if ph_flags.is_execute() {
+                if ph_flags & 0x1 != 0 {
                     map_perm |= MapPermission::X;
                 }
                 let vpn_range = VPNRange::new(start_va.floor(), end_va.ceil());
@@ -657,35 +679,31 @@ impl MemorySet {
                     map_perm,
                 );
                 // 如果只读段, 且file_size与mem_size相等(无需填充), 且直接使用页缓存映射
-                if !map_perm.contains(MapPermission::W) && ph.file_size() == ph.mem_size() {
+                if !map_perm.contains(MapPermission::W) && ph_filesz == ph_memsz {
                     let mut map_area =
                         MapArea::new(vpn_range, MapType::FilebeRO, map_perm, None, 0, false);
                     // 直接使用页缓存映射只读段
                     let vpn_start = vpn_range.get_start().0;
                     for vpn in vpn_range {
-                        let offset = ph.offset() as usize + (vpn.0 - vpn_start) * PAGE_SIZE;
+                        let offset = ph_offset as usize + (vpn.0 - vpn_start) * PAGE_SIZE;
                         let page = elf_file.get_page(offset).expect("get page failed");
                         memory_set.page_table.map(vpn, page.ppn(), map_perm.into());
                         map_area.pages.insert(vpn, page);
                     }
                     memory_set.areas.insert(vpn_range.get_start(), map_area);
                 } else {
+                    let mut load_data = vec![0u8; ph_filesz as usize];
+                    elf_file.pread(&mut load_data, ph_offset as usize)?;
                     // 采用Framed + 直接拷贝数据到匿名页
                     let map_area =
                         MapArea::new(vpn_range, MapType::Framed, map_perm, None, 0, false);
-                    memory_set.push_with_offset(
-                        map_area,
-                        Some(
-                            &elf_data
-                                [ph.offset() as usize..(ph.offset() + ph.file_size()) as usize],
-                        ),
-                        map_offset,
-                    );
+                    memory_set.push_with_offset(map_area, Some(&load_data), map_offset);
                 }
             }
 
             // 判断是否需要动态链接
-            if ph_type == Type::Interp {
+            if ph_type == 3 {
+                // PT_INTERP
                 need_dl = true;
             }
         }
@@ -705,7 +723,7 @@ impl MemorySet {
         // 程序头表中元素大小
         aux_vec.push(AuxHeader {
             aux_type: AT_PHENT,
-            value: ph_entsize,
+            value: ph_entsize as usize,
         });
 
         // 程序头表中元素个数
@@ -730,47 +748,114 @@ impl MemorySet {
         // 需要动态链接
         if need_dl {
             log::warn!("[from_elf] need dynamic link");
-            // 获取动态链接器的路径
-            let section = elf.find_section_by_name(".interp").unwrap();
-            let mut interpreter = String::from_utf8(section.raw_data(&elf).to_vec()).unwrap();
-            interpreter = interpreter
-                .strip_suffix("\0")
-                .unwrap_or(&interpreter)
-                .to_string();
-            log::info!("[from_elf] interpreter path: {}", interpreter);
 
-            let interps = vec![interpreter.clone()];
+            // 获取节头信息
+            let sh_offset = u64::from_le_bytes(elf_head[40..48].try_into().unwrap()) as usize;
+            let sh_entsize = u16::from_le_bytes(elf_head[58..60].try_into().unwrap()) as usize;
+            let sh_num = u16::from_le_bytes(elf_head[60..62].try_into().unwrap()) as usize;
+            let sh_str_index = u16::from_le_bytes(elf_head[62..64].try_into().unwrap()) as usize;
 
-            for interp in interps.iter() {
+            // 读取节头表
+            let mut sh_table = vec![0u8; sh_num * sh_entsize];
+            elf_file.pread(&mut sh_table, sh_offset)?;
+
+            // 获取节名称字符串表（即 .shstrtab 节）的位置
+            let strtab_entry =
+                &sh_table[sh_str_index * sh_entsize..(sh_str_index + 1) * sh_entsize];
+            let strtab_off = u64::from_le_bytes(strtab_entry[24..32].try_into().unwrap()) as usize;
+            let strtab_size = u64::from_le_bytes(strtab_entry[32..40].try_into().unwrap()) as usize;
+
+            let mut strtab_data = vec![0u8; strtab_size];
+            elf_file.pread(&mut strtab_data, strtab_off)?;
+
+            // 遍历所有节头，寻找名称为 ".interp" 的节
+            let mut interp_path = None;
+
+            for i in 0..sh_num {
+                let sh = &sh_table[i * sh_entsize..(i + 1) * sh_entsize];
+                let name_off = u32::from_le_bytes(sh[0..4].try_into().unwrap()) as usize;
+                let name = {
+                    let end = strtab_data[name_off..]
+                        .iter()
+                        .position(|&b| b == 0)
+                        .unwrap();
+                    String::from_utf8(strtab_data[name_off..name_off + end].to_vec()).unwrap()
+                };
+
+                if name == ".interp" {
+                    let offset = u64::from_le_bytes(sh[24..32].try_into().unwrap()) as usize;
+                    let size = u64::from_le_bytes(sh[32..40].try_into().unwrap()) as usize;
+                    let mut buf = vec![0u8; size];
+                    elf_file.pread(&mut buf, offset)?;
+                    interp_path = Some(
+                        String::from_utf8(buf)
+                            .unwrap()
+                            .trim_end_matches('\0')
+                            .to_string(),
+                    );
+                    break;
+                }
+            }
+
+            if let Some(interpreter) = interp_path {
                 // 加载动态链接器
-                if let Ok(interpreter) = path_openat(&interp, OpenFlags::empty(), AT_FDCWD, 0) {
+                if let Ok(interp_file) = path_openat(&interpreter, OpenFlags::empty(), AT_FDCWD, 0)
+                {
                     log::info!("[from_elf] interpreter open success");
-                    let interp_data = interpreter.read_all();
-                    let interp_elf = xmas_elf::ElfFile::new(interp_data.as_slice()).unwrap();
-                    let interp_head = interp_elf.header;
-                    let interp_ph_count = interp_head.pt2.ph_count();
-                    entry_point = interp_head.pt2.entry_point() as usize + DL_INTERP_OFFSET;
-                    for i in 0..interp_ph_count {
-                        // 程序头部的类型是Load, 代码段或数据段
-                        let ph = interp_elf.program_header(i).unwrap();
-                        if ph.get_type().unwrap() == Type::Load {
-                            let start_va: VirtAddr =
-                                (ph.virtual_addr() as usize + DL_INTERP_OFFSET).into();
-                            let end_va: VirtAddr = (ph.virtual_addr() as usize
-                                + DL_INTERP_OFFSET
-                                + ph.mem_size() as usize)
-                                .into();
+
+                    let mut interp_head = vec![0u8; 64];
+                    interp_file.pread(&mut interp_head, 0)?;
+                    let interp_phoff =
+                        u64::from_le_bytes(interp_head[32..40].try_into().unwrap()) as usize;
+                    let interp_phentsize =
+                        u16::from_le_bytes(interp_head[54..56].try_into().unwrap()) as usize;
+                    let interp_phnum =
+                        u16::from_le_bytes(interp_head[56..58].try_into().unwrap()) as usize;
+
+                    // 读取程序头内容
+                    let inter_ph_total_size = interp_phnum * interp_phentsize;
+                    let interp_data = {
+                        let mut interp_data = vec![0u8; inter_ph_total_size as usize];
+                        interp_file.pread(&mut interp_data, interp_phoff as usize)?;
+                        interp_data
+                    };
+
+                    entry_point = u64::from_le_bytes(interp_head[24..32].try_into().unwrap())
+                        as usize
+                        + DL_INTERP_OFFSET;
+                    for i in 0..interp_phnum {
+                        let base = i * interp_phentsize;
+                        let p_type =
+                            u32::from_le_bytes(interp_data[base..base + 4].try_into().unwrap());
+                        let p_flags =
+                            u32::from_le_bytes(interp_data[base + 4..base + 8].try_into().unwrap());
+                        let p_offset = u64::from_le_bytes(
+                            interp_data[base + 8..base + 16].try_into().unwrap(),
+                        ) as usize;
+                        let p_vaddr = u64::from_le_bytes(
+                            interp_data[base + 16..base + 24].try_into().unwrap(),
+                        ) as usize;
+                        let p_filesz = u64::from_le_bytes(
+                            interp_data[base + 32..base + 40].try_into().unwrap(),
+                        ) as usize;
+                        let p_memsz = u64::from_le_bytes(
+                            interp_data[base + 40..base + 48].try_into().unwrap(),
+                        ) as usize;
+
+                        if p_type == 1 {
+                            let start_va: VirtAddr = (p_vaddr as usize + DL_INTERP_OFFSET).into();
+                            let end_va: VirtAddr =
+                                (p_vaddr as usize + DL_INTERP_OFFSET + p_memsz as usize).into();
 
                             // 注意用户要带U标志
                             let mut map_perm = MapPermission::U;
-                            let ph_flags = ph.flags();
-                            if ph_flags.is_read() {
+                            if p_flags & 0x4 != 0 {
                                 map_perm |= MapPermission::R;
                             }
-                            if ph_flags.is_write() {
+                            if p_flags & 0x2 != 0 {
                                 map_perm |= MapPermission::W;
                             }
-                            if ph_flags.is_execute() {
+                            if p_flags & 0x1 != 0 {
                                 map_perm |= MapPermission::X;
                             }
                             let vpn_range = VPNRange::new(start_va.floor(), end_va.ceil());
@@ -783,14 +868,31 @@ impl MemorySet {
                                 start_va.0,
                                 end_va.0
                             );
-                            memory_set.push_with_offset(
-                                map_area,
-                                Some(
-                                    &interp_data[ph.offset() as usize
-                                        ..(ph.offset() + ph.file_size()) as usize],
-                                ),
-                                map_offset,
-                            );
+                            if !map_perm.contains(MapPermission::W) && p_filesz == p_memsz {
+                                let mut map_area = MapArea::new(
+                                    vpn_range,
+                                    MapType::FilebeRO,
+                                    map_perm,
+                                    None,
+                                    0,
+                                    false,
+                                );
+                                // 直接使用页缓存映射只读段
+                                let vpn_start = vpn_range.get_start().0;
+                                for vpn in vpn_range {
+                                    let offset =
+                                        ph_offset as usize + (vpn.0 - vpn_start) * PAGE_SIZE;
+                                    let page =
+                                        interp_file.get_page(offset).expect("get page failed");
+                                    memory_set.page_table.map(vpn, page.ppn(), map_perm.into());
+                                    map_area.pages.insert(vpn, page);
+                                }
+                                memory_set.areas.insert(vpn_range.get_start(), map_area);
+                            } else {
+                                let mut load_data = vec![0u8; p_filesz as usize];
+                                interp_file.pread(&mut load_data, p_offset as usize)?;
+                                memory_set.push_with_offset(map_area, Some(&load_data), map_offset);
+                            }
                         }
                     }
                     // 动态链接器的基址
@@ -801,6 +903,8 @@ impl MemorySet {
                 } else {
                     log::error!("[from_elf] interpreter open failed");
                 }
+            } else {
+                log::error!("[from_elf] interpreter not found");
             }
         } else {
             log::warn!("[from_elf] static link");
@@ -836,7 +940,7 @@ impl MemorySet {
 
         log::error!("[from_elf] entry_point: {:#x}", entry_point);
 
-        return (memory_set, pgtbl_ppn, ustack_top, entry_point, aux_vec);
+        return Ok((memory_set, pgtbl_ppn, ustack_top, entry_point, aux_vec));
     }
 
     #[allow(unused)]

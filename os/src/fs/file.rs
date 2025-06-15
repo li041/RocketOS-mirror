@@ -203,6 +203,11 @@ impl FileOp for File {
         Ok(read_size)
     }
     fn pread<'a>(&'a self, buf: &'a mut [u8], offset: usize) -> SyscallRet {
+        log::info!(
+            "File::pread: offset: {}, buf_len: {}",
+            offset,
+            buf.len()
+        );
         let read_size = self.inner_handler(|inner| inner.inode.read(offset, buf));
         Ok(read_size)
     }

@@ -607,14 +607,13 @@ impl Task {
         self: &Arc<Self>,
         exe_path: String,
         elf_file: Arc<dyn FileOp>,
-        elf_data: &[u8],
         mut args_vec: Vec<String>,
         envs_vec: Vec<String>,
-    ) {
+    ) -> SyscallRet {
         log::info!("[kernel_execve] task{} do execve ...", self.tid());
         // 创建地址空间
         let (mut memory_set, _satp, ustack_top, entry_point, aux_vec) =
-            MemorySet::from_elf_lazily(elf_file, elf_data.to_vec(), &mut args_vec);
+            MemorySet::from_elf_lazily(elf_file, &mut args_vec)?;
         // 更新页表
         memory_set.activate();
         // 更新exe_path
@@ -703,6 +702,8 @@ impl Task {
             self.tid(),
             self.kstack()
         );
+
+        Ok(0)
     }
 
     // 判断当前任务是否为进程

@@ -251,13 +251,13 @@ pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> Sy
     // OpenFlags::empty() = RDONLY = 0, 以只读方式打开文件
     match path_openat(&path, OpenFlags::empty(), AT_FDCWD, 0) {
         Ok(file) => {
-            let all_data = file.read_all();
-            if all_data.is_empty() {
-                log::error!("[sys_execve] file {} is empty", path);
-                return Err(Errno::ENOEXEC);
-            }
+            // let all_data = file.read_all();
+            // if all_data.is_empty() {
+            //     log::error!("[sys_execve] file {} is empty", path);
+            //     return Err(Errno::ENOEXEC);
+            // }
             let absolute_path = file.get_path().dentry.absolute_path.clone();
-            task.kernel_execve_lazily(absolute_path, file, all_data.as_slice(), args_vec, envs_vec);
+            task.kernel_execve_lazily(absolute_path, file, args_vec, envs_vec)?;
             Ok(0)
         }
         Err(err) if err == Errno::ENOENT && !path.starts_with("/") => {
