@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-30 16:26:05
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-15 12:46:26
+ * @LastEditTime: 2025-06-15 16:38:19
  * @FilePath: /RocketOS_netperfright/os/src/net/mod.rs
  * @Description: net mod for interface wrapper,socketset
  *
@@ -133,8 +133,11 @@ pub fn init_la<T: Transport + 'static>(net_device: Option<VirtioNetDevice<32, Ha
     //初始化网卡
     //需要添加这个trace 否则会panic在uninit lazyinit
     log::trace!("[init_la]");
+    log::trace!("[init_la]");
+    log::trace!("[init_la]");
+    log::trace!("[init_la]");
     SOCKET_SET.init_once(SocketSetWrapper::new());
-    println!("[init_la]socketset init complete");
+    log::trace!("[init_la]");
     if let Some(dev) = net_device {
         log::error!("[init_net]:begin init virtionetdevice");
         let ether_addr = dev.mac_address();

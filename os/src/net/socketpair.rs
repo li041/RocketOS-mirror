@@ -108,7 +108,23 @@ impl FileOp for BufferEnd {
 
     fn read<'a>(&'a self, buf: &'a mut [u8]) -> SyscallRet {
         debug_assert!(self.readable());
+        //检查对端是否打开
+        let mut guard= self.read_buf.lock();
         let nonblock = self.flags.load(Ordering::Relaxed) & OpenFlags::O_NONBLOCK.bits() != 0;
+        if guard.write_end.is_none(){
+            //如果没有
+            if nonblock {
+                return Err(Errno::EAGAIN);
+            }
+           guard.add_waiter(current_task().tid());
+           drop(guard);
+            if wait() == -1 {
+                return Err(Errno::ERESTARTSYS);
+            }
+        }else {
+            drop(guard);
+        }
+        
         loop {
             let mut ring = self.read_buf.lock();
             if ring.status == RingBufferStatus::EMPTY {
@@ -135,6 +151,21 @@ impl FileOp for BufferEnd {
     fn write<'a>(&'a self, buf: &'a [u8]) -> SyscallRet {
         debug_assert!(self.writable());
         let nonblock = self.flags.load(Ordering::Relaxed) & OpenFlags::O_NONBLOCK.bits() != 0;
+        let mut guard= self.write_buf.lock();
+        let nonblock = self.flags.load(Ordering::Relaxed) & OpenFlags::O_NONBLOCK.bits() != 0;
+        if guard.read_end.is_none(){
+            //如果没有
+            if nonblock {
+                return Err(Errno::EAGAIN);
+            }
+           guard.add_waiter(current_task().tid());
+           drop(guard);
+            if wait() == -1 {
+                return Err(Errno::ERESTARTSYS);
+            }
+        }else {
+            drop(guard);
+        }
         loop {
             let mut ring = self.write_buf.lock();
             // 对端关闭检查，触发 SIGPIPE

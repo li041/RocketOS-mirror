@@ -26,7 +26,9 @@ use crate::{
 fn virtio_device(transport: impl Transport + 'static) {
     match transport.device_type() {
         DeviceType::Block => virtio_blk(transport),
-        DeviceType::Network => virtio_net(transport),
+        DeviceType::Network => {
+            log::trace!("[initlize net]");
+            virtio_net(transport)},
         t => log::warn!("Unsupported VirtIO device type {:?}", t),
     }
 }
@@ -37,9 +39,10 @@ fn virtio_blk<T: Transport>(transport: T) {
     assert!(!blk.readonly());
 }
 //在enumerate_pci过来初始化网络
+#[cfg(target_arch = "loongarch64")]
 fn virtio_net<T: Transport + 'static>(transport: T) {
-    println!("[virtio_net] pci virtio_net device init");
-    init_net_dev_la(transport);
+    log::trace!("[virtio_net] pci virtio_net device init");
+    crate::drivers::net::init_net_dev_la(transport);
 }
 
 // 读取设备树, 识别VirtIO设备
