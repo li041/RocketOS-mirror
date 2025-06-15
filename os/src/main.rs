@@ -174,4 +174,5 @@ pub fn dump_system_info() {
     info_allocator();
     // 打印dentry缓存信息
     dump_dentry_cache();
+    dump_scheduler();
 }

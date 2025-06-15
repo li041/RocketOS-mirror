@@ -26,7 +26,7 @@ const USER_HEAP_SIZE: usize = 32768;
 static mut HEAP_SPACE: [u8; USER_HEAP_SIZE] = [0; USER_HEAP_SIZE];
 
 #[global_allocator]
-static HEAP: LockedHeap<32> = LockedHeap::empty();
+static HEAP: LockedHeap<16> = LockedHeap::empty();
 
 #[alloc_error_handler]
 pub fn handle_alloc_error(layout: core::alloc::Layout) -> ! {
@@ -99,10 +99,7 @@ pub fn pipe(pipe: *mut i32, flags: i32) -> isize {
 pub fn chdir(path: &str) -> isize {
     sys_chdir(path)
 }
-pub fn socketpair(domain: usize,
-    sockettype: usize,
-    protocol: usize,
-    socketfds: *mut i32)->isize{
+pub fn socketpair(domain: usize, sockettype: usize, protocol: usize, socketfds: *mut i32) -> isize {
     sys_socketpair(domain, sockettype, protocol, socketfds)
 }
 

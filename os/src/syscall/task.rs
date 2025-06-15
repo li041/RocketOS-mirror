@@ -240,6 +240,9 @@ pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> Sy
     if path.len() >= NAME_MAX {
         return Err(Errno::ENAMETOOLONG);
     }
+    // if path.ends_with(".sh") {
+    //     dump_system_info();
+    // }
     // argv[0]是应用程序的名字
     // 后续元素是用户在命令行中输入的参数
     let mut args_vec = extract_cstrings(args)?;

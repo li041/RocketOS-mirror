@@ -45,7 +45,7 @@ impl PipeInode {
         inode_on_disk.set_mode(S_IFIFO);
         Arc::new(Self {
             inode_num,
-            buffer: Arc::new(Mutex::new(PipeRingBuffer::new())),
+            buffer: Arc::new(Mutex::new(PipeRingBuffer::new(RING_DEFAULT_BUFFER_SIZE))),
             inner: RwLock::new(PipeInodeInner { inode_on_disk }),
         })
     }
@@ -265,16 +265,17 @@ pub struct PipeRingBuffer {
 }
 
 impl PipeRingBuffer {
-    pub fn new() -> Self {
+    pub fn new(size: usize) -> Self {
         Self {
-            arr: vec![0u8; RING_DEFAULT_BUFFER_SIZE],
+            arr: vec![0u8; size],
             head: 0,
             tail: 0,
             status: RingBufferStatus::EMPTY,
             write_end: None,
             read_end: None,
             waiter: Vec::new(),
-            size: RING_DEFAULT_BUFFER_SIZE,
+            // size: RING_DEFAULT_BUFFER_SIZE,
+            size,
         }
     }
     #[allow(unused)]
