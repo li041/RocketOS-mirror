@@ -1162,18 +1162,18 @@ pub fn sys_pselect6(
         task.op_sig_pending_mut(|sig_pending| sig_pending.mask = sigset);
     }
     drop(task);
-    let mut set=0;
+    let mut set = 0;
     loop {
         log::trace!("[sys_pselect6]:loop");
-        //这里必须要yield否则会死机           
+        //这里必须要yield否则会死机
         yield_current_task();
-        set= 0;
+        set = 0;
         if readfditer.fdset.valid() {
             for fd in 0..readfditer.fds.len() {
                 log::trace!("[sys_pselect6] read fd: {}", readfditer.fds[fd]);
                 if readfditer.files[fd].r_ready() {
                     //e内核会根据嗅探的结果设置fdset的对应位为1
-                    log::trace!("[sys_pselect6] set read fd is {:?}",readfditer.fds[fd]);
+                    log::trace!("[sys_pselect6] set read fd is {:?}", readfditer.fds[fd]);
                     readfditer.fdset.set(readfditer.fds[fd]);
                     set += 1;
                 }
@@ -1245,7 +1245,7 @@ pub fn sys_pselect6(
         log::trace!("[loop]");
         yield_current_task();
     }
-    if set>0 {
+    if set > 0 {
         return Ok(set);
     }
     if readfds != 0 {

@@ -130,7 +130,8 @@ pub fn init_procfs(root_path: Arc<Path>) {
             parent_inode.create(dentry.clone(), osrelease_mode);
             // 现在dentry的inode指向/proc/sys/kernel/osrelease
             let inode = dentry.get_inode();
-            inode.write(0, b"6.6.87.1-microsoft-standard-WSL2");
+            let buf = b"6.6.87.1-microsoft-standard-WSL2";
+            inode.write(0, buf);
         }
         Err(e) => {
             panic!("create {} failed: {:?}", osrelease_path, e);

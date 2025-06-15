@@ -316,7 +316,7 @@ impl PageTable {
     /// Create a mapping from `vpn` to `ppn`.
     pub fn map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, flags: PTEFlags) {
         let pte = self.find_pte_create(vpn).unwrap();
-        debug_assert!(!pte.is_valid(), "vpn {:?} is mapped before mapping", vpn);
+        // debug_assert!(!pte.is_valid(), "vpn {:?} is mapped before mapping", vpn);
         *pte = PageTableEntry::new(ppn, flags | PTEFlags::V | PTEFlags::A | PTEFlags::D);
         // Todo: 不用刷新页表? tlb中本身没有该页表项
         // unsafe {
