@@ -1,7 +1,6 @@
 //! Implementation of [`FrameAllocator`] which
 //! controls all the frames in the operating system.
 use crate::fs::dentry::clean_dentry_cache;
-use crate::mutex::SpinNoIrqLock;
 use crate::utils::ceil_to_page_size;
 use crate::{arch::boards::qemu::MEMORY_END, arch::config::KERNEL_BASE};
 use alloc::vec::Vec;

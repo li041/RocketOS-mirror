@@ -1,5 +1,6 @@
 use alloc::vec;
 use core::any::Any;
+use spin::Mutex;
 
 use alloc::{sync::Arc, vec::Vec};
 use log::info;
@@ -9,7 +10,6 @@ use crate::{
     arch::{config::PAGE_SIZE_BITS, mm::copy_to_user},
     fs::dentry::LinuxDirent64,
     mm::Page,
-    mutex::SpinNoIrqLock,
     syscall::errno::{Errno, SyscallRet},
 };
 
@@ -21,7 +21,7 @@ use super::{
 
 // 普通文件
 pub struct File {
-    inner: SpinNoIrqLock<FileInner>,
+    inner: Mutex<FileInner>,
 }
 
 pub struct FileInner {
@@ -56,6 +56,9 @@ pub trait FileOp: Any + Send + Sync {
         unimplemented!();
     }
     fn get_page<'a>(&'a self, _page_offset: usize) -> Option<Arc<Page>> {
+        unimplemented!();
+    }
+    fn get_pages<'a>(&'a self, _page_offset: usize, _page_count: usize) -> Vec<Arc<Page>> {
         unimplemented!();
     }
     fn get_inode(&self) -> Arc<dyn InodeOp> {
@@ -141,7 +144,7 @@ impl File {
             0
         };
         Self {
-            inner: SpinNoIrqLock::new(FileInner {
+            inner: Mutex::new(FileInner {
                 offset,
                 path,
                 inode,
@@ -203,11 +206,7 @@ impl FileOp for File {
         Ok(read_size)
     }
     fn pread<'a>(&'a self, buf: &'a mut [u8], offset: usize) -> SyscallRet {
-        log::info!(
-            "File::pread: offset: {}, buf_len: {}",
-            offset,
-            buf.len()
-        );
+        log::info!("File::pread: offset: {}, buf_len: {}", offset, buf.len());
         let read_size = self.inner_handler(|inner| inner.inode.read(offset, buf));
         Ok(read_size)
     }
@@ -233,6 +232,12 @@ impl FileOp for File {
         let inode = self.inner_handler(|inner| inner.inode.clone());
         inode.get_page(page_aligned_offset >> PAGE_SIZE_BITS)
     }
+    fn get_pages<'a>(&'a self, page_aligned_offset: usize, page_count: usize) -> Vec<Arc<Page>> {
+        debug_assert!(page_aligned_offset % PAGE_SIZE == 0);
+        let inode = self.inner_handler(|inner| inner.inode.clone());
+        inode.get_pages(page_aligned_offset >> PAGE_SIZE_BITS, page_count)
+    }
+
     fn get_inode(&self) -> Arc<dyn InodeOp> {
         self.inner_handler(|inner| inner.inode.clone())
     }

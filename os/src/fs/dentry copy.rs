@@ -13,6 +13,7 @@ use spin::{Mutex, RwLock};
 
 use crate::{
     ext4::inode::{S_IFREG, S_ISGID, S_ISUID},
+    mutex::SpinNoIrqLock,
     syscall::errno::{Errno, SyscallRet},
     task::current_task,
     timer::TimeSpec,
@@ -292,12 +293,13 @@ pub fn chown(inode: &Arc<dyn InodeOp>, new_uid: u32, new_gid: u32) -> SyscallRet
 pub struct Dentry {
     pub absolute_path: String,
     pub flags: RwLock<DentryFlags>,
-    pub inner: Mutex<DentryInner>,
+    pub inner: SpinNoIrqLock<DentryInner>,
 }
 
 pub struct DentryInner {
     // None 表示该 dentry 未关联 inode
     pub inode: Option<Arc<dyn InodeOp>>,
+    // pub inode: Option<Arc<SpinNoIrqLock<OSInode>>>,
     pub parent: Option<Arc<Dentry>>,
     // chrildren 是一个哈希表, 用于存储子目录/文件, name不是绝对路径
     pub children: HashMap<String, Weak<Dentry>>,
@@ -338,7 +340,7 @@ impl Dentry {
         Self {
             absolute_path: String::new(),
             flags: RwLock::new(DentryFlags::empty()),
-            inner: Mutex::new(DentryInner::negative(None)),
+            inner: SpinNoIrqLock::new(DentryInner::negative(None)),
         }
     }
     pub fn new(
@@ -350,14 +352,14 @@ impl Dentry {
         Arc::new(Self {
             absolute_path,
             flags: RwLock::new(flags),
-            inner: Mutex::new(DentryInner::new(parent, inode)),
+            inner: SpinNoIrqLock::new(DentryInner::new(parent, inode)),
         })
     }
     pub fn negative(absolute_path: String, parent: Option<Arc<Dentry>>) -> Arc<Self> {
         Arc::new(Self {
             absolute_path,
             flags: RwLock::new(DentryFlags::DCACHE_MISS_TYPE),
-            inner: Mutex::new(DentryInner::negative(parent)),
+            inner: SpinNoIrqLock::new(DentryInner::negative(parent)),
         })
     }
     pub fn tmp(parent: Arc<Dentry>, inode: Arc<dyn InodeOp>) -> Arc<Self> {
@@ -366,7 +368,7 @@ impl Dentry {
         Arc::new(Self {
             absolute_path: tmp_path,
             flags: RwLock::new(DentryFlags::DCACHE_REGULAR_TYPE),
-            inner: Mutex::new(DentryInner::new(Some(parent), inode)),
+            inner: SpinNoIrqLock::new(DentryInner::new(Some(parent), inode)),
         })
     }
     // // 上层调用者保证由负目录项调用
@@ -514,38 +516,46 @@ pub fn insert_core_dentry(dentry: Arc<Dentry>) {
 pub fn clean_dentry_cache() {
     let cache = DENTRY_CACHE.read();
     let mut cache_map = cache.cache.write(); // 需要写锁来删除
+    let mut lru = cache.lru_list.lock();
 
-    if cache_map.len() < 100 {
+    if lru.len() < 100 {
         return;
     }
 
-    let keys_to_remove: Vec<String> = cache_map
-        .iter()
-        .filter_map(|(name, dentry)| {
+    for name in lru.iter() {
+        if let Some(dentry) = cache_map.get(name) {
             let strong_count = Arc::strong_count(dentry);
+            // println!(
+            //     "[DentryCache] Key: {}, Path: {:?}, Strong Count: {}, pages: {}",
+            //     name, dentry.absolute_path, strong_count, count
+            // );
+            if name.contains("iozone") {
+                // 特例处理, 保留 iozone*
+                continue;
+            }
             if strong_count == 1 {
                 // 没有其他强引用，可以安全移除
-                Some(name.clone())
-            } else {
-                None
+                cache_map.remove(name);
+                // println!("[DentryCache] Removed {} due to low strong count", name);
             }
-        })
-        .collect();
-    for key in keys_to_remove {
-        cache_map.remove(&key);
-        log::debug!("[DentryCache] Removed {} due to low strong count", key);
+        }
     }
+
+    // 清理掉 lru_list 中不再存在于 cache 的条目
+    lru.retain(|key| cache_map.contains_key(key));
 }
 
 pub fn dump_dentry_cache() {
     let cache = DENTRY_CACHE.read();
     let cache_map = cache.cache.read();
+    let lru = cache.lru_list.lock();
     let mut total_pages = 0;
 
     println!(
         "[DentryCache] Current dentry cache size: {}",
         cache_map.len()
     );
+    println!("[DentryCache] LRU list size: {}", lru.len());
 
     for (key, dentry) in cache_map.iter() {
         let strong_count = Arc::strong_count(dentry);
@@ -589,6 +599,8 @@ pub fn delete_dentry(dentry: Arc<Dentry>) {
 // 注意管理器中对于Dentry的管理应该是Weak
 pub struct DentryCache {
     cache: RwLock<HashMap<String, Arc<Dentry>>>,
+    // 用于LRU策略的列表
+    lru_list: Mutex<VecDeque<String>>,
     capacity: usize,
 }
 
@@ -596,13 +608,33 @@ impl DentryCache {
     fn new(capacity: usize) -> Self {
         DentryCache {
             cache: RwLock::new(HashMap::new()),
+            lru_list: Mutex::new(VecDeque::new()),
             capacity,
         }
     }
 
     fn get(&self, absolute_path: &str) -> Option<Arc<Dentry>> {
         let cache = self.cache.read();
+        let mut lru_list = self.lru_list.lock();
         if let Some(dentry) = cache.get(absolute_path) {
+            // 更新 LRU 列表
+            if let Some(pos) = lru_list.iter().position(|x| x == absolute_path) {
+                lru_list.remove(pos);
+            }
+            lru_list.push_back(absolute_path.to_string());
+            // 返回 dentry 的引用
+            // if let Some(dentry) = dentry.upgrade() {
+            //     return Some(dentry);
+            // } else {
+            //     // 如果 Weak 引用已经失效，则从缓存中移除
+            //     log::error!(
+            //         "[DentryCache] Weak reference to dentry {} has expired",
+            //         absolute_path
+            //     );
+            //     drop(cache);
+            //     let mut cache = self.cache.write();
+            //     cache.remove(absolute_path);
+            // }
             return Some(dentry.clone());
         }
         None
@@ -610,28 +642,30 @@ impl DentryCache {
 
     fn insert(&self, absolute_path: String, dentry: Arc<Dentry>) {
         let mut cache = self.cache.write();
-        // 如果已经存在，则更新
-        if cache.len() == self.capacity {
-            let mut key_to_remove = None;
-            for key in cache.keys() {
-                if let Some(oldest) = cache.get(key) {
-                    if Arc::strong_count(oldest) == 1 {
-                        key_to_remove = Some(key.clone());
-                        break; // 只移除一个即可
-                    }
-                }
-            }
+        let mut lru_list = self.lru_list.lock();
 
-            if let Some(key) = key_to_remove {
-                cache.remove(&key);
-                log::debug!("[DentryCache] Removed {} due to low strong count", key);
+        // 如果已经存在，则更新
+        if cache.contains_key(&absolute_path) {
+            if let Some(pos) = lru_list.iter().position(|x| x == &absolute_path) {
+                lru_list.remove(pos);
+            }
+        } else if cache.len() == self.capacity {
+            // 缓存已满，移除最旧的
+            if let Some(oldest) = lru_list.pop_front() {
+                cache.remove(&oldest);
             }
         }
+
         cache.insert(absolute_path.clone(), dentry);
+        lru_list.push_back(absolute_path);
     }
 
     fn remove(&self, absolute_path: &str) {
         let mut cache = self.cache.write();
+        let mut lru_list = self.lru_list.lock();
+        if let Some(pos) = lru_list.iter().position(|x| x == absolute_path) {
+            lru_list.remove(pos);
+        }
         cache.remove(absolute_path);
     }
 }

@@ -144,7 +144,7 @@ pub fn sys_clone(
     Ok(new_task_tid)
 }
 
-// pub const IGNOER_TEST: [&str; 40] = [
+// pub const IGNOER_TEST: &[&str] = &[
 //     /* 本身就不应该单独运行的 */
 //     "ltp/testcases/bin/add_ipv6addr",
 //     // "ltp/testcases/bin/ask_password.sh",
@@ -165,6 +165,7 @@ pub fn sys_clone(
 //     "ltp/testcases/bin/data",
 //     "ltp/testcases/bin/doio",
 //     "ltp/testcases/bin/acl1",
+//     "ltp/testcases/bin/hackbench",
 //     /* 由于OS原因, 先不跑的 */
 //     "ltp/testcases/bin/crash02",
 //     "ltp/testcases/bin/mmap1",
@@ -183,6 +184,7 @@ pub fn sys_clone(
 //     "ltp/testcases/bin/asapi_01",
 //     "ltp/testcases/bin/asapi_02",
 //     "ltp/testcases/bin/asapi_03",
+//     "ltp/testcases/bin/bind01",
 //     "ltp/testcases/bin/bind04",
 //     "ltp/testcases/bin/bind05",
 //     "ltp/testcases/bin/bind06",
@@ -197,7 +199,27 @@ pub fn sys_clone(
 //     "ltp/testcases/bin/execve03",
 //     "ltp/testcases/bin/fork09",
 //     "ltp/testcases/bin/fork14",
-//     // 需要check_envval
+//     "ltp/testcases/bin/fsx-linux",
+//     "ltp/testcases/bin/kill10",
+//     "ltp/testcases/bin/kill11",
+//     "ltp/testcases/bin/listen01",
+//     "ltp/testcases/bin/leapsec01",
+//     "ltp/testcases/bin/mmap3",
+//     "ltp/testcases/bin/pause01",
+//     "ltp/testcases/bin/pec_listener",
+//     "ltp/testcases/bin/sched_datafile",
+//     "ltp/testcases/bin/send02",
+//     "ltp/testcases/bin/setfsgid03",
+//     "ltp/testcases/bin/setfsgid03_16",
+//     "ltp/testcases/bin/setitimer01",
+//     "ltp/testcases/bin/setrlimit06",
+//     "ltp/testcases/bin/setpgid03",
+//     "ltp/testcases/bin/shm_test",
+//     "ltp/testcases/bin/shmat04",
+//     "ltp/testcases/bin/starvation",
+//     "ltp/testcases/bin/statx01",
+//     "ltp/testcases/bin/timed_forkbomb",
+//     // 需要check_envvak
 //     "ltp/testcases/bin/check_netem",
 //     "ltp/testcases/bin/check_setkey",
 // ];
@@ -208,27 +230,99 @@ pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> Sy
     // if path.starts_with("ltp/testcases/bin/") {
     //     if path.ends_with(".sh") {
     //         log::warn!("[sys_execve] ignore shell script: {}", path);
-    //         sys_exit(0);
+    //         sys_exit(666);
     //     }
     //     if path.ends_with("loop") {
     //         log::warn!("[sys_execve] ignore loop test: {}", path);
-    //         sys_exit(0);
+    //         sys_exit(666);
     //     }
     //     if path.starts_with("ltp/testcases/bin/dio") {
     //         log::warn!("[sys_execve] ignore dio test: {}", path);
-    //         sys_exit(0);
+    //         sys_exit(666);
     //     }
     //     if path.starts_with("ltp/testcases/bin/dirty") {
     //         log::warn!("[sys_execve] ignore dirty test: {}", path);
-    //         sys_exit(0);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/setsockopt") {
+    //         log::warn!("[sys_execve] ignore setsockopt test: {}", path);
+    //         sys_exit(666);
     //     }
     //     if path.starts_with("ltp/testcases/bin/fcntl") {
     //         log::warn!("[sys_execve] ignore fcntl test: {}", path);
-    //         sys_exit(0);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/crypto_user") {
+    //         log::warn!("[sys_execve] ignore crypto_user test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/fstatfs") {
+    //         log::warn!("[sys_execve] ignore crypto_user test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/ftest") {
+    //         log::warn!("[sys_execve] ignore crypto_user test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/ftruncate") {
+    //         log::warn!("[sys_execve] ignore ftruncate test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/memcg") {
+    //         log::warn!("[sys_execve] ignore memcg_subgroup test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/mmapstress") {
+    //         log::warn!("[sys_execve] ignore mmapstress test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/mmstress") {
+    //         log::warn!("[sys_execve] ignore mmstress test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/mtest") {
+    //         log::warn!("[sys_execve] ignore mount test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/pcrypt") {
+    //         log::warn!("[sys_execve] ignore pcrypt test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/pidns") {
+    //         log::warn!("[sys_execve] ignore pidns test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/pids") {
+    //         log::warn!("[sys_execve] ignore pids test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/ppoll") {
+    //         log::warn!("[sys_execve] ignore ppoll test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/proc") {
+    //         log::warn!("[sys_execve] ignore proc test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/pth") {
+    //         log::warn!("[sys_execve] ignore pth test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/setxattr") {
+    //         log::warn!("[sys_execve] ignore setxattr test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/shmt") {
+    //         log::warn!("[sys_execve] ignore shmt test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/tst") {
+    //         log::warn!("[sys_execve] ignore tst test: {}", path);
+    //         sys_exit(666);
     //     }
     //     if IGNOER_TEST.contains(&path.as_str()) {
     //         log::warn!("[sys_execve] ignore test: {}", path);
-    //         sys_exit(0);
+    //         sys_exit(666);
     //     }
     // }
     log::info!(
@@ -249,7 +343,7 @@ pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> Sy
     let envs_vec = extract_cstrings(envs)?;
     let task = current_task();
     // OpenFlags::empty() = RDONLY = 0, 以只读方式打开文件
-    match path_openat(&path, OpenFlags::empty(), AT_FDCWD, 0) {
+    match path_openat(&path, OpenFlags::empty(), AT_FDCWD, X_OK) {
         Ok(file) => {
             // let all_data = file.read_all();
             // if all_data.is_empty() {
@@ -640,7 +734,7 @@ pub fn sys_get_time(time_val_ptr: usize) -> SyscallRet {
     // unsafe {
     //     time_val_ptr.write_volatile(time_val);
     // }
-    copy_to_user(time_val_ptr, &time_val as *const TimeVal, 1).unwrap();
+    copy_to_user(time_val_ptr, &time_val as *const TimeVal, 1)?;
     Ok(0)
 }
 

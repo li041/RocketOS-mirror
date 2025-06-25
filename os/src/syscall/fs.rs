@@ -6,7 +6,7 @@ use alloc::string::{String, ToString};
 use virtio_drivers::PAGE_SIZE;
 
 use crate::arch::config::USER_MAX_VA;
-use crate::arch::timer::{get_time_ms, get_time_us};
+use crate::arch::timer::{get_time_ms, get_time_ns, get_time_us};
 use crate::ext4::dentry;
 use crate::ext4::inode::{S_IFREG, S_ISGID};
 use crate::fs::dentry::{chown, dentry_check_access, LinuxDirent64, F_OK, R_OK, W_OK, X_OK};
@@ -51,12 +51,12 @@ use crate::arch::mm::{copy_from_user, copy_to_user};
 use super::errno::SyscallRet;
 
 pub fn sys_lseek(fd: usize, offset: isize, whence: usize) -> SyscallRet {
-    log::info!(
-        "[sys_lseek] fd: {}, offset: {}, whence: {}",
-        fd,
-        offset,
-        whence
-    );
+    // log::info!(
+    //     "[sys_lseek] fd: {}, offset: {}, whence: {}",
+    //     fd,
+    //     offset,
+    //     whence
+    // );
     let task = current_task();
     let file = task.fd_table().get_file(fd);
     let whence = Whence::try_from(whence)?;
@@ -86,9 +86,9 @@ pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> SyscallRet {
         // let ret = file.read(unsafe { core::slice::from_raw_parts_mut(buf, len) });
         let mut ker_buf = vec![0u8; len];
         let read_len = file.read(&mut ker_buf)?;
-        if fd >= 3 {
-            log::info!("sys_read: fd: {}, len: {}", fd, len);
-        }
+        // if fd >= 3 {
+        //     log::info!("sys_read: fd: {}, len: {}", fd, len);
+        // }
         let ker_buf_ptr = ker_buf.as_ptr();
         // assert!(ker_buf_ptr != core::ptr::null());
         // 写回用户空间
@@ -270,13 +270,13 @@ pub fn sys_writev(fd: usize, iov_ptr: *const IoVec, iovcnt: usize) -> SyscallRet
 }
 
 pub fn sys_pread(fd: usize, buf: *mut u8, count: usize, offset: isize) -> SyscallRet {
-    log::info!(
-        "[sys_pread] fd: {}, buf: {:?}, count: {}, offset: {}",
-        fd,
-        buf,
-        count,
-        offset
-    );
+    // log::info!(
+    //     "[sys_pread] fd: {}, buf: {:?}, count: {}, offset: {}",
+    //     fd,
+    //     buf,
+    //     count,
+    //     offset
+    // );
     if fd > isize::MAX as usize {
         log::error!("[sys_pread] fd is negative: {}", fd);
         return Err(Errno::EBADF);
@@ -312,13 +312,13 @@ pub fn sys_pread(fd: usize, buf: *mut u8, count: usize, offset: isize) -> Syscal
 }
 
 pub fn sys_pwrite(fd: usize, buf: *const u8, count: usize, offset: isize) -> SyscallRet {
-    log::info!(
-        "[sys_pwrite] fd: {}, buf: {:?}, count: {}, offset: {}",
-        fd,
-        buf,
-        count,
-        offset
-    );
+    // log::info!(
+    //     "[sys_pwrite] fd: {}, buf: {:?}, count: {}, offset: {}",
+    //     fd,
+    //     buf,
+    //     count,
+    //     offset
+    // );
     if fd > isize::MAX as usize {
         log::error!("[sys_pwrite] fd is negative: {}", fd);
         return Err(Errno::EBADF);
@@ -339,10 +339,10 @@ pub fn sys_pwrite(fd: usize, buf: *const u8, count: usize, offset: isize) -> Sys
         }
         let mut ker_buf = vec![0u8; count];
         copy_from_user(buf, ker_buf.as_mut_ptr(), count)?;
-        log::warn!(
-            "[sys_pwrite] ker_buf: {:?}",
-            String::from_utf8(ker_buf.clone())
-        );
+        // log::warn!(
+        //     "[sys_pwrite] ker_buf: {:?}",
+        //     String::from_utf8(ker_buf.clone())
+        // );
         file.pwrite(&ker_buf, offset as usize)
     } else {
         log::error!("[sys_pwrite] fd {} not opened", fd);
@@ -1920,7 +1920,7 @@ pub fn sys_sendfile(
         len = in_file.read(&mut buf)?;
         in_file.seek(origin_offset as isize, Whence::SeekSet)?;
         // 将新的偏移量写回用户空间
-        copy_to_user(offset_ptr, &(offset + len + 1), 1).unwrap();
+        copy_to_user(offset_ptr, &(offset + len + 1), 1)?;
     }
     let ret = out_file.write(&buf[..len])?;
     log::info!("[sys_sendfile] ret: {}", ret);
@@ -2253,8 +2253,8 @@ pub fn sys_faccessat(fd: usize, pathname: *const u8, mode: i32, flags: i32) -> S
     dentry_check_access(&dentry, mode, use_effective)
 }
 
-pub fn sys_sync(fd: usize) -> SyscallRet {
-    log::info!("[sys_sync] fd: {}, Unimplemented", fd);
+pub fn sys_sync() -> SyscallRet {
+    log::info!("[sys_sync] Unimplemented");
     Ok(0)
 }
 

@@ -75,7 +75,7 @@ impl DevT {
     pub fn new_encode_dev(major: u32, minor: u32) -> Self {
         Self(((major as u64) << 20) | (minor as u64 & 0xFFFFF))
     }
-    pub fn new_encode_dev_old(major: u32, minor: u32)->Self{
+    pub fn new_encode_dev_old(major: u32, minor: u32) -> Self {
         Self(((major as u64) << 3) | (minor as u64 & 0xFFFFF))
     }
     /// 从dev_t中获取设备号
@@ -237,7 +237,7 @@ pub enum Resource {
 }
 
 impl TryFrom<i32> for Resource {
-    type Error = &'static str;
+    type Error = Errno;
 
     fn try_from(value: i32) -> Result<Self, Self::Error> {
         match value {
@@ -257,7 +257,7 @@ impl TryFrom<i32> for Resource {
             13 => Ok(Resource::NICE),
             14 => Ok(Resource::RTPRIO),
             15 => Ok(Resource::RTTIME),
-            _ => Err("invalid resource"),
+            _ => Err(Errno::EINVAL), // Invalid argument
         }
     }
 }

@@ -45,7 +45,6 @@ use crate::{
     arch::config::{DL_INTERP_OFFSET, KERNEL_BASE, PAGE_SIZE},
     fs::AT_FDCWD,
     index_list::IndexList,
-    mutex::SpinNoIrqLock,
     task::aux::AuxHeader,
 };
 use alloc::sync::Arc;
@@ -683,13 +682,28 @@ impl MemorySet {
                     let mut map_area =
                         MapArea::new(vpn_range, MapType::FilebeRO, map_perm, None, 0, false);
                     // 直接使用页缓存映射只读段
-                    let vpn_start = vpn_range.get_start().0;
-                    for vpn in vpn_range {
-                        let offset = ph_offset as usize + (vpn.0 - vpn_start) * PAGE_SIZE;
-                        let page = elf_file.get_page(offset).expect("get page failed");
-                        memory_set.page_table.map(vpn, page.ppn(), map_perm.into());
-                        map_area.pages.insert(vpn, page);
-                    }
+                    let vpn_start = vpn_range.get_start();
+                    // for vpn in vpn_range {
+                    //     let offset = ph_offset as usize + (vpn.0 - vpn_start.0) * PAGE_SIZE;
+                    //     let page = elf_file.get_page(offset).expect("get page failed");
+                    //     memory_set.page_table.map(vpn, page.ppn(), map_perm.into());
+                    //     map_area.pages.insert(vpn, page);
+                    // }
+                    let offset =
+                        ph_offset as usize + (vpn_start.0 - start_va.floor().0) * PAGE_SIZE;
+                    let pages = elf_file.get_pages(offset, vpn_range.get_end().0 - vpn_start.0);
+                    memory_set.page_table.map_range_any(
+                        vpn_range.get_start(),
+                        vpn_range.get_end(),
+                        &pages,
+                        map_perm.into(),
+                    );
+                    map_area.pages.extend(
+                        pages
+                            .into_iter()
+                            .enumerate()
+                            .map(|(i, p)| (VirtPageNum(vpn_start.0 + i), p)),
+                    );
                     memory_set.areas.insert(vpn_range.get_start(), map_area);
                 } else {
                     let mut load_data = vec![0u8; ph_filesz as usize];
@@ -878,15 +892,31 @@ impl MemorySet {
                                     false,
                                 );
                                 // 直接使用页缓存映射只读段
-                                let vpn_start = vpn_range.get_start().0;
-                                for vpn in vpn_range {
-                                    let offset =
-                                        p_offset as usize + (vpn.0 - vpn_start) * PAGE_SIZE;
-                                    let page =
-                                        interp_file.get_page(offset).expect("get page failed");
-                                    memory_set.page_table.map(vpn, page.ppn(), map_perm.into());
-                                    map_area.pages.insert(vpn, page);
-                                }
+                                let vpn_start = vpn_range.get_start();
+                                // for vpn in vpn_range {
+                                //     let offset =
+                                //         p_offset as usize + (vpn.0 - vpn_start.0) * PAGE_SIZE;
+                                //     let page =
+                                //         interp_file.get_page(offset).expect("get page failed");
+                                //     memory_set.page_table.map(vpn, page.ppn(), map_perm.into());
+                                //     map_area.pages.insert(vpn, page);
+                                // }
+                                let offset = p_offset as usize
+                                    + (vpn_start.0 - start_va.floor().0) * PAGE_SIZE;
+                                let pages = interp_file
+                                    .get_pages(offset, vpn_range.get_end().0 - vpn_start.0);
+                                memory_set.page_table.map_range_any(
+                                    vpn_range.get_start(),
+                                    vpn_range.get_end(),
+                                    &pages,
+                                    map_perm.into(),
+                                );
+                                map_area.pages.extend(
+                                    pages
+                                        .into_iter()
+                                        .enumerate()
+                                        .map(|(i, p)| (VirtPageNum(vpn_start.0 + i), p)),
+                                );
                                 memory_set.areas.insert(vpn_range.get_start(), map_area);
                             } else {
                                 let mut load_data = vec![0u8; p_filesz as usize];

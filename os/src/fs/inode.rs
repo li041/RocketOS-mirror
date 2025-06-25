@@ -9,6 +9,7 @@ use super::kstat::Kstat;
 use super::uapi::{DevT, FallocFlags, RenameFlags};
 use alloc::string::String;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use core::any::Any;
 
 /// 由页缓存直接和block device交互
@@ -25,6 +26,9 @@ pub trait InodeOp: Any + Send + Sync {
     }
     // 先查找页缓存, 如果没有则从块设备中读取, 如果磁盘中没有extent, 则是hole, 分配block
     fn get_page<'a>(&'a self, _page_index: usize) -> Option<Arc<Page>> {
+        unimplemented!();
+    }
+    fn get_pages<'a>(&'a self, _page_index: usize, _page_count: usize) -> Vec<Arc<Page>> {
         unimplemented!();
     }
     fn lookup_extent<'a>(&'a self, _page_index: usize) -> Option<(usize, usize)> {
@@ -176,23 +180,3 @@ pub trait InodeOp: Any + Send + Sync {
         unimplemented!();
     }
 }
-
-// pub struct InodeMeta {
-//     /// inode number
-//     pub inode_num: usize,
-//     /// name which doesn't have slash
-//     pub name: String,
-//     inner: SpinNoIrqLock<InodeMetaInner>,
-// }
-
-// pub struct InodeMetaInner {
-//     pub size: usize,
-//     // link count
-//     pub nlink: usize,
-//     // Last access time
-//     pub atime: TimeSpec,
-//     // Last modification time
-//     pub mtime: TimeSpec,
-//     // Last status change time
-//     pub ctime: TimeSpec,
-// }

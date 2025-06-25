@@ -63,35 +63,6 @@ pub fn get_app_data_by_name(name: &str) -> Option<&'static [u8]> {
         .map(get_app_data)
 }
 
-// pub fn load_dl_interp_if_needed(elf: &ElfFile) -> Option<usize> {
-//     let elf_header = elf.header;
-//     let ph_count = elf_header.pt2.ph_count();
-
-//     let mut is_dynamic_link = false;
-
-//     // check if the elf is dynamic link
-//     for i in 0..ph_count {
-//         let ph = elf.program_header(i).unwrap();
-//         if ph.get_type().unwrap() == xmas_elf::program::Type::Interp {
-//             is_dynamic_link = true;
-//             break;
-//         }
-//     }
-//     if is_dynamic_link {
-//         // load dynamic link interpreter
-//         let section = elf.find_section_by_name(".interp").unwrap();
-//         let mut interp = String::from_utf8(section.raw_data(&elf).to_vec()).unwrap();
-//         interp = interp.trim_end_matches('\0').to_string();
-//         info!("[load_dl] interp: {}", interp);
-//         // load interp
-//         // Todo: dynamic interpreter
-//         let interp_data = get_app_data_by_name(&interp).unwrap();
-//         let interp_entry = read_elf(interp_data).0;
-//         return Some(interp_entry);
-//     }
-//     Some(0)
-// }
-
 ///list all apps
 pub fn list_apps() {
     // println!("/**** LINKED APPS ****");
