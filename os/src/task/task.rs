@@ -804,7 +804,7 @@ impl Task {
         })
     }
 
-    pub fn get_rlimit(&self, resource: Resource) -> Result<RLimit, &'static str> {
+    pub fn get_rlimit(&self, resource: Resource) -> Result<RLimit, Errno> {
         match resource {
             Resource::STACK => {
                 // Todo: 现在是固定配置

@@ -179,17 +179,25 @@ impl MapArea {
             }
             MapType::Filebe => {
                 let file = self.backend_file.as_ref().unwrap();
-                for vpn in self.vpn_range {
-                    // 文件映射, 大部分在缺页时处理
-                    // MAP_POPULATE
-                    log::error!("[MapArea::map] unexpected filebe mapping");
-                    let offset = self.offset
-                        + (self.vpn_range.get_start().0 - self.vpn_range.get_start().0) * PAGE_SIZE;
-                    let page = file.get_page(offset).unwrap();
-                    ppn = page.ppn();
-                    self.pages.insert(vpn, page);
-                    page_table.map(vpn, ppn, pte_flags.clone());
-                }
+                // for vpn in self.vpn_range {
+                //     // 文件映射, 大部分在缺页时处理
+                //     // MAP_POPULATE
+                //     log::error!("[MapArea::map] unexpected filebe mapping");
+                //     let offset = self.offset + (vpn.0 - self.vpn_range.get_start().0) * PAGE_SIZE;
+                //     let page = file.get_page(offset).unwrap();
+                //     ppn = page.ppn();
+                //     self.pages.insert(vpn, page);
+                //     page_table.map(vpn, ppn, pte_flags.clone());
+                // }
+                let offset = self.offset + (start_vpn.0 - self.vpn_range.get_start().0) * PAGE_SIZE;
+                let pages = file.get_pages(offset, end_vpn.0 - start_vpn.0);
+                page_table.map_range_any(start_vpn, end_vpn, &pages, pte_flags);
+                self.pages.extend(
+                    pages
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, page)| (VirtPageNum(start_vpn.0 + i), page)),
+                );
             }
             MapType::FilebeRO => {
                 // 只读文件映射直接使用页缓存, 在from_elf中已经处理

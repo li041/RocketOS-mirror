@@ -135,6 +135,7 @@ pub enum ShmCtlOp {
     IPC_SET = 1,  // 设置共享内存段的权限
     IPC_STAT = 2, // 获取共享内存段的Shmid
     IPC_RMID = 3, // 标志要删除共享内存段(只在最后一个进程分离它是销毁)
+    Unknown = -1, // 未知操作
 }
 
 impl From<i32> for ShmCtlOp {
@@ -144,7 +145,7 @@ impl From<i32> for ShmCtlOp {
             1 => ShmCtlOp::IPC_SET,
             2 => ShmCtlOp::IPC_STAT,
             3 => ShmCtlOp::IPC_RMID,
-            _ => panic!("Invalid ShmCtlOp value"),
+            _ => ShmCtlOp::Unknown,
         }
     }
 }

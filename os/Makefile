@@ -122,7 +122,7 @@ run: build
 	$(QEMU_CMD) $(QEMU_ARGS)
 
 bench: build 
-	time $(QEMU_CMD) $(QEMU_ARGS) 2>&1 | tee qemu_output.log
+	time $(QEMU_CMD) $(QEMU_ARGS) 2>&1 | tee qemu_output-$(ARCH).log
 
 clean:
 	@$(shell which cargo)  clean

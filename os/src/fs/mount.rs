@@ -5,6 +5,7 @@ use alloc::{
     vec::Vec,
 };
 use bitflags::Flag;
+use spin::Mutex;
 
 use crate::{
     drivers::{block::block_dev::BlockDevice, BLOCK_DEVICE},
@@ -12,7 +13,6 @@ use crate::{
         fs::Ext4FileSystem,
         inode::{Ext4Inode, S_IFDIR, S_IFREG},
     },
-    mutex::SpinNoIrqLock,
     syscall::errno::SyscallRet,
 };
 
@@ -100,8 +100,8 @@ impl MountTree {
 
 lazy_static! {
     /// 全局的 mount 树
-    static ref MOUNT_TREE: SpinNoIrqLock<MountTree> = {
-        SpinNoIrqLock::new(MountTree::new())
+    static ref MOUNT_TREE: Mutex<MountTree> = {
+        Mutex::new(MountTree::new())
     };
 }
 

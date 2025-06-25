@@ -1,4 +1,5 @@
 use fdt::{node::FdtNode, standard_nodes::Compatible, Fdt};
+use spin::Mutex;
 
 use core::ptr::NonNull;
 
@@ -32,10 +33,9 @@ use virtio_drivers::{BufferDirection, Hal};
 use crate::{
     arch::drivers::mem_allocator::{allocate_bars, dump_bar_contents, PciMemory32Allocator},
     drivers::block::block_dev::BlockDevice,
-    mutex::SpinNoIrqLock,
 };
 
-pub struct VirtIOBlock(SpinNoIrqLock<VirtIOBlk<HalImpl, PciTransport>>);
+pub struct VirtIOBlock(Mutex<VirtIOBlk<HalImpl, PciTransport>>);
 
 use crate::arch::config::PAGE_SIZE;
 
@@ -140,7 +140,7 @@ fn virtio_blk_pci(transport: PciTransport) -> VirtIOBlock {
     let blk =
         VirtIOBlk::<HalImpl, PciTransport>::new(transport).expect("failed to create blk driver");
     assert!(!blk.readonly());
-    VirtIOBlock(SpinNoIrqLock::new(blk))
+    VirtIOBlock(Mutex::new(blk))
 }
 
 impl VirtIOBlock {

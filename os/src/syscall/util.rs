@@ -115,7 +115,7 @@ pub fn sys_uname(uts: usize) -> SyscallRet {
     if domainname.len() > 0 {
         utsname.set_domainname(domainname.as_slice());
     }
-    copy_to_user(uts, &utsname as *const Utsname, 1).unwrap();
+    copy_to_user(uts, &utsname as *const Utsname, 1)?;
     Ok(0)
 }
 
@@ -128,7 +128,7 @@ pub fn sys_times(buf: usize) -> SyscallRet {
     // unsafe {
     //     core::ptr::write(buf, tms);
     // }
-    copy_to_user(buf, &tms as *const Tms, 1).unwrap();
+    copy_to_user(buf, &tms as *const Tms, 1)?;
     Ok(0)
 }
 
@@ -150,7 +150,7 @@ pub enum SyslogAction {
 }
 
 impl TryFrom<usize> for SyslogAction {
-    type Error = ();
+    type Error = Errno;
 
     fn try_from(value: usize) -> Result<Self, Self::Error> {
         match value {
@@ -165,7 +165,7 @@ impl TryFrom<usize> for SyslogAction {
             8 => Ok(SyslogAction::CONSOLE_LEVEL),
             9 => Ok(SyslogAction::SIZE_UNREAD),
             10 => Ok(SyslogAction::SIZE_BUFFER),
-            _ => Err(()),
+            _ => Err(Errno::EINVAL),
         }
     }
 }
@@ -174,21 +174,24 @@ pub fn sys_syslog(log_type: usize, buf: *mut u8, len: usize) -> SyscallRet {
     const LOG_BUF_LEN: usize = 4096;
     const LOG: &str = "<5>[    0.000000] Linux version 5.10.102.1-microsoft-standard-WSL2 (rtrt@TEAM-NPUCORE) (gcc (Ubuntu 9.4.0-1ubuntu1~20.04) 9.4.0, GNU ld (GNU Binutils for Ubuntu) 2.34) #1 SMP Thu Mar 10 13:31:47 CST 2022";
     // let token = current_user_token();
-    let log_type = SyslogAction::try_from(log_type).unwrap();
+    let log_type = SyslogAction::try_from(log_type)?;
     let log = LOG.as_bytes();
     let len = LOG.len().min(len as usize);
     match log_type {
         SyslogAction::CLOSE | SyslogAction::OPEN => Ok(0),
         SyslogAction::READ => copy_to_user(buf, log.as_ptr(), len),
         SyslogAction::READ_ALL => copy_to_user(buf, log.as_ptr(), len),
-        SyslogAction::READ_CLEAR => todo!(),
-        SyslogAction::CLEAR => todo!(),
-        SyslogAction::CONSOLE_OFF => todo!(),
-        SyslogAction::CONSOLE_ON => todo!(),
-        SyslogAction::CONSOLE_LEVEL => todo!(),
-        SyslogAction::SIZE_UNREAD => todo!(),
-        SyslogAction::SIZE_BUFFER => Ok(LOG_BUF_LEN),
-        SyslogAction::ILLEAGAL => return Err(Errno::EINVAL),
+        _ => {
+            log::error!("[sys_syslog] Unsupported syslog action: {:?}", log_type);
+            return Err(Errno::ENOSYS);
+        } // SyslogAction::READ_CLEAR => todo!(),
+          // SyslogAction::CLEAR => todo!(),
+          // SyslogAction::CONSOLE_OFF => todo!(),
+          // SyslogAction::CONSOLE_ON => todo!(),
+          // SyslogAction::CONSOLE_LEVEL => todo!(),
+          // SyslogAction::SIZE_UNREAD => todo!(),
+          // SyslogAction::SIZE_BUFFER => Ok(LOG_BUF_LEN),
+          // SyslogAction::ILLEAGAL => return Err(Errno::EINVAL),
     }
 }
 
@@ -205,7 +208,7 @@ pub fn sys_prlimit64(
     } else {
         get_task(pid).expect("[sys_prlimit64]: invalid pid")
     };
-    let resource = Resource::try_from(resource).unwrap();
+    let resource = Resource::try_from(resource)?;
     log::error!(
         "resource: {:?}, new_limit: {:#x}, old_limit: {:#x}",
         resource,
@@ -218,7 +221,7 @@ pub fn sys_prlimit64(
             .get_rlimit(resource)
             .expect("[sys_prlimit64] get rlimit failed");
         // 这里需要copy_to_user
-        copy_to_user(old_limit, &old_rlimit as *const RLimit, 1).unwrap();
+        copy_to_user(old_limit, &old_rlimit as *const RLimit, 1)?;
     }
     // 如果new_limit不为NULL, 则将new_limit写入当前的rlimit
     if !new_limit.is_null() {
@@ -350,8 +353,7 @@ pub fn sys_setitimer(
             });
             // 将旧的定时器值写入ovalue_ptr
             if !ovalue_ptr.is_null() {
-                copy_to_user(ovalue_ptr, &old as *const ITimerVal, 1)
-                    .expect("[sys_setitimer] copy_to_user failed");
+                copy_to_user(ovalue_ptr, &old as *const ITimerVal, 1)?;
             }
             // 禁用定时器
             if new.it_value.is_zero() {
@@ -369,10 +371,12 @@ pub fn sys_setitimer(
             return Ok(0);
         }
         ITIMER_VIRTUAL => {
-            unimplemented!();
+            log::warn!("[sys_setitimer] ITIMER_VIRTUAL is not implemented");
+            return Err(Errno::ENOSYS);
         }
         ITIMER_PROF => {
-            unimplemented!();
+            log::warn!("[sys_setitimer] ITIMER_PROF is not implemented");
+            return Err(Errno::ENOSYS);
         }
         _ => {
             // 已进行参数检查, 不会进入这里
@@ -399,7 +403,8 @@ pub fn sys_getrusage(who: i32, rusage: *mut RUsage) -> SyscallRet {
             usage.stime = stime;
         }
         RUSAGE_CHILDREN => {
-            unimplemented!();
+            log::warn!("[sys_getrusage] RUSAGE_CHILDREN is not implemented");
+            return Err(Errno::ENOSYS);
         }
         RUSAGE_THREAD => {
             let (utime, stime) = task.time_stat().thread_us_time();
@@ -410,7 +415,7 @@ pub fn sys_getrusage(who: i32, rusage: *mut RUsage) -> SyscallRet {
             return Err(Errno::EINVAL);
         }
     }
-    copy_to_user(rusage, &usage as *const RUsage, 1).expect("[sys_getrusage] copy_to_user failed");
+    copy_to_user(rusage, &usage as *const RUsage, 1)?;
     Ok(0)
 }
 

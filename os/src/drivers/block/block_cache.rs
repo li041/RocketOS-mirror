@@ -2,12 +2,12 @@
 use super::{BLOCK_CACHE_SIZE, VIRTIO_BLOCK_SIZE};
 use crate::drivers::block::block_dev::BlockDevice;
 use crate::fs::FS_BLOCK_SIZE;
-use crate::mutex::SpinNoIrqLock;
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 use lazy_static::*;
+use spin::Mutex;
 
 /// Cached block inside memory
 pub struct BlockCache {
@@ -101,7 +101,7 @@ impl Drop for BlockCache {
 }
 
 pub struct BlockCacheManager {
-    queue: VecDeque<(usize, Arc<SpinNoIrqLock<BlockCache>>)>,
+    queue: VecDeque<(usize, Arc<Mutex<BlockCache>>)>,
 }
 
 impl BlockCacheManager {
@@ -115,7 +115,7 @@ impl BlockCacheManager {
         fs_block_id: usize,
         block_device: Arc<dyn BlockDevice>,
         cache_size: usize,
-    ) -> Arc<SpinNoIrqLock<BlockCache>> {
+    ) -> Arc<Mutex<BlockCache>> {
         if let Some(pair) = self.queue.iter().find(|pair| fs_block_id == pair.0)
         // 这里好像不用判断, 因为FS block_size是VirtIO的倍数, 上层文件系统访问给出的block_id是VirtIO的倍数
         // .find(|pair| block_id >= pair.0 && block_id < pair.0 + cache_size / VIRTIO_BLOCK_SIZE)
@@ -135,7 +135,7 @@ impl BlockCacheManager {
                     panic!("Run out of BLOCK_CACHE!");
                 }
             }
-            let block_cache = Arc::new(SpinNoIrqLock::new(BlockCache::new(
+            let block_cache = Arc::new(Mutex::new(BlockCache::new(
                 fs_block_id,
                 Arc::clone(&block_device),
                 cache_size,
@@ -149,8 +149,8 @@ impl BlockCacheManager {
 
 lazy_static! {
     /// The global block cache manager
-    pub static ref BLOCK_CACHE_MANAGER: SpinNoIrqLock<BlockCacheManager> =
-        SpinNoIrqLock::new(BlockCacheManager::new());
+    pub static ref BLOCK_CACHE_MANAGER: Mutex<BlockCacheManager> =
+        Mutex::new(BlockCacheManager::new());
 }
 
 /// Get the block cache corresponding to the given block id and block device
@@ -158,7 +158,7 @@ pub fn get_block_cache(
     fs_block_id: usize,
     block_device: Arc<dyn BlockDevice>,
     cache_size: usize,
-) -> Arc<SpinNoIrqLock<BlockCache>> {
+) -> Arc<Mutex<BlockCache>> {
     BLOCK_CACHE_MANAGER
         .lock()
         .get_block_cache(fs_block_id, block_device, cache_size)

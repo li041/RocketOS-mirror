@@ -16,6 +16,7 @@ use crate::{
     timer::TimeSpec,
 };
 use alloc::vec;
+use alloc::vec::Vec;
 use alloc::{
     format,
     string::{String, ToString},
@@ -51,6 +52,10 @@ impl InodeOp for Ext4Inode {
     // 共享文件映射和私有文件映射只读时调用
     fn get_page<'a>(&'a self, page_index: usize) -> Option<Arc<Page>> {
         self.get_page_cache(page_index)
+    }
+    fn get_pages<'a>(&'a self, page_index: usize, page_count: usize) -> Vec<Arc<Page>> {
+        // 获取指定范围的页
+        self.get_page_caches(page_index, page_count)
     }
     // 返回对应的文件系统中的物理块号和长度
     fn lookup_extent<'a>(&'a self, page_index: usize) -> Option<(usize, usize)> {
@@ -226,7 +231,9 @@ impl InodeOp for Ext4Inode {
     ) -> SyscallRet {
         // Noreplace已经在上层调用者中检查过了, exchange还未支持
         if flags.contains(RenameFlags::EXCHANGE) {
-            panic!("[rename] EXCHANGE not supported");
+            // panic!("[rename] EXCHANGE not supported");
+            log::warn!("[rename] EXCHANGE not supported");
+            // return Err(Errno::ENOSYS);
         }
         let old_dir_entry = match self.lookup(&old_dentry.get_last_name()) {
             Some(entry) => entry,
@@ -677,7 +684,7 @@ impl InodeOp for Ext4Inode {
         self.inner.read().inode_on_disk.get_size() as usize
     }
     fn get_resident_page_count(&self) -> usize {
-        self.address_space.len()
+        self.address_space.lock().len()
     }
     fn get_mode(&self) -> u16 {
         self.inner.read().inode_on_disk.get_mode()

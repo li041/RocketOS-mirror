@@ -2,12 +2,12 @@ use core::ptr::NonNull;
 
 use crate::arch::config::KERNEL_BASE;
 use crate::drivers::block::block_dev::BlockDevice;
-use crate::mutex::SpinNoIrqLock;
 use alloc::alloc::alloc_zeroed;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use buddy_system_allocator::FrameAllocator;
 use lazy_static::*;
+use spin::Mutex;
 use virtio_drivers::device::blk::VirtIOBlk;
 use virtio_drivers::transport::mmio::{MmioTransport, VirtIOHeader};
 use virtio_drivers::{BufferDirection, Hal};
@@ -22,7 +22,7 @@ use zerocopy::FromZeroes;
 //线性偏移
 const VIRTIO0: usize = 0x10002000 + KERNEL_BASE;
 
-pub struct VirtIOBlock(SpinNoIrqLock<VirtIOBlk<HalImpl, MmioTransport>>);
+pub struct VirtIOBlock(Mutex<VirtIOBlk<HalImpl, MmioTransport>>);
 
 pub struct HalImpl;
 
@@ -104,7 +104,7 @@ fn phys_to_virt(paddr: usize) -> usize {
 }
 
 lazy_static! {
-    static ref QUEUE_FRAMES: SpinNoIrqLock<Vec<FrameAllocator>> = SpinNoIrqLock::new(Vec::new());
+    static ref QUEUE_FRAMES: Mutex<Vec<FrameAllocator>> = Mutex::new(Vec::new());
 }
 
 impl BlockDevice for VirtIOBlock {
@@ -129,7 +129,7 @@ impl VirtIOBlock {
             let header = NonNull::new(VIRTIO0 as *mut VirtIOHeader).unwrap();
             let transport = unsafe { MmioTransport::new(header) }.unwrap();
             let device = VirtIOBlk::<HalImpl, _>::new(transport).unwrap();
-            VirtIOBlock(SpinNoIrqLock::new(device))
+            VirtIOBlock(Mutex::new(device))
         }
     }
 }

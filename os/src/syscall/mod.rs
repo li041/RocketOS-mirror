@@ -307,7 +307,7 @@ pub fn syscall(
         }
         SYSCALL_FSTATAT => sys_fstatat(a0 as i32, a1 as *const u8, a2 as *mut Stat, a3 as i32),
         SYSCALL_FSTAT => sys_fstat(a0 as i32, a1 as *mut Stat),
-        SYSCALL_SYNC => sys_sync(a0),
+        SYSCALL_SYNC => sys_sync(),
         SYSCALL_FSYNC => sys_fsync(a0),
         SYSCALL_UTIMENSAT => {
             sys_utimensat(a0 as i32, a1 as *const u8, a2 as *const TimeSpec, a3 as i32)

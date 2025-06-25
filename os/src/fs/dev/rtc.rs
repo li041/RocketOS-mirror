@@ -193,11 +193,13 @@ impl FileOp for RtcFile {
                 copy_to_user(buf_ptr, &rtc_time as *const RtcTime, 1)?;
                 return Ok(0);
             }
-            RtcIoctlCmd::RTC_SET_TIME => {
-                unimplemented!("RTC_SET_TIME");
-            }
             _ => {
-                unimplemented!("RTC ioctl: {:?}", op);
+                // unimplemented!("RTC ioctl: {:?}", op);
+                log::warn!(
+                    "[RtcFile::ioctl]Unimplemented RTC ioctl command: {:#X}",
+                    op as u32
+                );
+                return Err(Errno::ENOSYS); // 未实现的命令
             }
         }
     }
@@ -251,6 +253,9 @@ pub enum RtcIoctlCmd {
 
     /// 设置 RTC 纪元年份（输入 unsigned long）
     RTC_EPOCH_SET = 0x4004_7010, // _IOW('p', 0x10, unsigned long)
+
+    /// 未知命令
+    Unknown = 0xFFFFFFFF, // 用于表示未知命令
 }
 impl From<u32> for RtcIoctlCmd {
     fn from(value: u32) -> Self {
@@ -269,7 +274,7 @@ impl From<u32> for RtcIoctlCmd {
             0x0000_7002 => RtcIoctlCmd::RTC_UIE_OFF,
             0x8004_700F => RtcIoctlCmd::RTC_EPOCH_READ,
             0x4004_7010 => RtcIoctlCmd::RTC_EPOCH_SET,
-            _ => panic!("Invalid RTC IOCTL command: {:#X}", value),
+            _ => RtcIoctlCmd::Unknown,
         }
     }
 }

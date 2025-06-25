@@ -11,7 +11,7 @@ use crate::{
     arch::config::{EXT4_MAX_INLINE_DATA, KERNEL_BASE},
     drivers::block::{block_dev::BlockDevice, VIRTIO_BLOCK_SIZE},
     ext4::{self, extent_tree::Ext4Extent, fs::EXT4_BLOCK_SIZE, inode::Ext4Inode, MAX_FS_BLOCK_ID},
-    fs::{inode::InodeOp, FS_BLOCK_SIZE},
+    fs::{inode::InodeOp, page_cache::AddressSpace, FS_BLOCK_SIZE},
 };
 
 use spin::RwLock;
@@ -256,7 +256,7 @@ impl Page {
         f(unsafe { &mut *(addr as *mut T) })
     }
 
-    pub fn sync(&self) {
+    pub fn sync_with_address_space(&self, address_space: &AddressSpace) {
         match &self.page_kind {
             PageKind::Filebe(info) => {
                 let guard = info.write(); // 加写锁
@@ -327,7 +327,104 @@ impl Page {
                                 return;
                             }
                             log::warn!("[page::sync] has inline data, write back to disk");
-                            if let Some(inline_page) = ext4_inode.address_space.get_page_cache(0) {
+                            if let Some(inline_page) = address_space.get_page_cache(0) {
+                                // inline data在页缓存中, 写回磁盘
+                                let inline_data: &[u8; EXT4_MAX_INLINE_DATA] =
+                                    inline_page.get_ref(0);
+                                inner.inode_on_disk.block[0..inline_data.len()]
+                                    .copy_from_slice(inline_data);
+                                // 注意这里不将inode_on_disk写回磁盘, 只更新了内存中的inode_on_disk
+                            } else {
+                                log::error!(
+                                    "[Ext4Inode::drop] inline data not found in page cache"
+                                );
+                            }
+                        }
+                    } else {
+                        log::error!(
+                            "[Page::sync]inode is not a Ext4Inode, cannot write back inline data"
+                        );
+                    }
+                } else {
+                    log::error!("[Page::sync]inline page's inode is dropped, cannot write back");
+                }
+            }
+            _ => {}
+        }
+    }
+    pub fn sync(&self) {
+        match &self.page_kind {
+            PageKind::Filebe(info) => {
+                let guard = info.write(); // 加写锁
+                if guard.modified {
+                    // println!("[Page::modified]sync page: {:#x}", self.vaddr);
+                    if let Some(block_device) = guard.block_device.upgrade() {
+                        let cache = unsafe {
+                            core::slice::from_raw_parts_mut(self.vaddr as *mut u8, PAGE_SIZE)
+                        };
+                        if guard.start_block_id >= MAX_FS_BLOCK_ID {
+                            log::warn!(
+                                "[Page::sync] sparse file, allocating new block and insert extent"
+                            );
+                            if let Some(inode) = guard.inode.upgrade() {
+                                if let Some(ext4_inode) = inode.as_any().downcast_ref::<Ext4Inode>()
+                                {
+                                    // 稀疏文件的空洞处理
+                                    let new_block_num = ext4_inode.alloc_one_block();
+                                    let page_index = guard.start_block_id & !MAX_FS_BLOCK_ID;
+                                    let new_extent =
+                                        Ext4Extent::new(page_index as u32, 1, new_block_num);
+                                    let mut inner = ext4_inode.inner.write();
+                                    inner
+                                        .inode_on_disk
+                                        .insert_extent(
+                                            page_index as u32,
+                                            new_extent.physical_start_block() as u64,
+                                            1,
+                                            block_device.clone(),
+                                            EXT4_BLOCK_SIZE,
+                                            ext4_inode.ext4_fs.upgrade().unwrap(),
+                                        )
+                                        .unwrap();
+                                } else {
+                                    log::error!(
+                                    "[Page::sync] inode is not a Ext4Inode, cannot write back sparse hole"
+                                );
+                                }
+                            } else {
+                                log::error!(
+                                    "[Page::sync] inode is dropped, cannot write back sparse hole"
+                                );
+                            }
+                        } else {
+                            block_device.write_blocks(guard.start_block_id, cache);
+                        }
+                    }
+                }
+            }
+            PageKind::Inline(info) => {
+                log::warn!(
+                    "[Page::sync] inline page synced directly, vaddr: {:#x}",
+                    self.vaddr
+                );
+                let guard = info.write(); // 加写锁
+                let inode = guard.inode.upgrade();
+                if let Some(inode) = inode {
+                    if let Some(ext4_inode) = inode.as_any().downcast_ref::<Ext4Inode>() {
+                        if guard.modified {
+                            let mut inner = ext4_inode.inner.write();
+
+                            // assert!(inner.inode_on_disk.has_inline_data());
+                            if !inner.inode_on_disk.has_inline_data() {
+                                log::error!(
+                                    "[Page::sync] Inline Page but EXT4_INLINE_DATA_FL is not set"
+                                );
+                                return;
+                            }
+                            log::warn!("[page::sync] has inline data, write back to disk");
+                            if let Some(inline_page) =
+                                ext4_inode.address_space.lock().get_page_cache(0)
+                            {
                                 // inline data在页缓存中, 写回磁盘
                                 let inline_data: &[u8; EXT4_MAX_INLINE_DATA] =
                                     inline_page.get_ref(0);

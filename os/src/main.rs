@@ -142,6 +142,7 @@ pub fn rust_main() -> ! {
         bootstrap_init,
         drivers::pci,
         sbi::shutdown,
+        timer::ls7a_rtc_init,
         trap::{
             self,
             timer::{enable_timer_interrupt, set_next_trigger},
@@ -155,9 +156,7 @@ pub fn rust_main() -> ! {
     mm::init();
     pci::init();
     trap::init();
-    // let time = unsafe { read_ls7a_rtc(LS7A_RTC_BASE as *mut u32) };
-    // println!("{:?}", time);
-    // time_test();
+    ls7a_rtc_init();
     enable_timer_interrupt();
     add_initproc();
     loader::list_apps();
