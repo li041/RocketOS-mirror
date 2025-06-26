@@ -10,6 +10,9 @@ os/src/linker.ld
 user/build
 user/target/*
 
+docs/*.pdf
+docs/content/*.pdf
+
 testsuits-for-oskernel/*
 img/*
 !img/Makefile
