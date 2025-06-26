@@ -3,6 +3,7 @@ use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use log::{info, warn};
+use spin::Mutex;
 
 use super::jhash::jhash2;
 use crate::mutex::SpinNoIrqLock;
@@ -24,12 +25,12 @@ lazy_static! {
 #[allow(unused)]
 /// print all futex_q that are in the FUTEXQUEUES
 pub fn display_futexqueues() {
-    warn!("[display_futexqueues]");
+    println!("[display_futexqueues]");
     for i in 0..FUTEX_HASH_SIZE {
         let hash_bucket = FUTEXQUEUES.buckets[i].lock();
         if !hash_bucket.is_empty() {
             for futex_q in hash_bucket.iter() {
-                warn!(
+                println!(
                     "task {} is still wait for {:?}",
                     futex_q.task.upgrade().unwrap().tid(),
                     futex_q.key
@@ -42,14 +43,14 @@ pub fn display_futexqueues() {
 
 /// the outer vector is the bucket, the inner vector is the futex queue
 pub struct FutexQueues {
-    pub buckets: Box<[SpinNoIrqLock<VecDeque<FutexQ>>]>,
+    pub buckets: Box<[Mutex<VecDeque<FutexQ>>]>,
 }
 
 impl FutexQueues {
     fn new(size: usize) -> Self {
         let mut buckets = Vec::with_capacity(size);
         for _ in 0..size {
-            buckets.push(SpinNoIrqLock::new(VecDeque::new()));
+            buckets.push(Mutex::new(VecDeque::new()));
         }
         Self {
             buckets: buckets.into_boxed_slice(),

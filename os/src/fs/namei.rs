@@ -127,7 +127,7 @@ impl Nameidata {
             if dfd == AT_FDCWD {
                 // 当前进程的工作目录
                 path = cur_task.pwd();
-                assert!(!path.dentry.is_negative());
+                debug_assert!(!path.dentry.is_negative());
             } else {
                 // dfd是一个文件描述符, 通过文件描述符找到dentry
                 // Todo: 权限检查
@@ -205,7 +205,7 @@ impl Nameidata {
             if dfd == AT_FDCWD {
                 // 当前进程的工作目录
                 path = cur_task.pwd();
-                assert!(!path.dentry.is_negative());
+                debug_assert!(!path.dentry.is_negative());
             } else {
                 // dfd是一个文件描述符, 通过文件描述符找到dentry
                 // Todo: 权限检查
@@ -358,7 +358,7 @@ pub fn open_last_lookups(
                 if flags.contains(OpenFlags::O_CREAT) && nd.depth == nd.path_segments.len() - 1 {
                     let dir_inode = nd.dentry.get_inode();
                     dir_inode.create(dentry.clone(), mode as u16 & !current_task().umask());
-                    assert!(!dentry.is_negative());
+                    debug_assert!(!dentry.is_negative());
                     dentry
                 } else {
                     return Err(Errno::ENOENT);
@@ -458,7 +458,7 @@ pub fn open_last_lookups2(
                 if flags.contains(OpenFlags::O_CREAT) && nd.depth == nd.path_segments.len() - 1 {
                     let dir_inode = nd.dentry.get_inode();
                     dir_inode.create(dentry.clone(), mode as u16 & !current_task().umask());
-                    assert!(!dentry.is_negative());
+                    debug_assert!(!dentry.is_negative());
                     dentry
                 } else {
                     return Err(Errno::ENOENT);
@@ -565,14 +565,8 @@ fn create_file_from_dentry(
         S_IFCHR => {
             // 根据设备号创建对应字符设备文件
             match inode.get_devt() {
-                (1, 3) => {
-                    // assert!(dentry.absolute_path == "/dev/null");
-                    NULL.get().unwrap().clone()
-                } // /dev/null
-                (1, 5) => {
-                    // assert!(dentry.absolute_path == "/dev/zero");
-                    ZERO.get().unwrap().clone()
-                } // /dev/zero
+                (1, 3) => NULL.get().unwrap().clone(), // /dev/null
+                (1, 5) => ZERO.get().unwrap().clone(), // /dev/zero
                 (5, 0) => {
                     assert!(dentry.absolute_path.starts_with("/dev/tty"));
                     TTY.get().unwrap().clone()
@@ -734,7 +728,7 @@ pub fn filename_lookup(nd: &mut Nameidata, follow_symlink: bool) -> Result<Arc<D
                     nd.dentry.clone()
                 } else if segment == ".." {
                     let parent = nd.dentry.get_parent();
-                    assert!(!parent.is_symlink());
+                    debug_assert!(!parent.is_symlink());
                     parent
                 } else {
                     let dentry = lookup_dentry(nd);

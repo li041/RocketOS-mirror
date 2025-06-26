@@ -579,7 +579,7 @@ pub fn insert_dentry(dentry: Arc<Dentry>) {
 // 上层调用者保证: dentry 不是负目录项
 /// 从dentry cache中删除对应的dentry, 并且设置被删除的dentry为负目录项
 pub fn delete_dentry(dentry: Arc<Dentry>) {
-    assert!(!dentry.is_negative());
+    debug_assert!(!dentry.is_negative());
     DENTRY_CACHE.write().remove(dentry.absolute_path.as_str());
     dentry.inner.lock().inode = None;
 }

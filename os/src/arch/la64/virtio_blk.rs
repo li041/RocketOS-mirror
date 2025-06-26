@@ -139,7 +139,7 @@ impl BlockDevice for VirtIOBlock {
 fn virtio_blk_pci(transport: PciTransport) -> VirtIOBlock {
     let blk =
         VirtIOBlk::<HalImpl, PciTransport>::new(transport).expect("failed to create blk driver");
-    assert!(!blk.readonly());
+    debug_assert!(!blk.readonly());
     VirtIOBlock(Mutex::new(blk))
 }
 

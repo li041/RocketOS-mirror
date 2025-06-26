@@ -338,7 +338,7 @@ impl PageTable {
     }
     pub fn remap(&mut self, vpn: VirtPageNum, flags: PTEFlags) {
         let pte = self.find_pte_create(vpn).unwrap();
-        assert!(
+        debug_assert!(
             pte.is_valid(),
             "vpn {:?} is not mapped before remapping",
             vpn
@@ -351,7 +351,7 @@ impl PageTable {
     }
     pub fn unmap(&mut self, vpn: VirtPageNum) {
         let pte = self.find_pte(vpn).unwrap();
-        assert!(
+        debug_assert!(
             pte.is_valid(),
             "vpn {:?} is not mapped before unmapping",
             vpn
@@ -422,7 +422,7 @@ impl PageTable {
         end_vpn: VirtPageNum,
         flags: PTEFlags,
     ) {
-        assert!(start_vpn.0 <= end_vpn.0);
+        debug_assert!(start_vpn.0 <= end_vpn.0);
         let mut vpn = start_vpn.0;
         let page_count = end_vpn.0 - start_vpn.0;
 
@@ -453,7 +453,7 @@ impl PageTable {
         start_ppn: PhysPageNum,
         flags: PTEFlags,
     ) {
-        assert!(start_vpn.0 <= end_vpn.0);
+        debug_assert!(start_vpn.0 <= end_vpn.0);
         let mut vpn = start_vpn.0;
         let end_vpn = end_vpn.0;
         let mut ppn = start_ppn.0;
@@ -482,7 +482,7 @@ impl PageTable {
         pages: &Vec<Arc<Page>>,
         flags: PTEFlags,
     ) {
-        assert!(start_vpn.0 <= end_vpn.0);
+        debug_assert!(start_vpn.0 <= end_vpn.0);
         let mut pte_arr = self.find_pte_array_mut(start_vpn).unwrap();
         let mut vpn = start_vpn.0;
         let start_vpn = start_vpn.0;

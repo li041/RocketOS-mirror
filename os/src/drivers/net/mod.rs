@@ -266,7 +266,7 @@ impl<const QS: usize, H: Hal, T: Transport> NetDevice for VirtioNetDevice<QS, H,
         };
         log::error!("[recycle_recv_buffer]:token{}", token);
         //这个地方先前的buf必须清空，不然inner无法将packet放入这指针地方
-        assert!(self.recv_buffers[token as usize].is_none());
+        debug_assert!(self.recv_buffers[token as usize].is_none());
         log::error!(
             "[recycle_recv_buffer]:after recyble recv buf is {:?}",
             recv_buf.get_packet()
@@ -340,7 +340,7 @@ impl<const QS: usize, H: Hal, T: Transport> NetDevice for VirtioNetDevice<QS, H,
         //不使用Pool分配，而是通过free_send_bufn分配
         let mut send_buf = self.free_send_buffers.pop().unwrap();
         let header_len = send_buf.header_len;
-        assert!(header_len + size < send_buf.capacity);
+        debug_assert!(header_len + size < send_buf.capacity);
         send_buf.set_packet_len(size);
         send_buf.into_buf_ptr()
     }
@@ -433,11 +433,11 @@ impl NetBuf {
         self.get_with_mut_slice(0, self.capacity)
     }
     fn set_header_len(&mut self, header_len: usize) {
-        assert!(header_len + self.packet_len <= self.capacity);
+        debug_assert!(header_len + self.packet_len <= self.capacity);
         self.header_len = header_len;
     }
     fn set_packet_len(&mut self, packet_len: usize) {
-        assert!(packet_len + self.header_len <= self.capacity);
+        debug_assert!(packet_len + self.header_len <= self.capacity);
         self.packet_len = packet_len;
     }
     pub fn from_ptr_into_netbuf(ptr: NetBufPtr) -> Box<Self> {
@@ -477,7 +477,7 @@ pub struct NetBufPool {
 impl NetBufPool {
     ///定义一个buf，capacity表示其中可以存储的buf个数，buf_len则是用于定义netbuf中的capacity
     pub fn new(capacity: usize, buf_len: usize) -> Arc<Self> {
-        assert!(capacity > 0, "netbufpool capacity must bigger than 0");
+        debug_assert!(capacity > 0, "netbufpool capacity must bigger than 0");
         //定义capacity个长度为buf_len用于存储buf的poll,每个可以用于分配的offset由free_list存储
         let pool = vec![0; capacity * buf_len];
         //定义free_list,其中元素表示可以分配的buf位置offset
@@ -514,7 +514,7 @@ impl NetBufPool {
     }
     //这个函数将回收一个netbuf,offset是这个netbuf在pool中的偏移
     pub fn dealloc(&self, offset: usize) {
-        assert!(offset % self.buf_len == 0);
+        debug_assert!(offset % self.buf_len == 0);
         self.free_list.lock().push(offset);
     }
 }

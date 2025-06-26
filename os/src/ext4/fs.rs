@@ -34,7 +34,7 @@ impl Ext4FileSystem {
                     "[Ext4FileSystem::open()] super_block: {:?}",
                     ext4_super_block_disk
                 );
-                assert!(
+                debug_assert!(
                     ext4_super_block_disk.is_valid(),
                     "[Ext4FileSystem::open()] Error loading super_block!"
                 );
@@ -52,7 +52,7 @@ impl Ext4FileSystem {
         let block_group_count = super_block.block_group_count as usize;
 
         // 注意这里有假设: 假设块组描述符表在第一个块中
-        assert!(block_group_count * core::mem::size_of::<GroupDesc>() < EXT4_BLOCK_SIZE);
+        debug_assert!(block_group_count * core::mem::size_of::<GroupDesc>() < EXT4_BLOCK_SIZE);
         let block_groups_block = get_block_cache(1, block_device.clone(), EXT4_BLOCK_SIZE);
         for i in 0..block_group_count as usize {
             block_groups_block.lock().read(

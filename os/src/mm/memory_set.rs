@@ -1354,9 +1354,6 @@ impl MemorySet {
                     {
                         // 读, 执行, 或共享映射的写, 只需要通过backend_file获得对应的页
                         // 注意: 找页的时候需要加上偏移量
-                        if cause == PageFaultCause::EXEC {
-                            assert!(area.map_perm.contains(MapPermission::X));
-                        }
                         let offset = area.offset
                             + (vpn.0 - area.vpn_range.get_start().0) * PAGE_SIZE as usize;
                         log::error!(

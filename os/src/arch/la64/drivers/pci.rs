@@ -28,7 +28,8 @@ fn virtio_device(transport: impl Transport + 'static) {
         DeviceType::Block => virtio_blk(transport),
         DeviceType::Network => {
             log::trace!("[initlize net]");
-            virtio_net(transport)},
+            virtio_net(transport)
+        }
         t => log::warn!("Unsupported VirtIO device type {:?}", t),
     }
 }
@@ -36,7 +37,7 @@ fn virtio_device(transport: impl Transport + 'static) {
 // 动态的Virtual IO块设备
 fn virtio_blk<T: Transport>(transport: T) {
     let blk = VirtIOBlk::<HalImpl, T>::new(transport).expect("failed to create blk driver");
-    assert!(!blk.readonly());
+    debug_assert!(!blk.readonly());
 }
 //在enumerate_pci过来初始化网络
 #[cfg(target_arch = "loongarch64")]

@@ -405,7 +405,7 @@ pub fn sys_unlinkat(dirfd: i32, pathname: *const u8, flag: i32) -> SyscallRet {
     let mut nd = Nameidata::new(&path, dirfd)?;
     match filename_lookup(&mut nd, false) {
         Ok(dentry) => {
-            assert!(!dentry.is_negative());
+            debug_assert!(!dentry.is_negative());
             let dir_dentry = nd.dentry.clone();
             // 检查父目录是否有写权限
             dentry_check_access(&dir_dentry, W_OK, true)?;

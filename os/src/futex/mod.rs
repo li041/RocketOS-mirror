@@ -24,7 +24,7 @@ use crate::{RobustList, SyscallError, SyscallResult, TimeSecs};
 pub mod flags;
 pub mod futex;
 mod jhash;
-mod queue;
+pub mod queue;
 pub mod robust_list;
 
 pub fn do_futex(

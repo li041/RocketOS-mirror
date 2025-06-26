@@ -97,7 +97,7 @@ impl InodeOp for Ext4Inode {
         );
         if let Some(child) = parent_entry.get_child(name) {
             // 先查找parent_entry的child
-            assert!(child.absolute_path == format!("{}/{}", parent_entry.absolute_path, name));
+            debug_assert!(child.absolute_path == format!("{}/{}", parent_entry.absolute_path, name));
             return child.clone();
         } else {
             // 从目录中查找
@@ -167,7 +167,7 @@ impl InodeOp for Ext4Inode {
     /// 用于创建常规文件(S_IFREG)
     fn create<'a>(&'a self, dentry: Arc<Dentry>, mode: u16) {
         // dentry应该是负目录项
-        assert!(dentry.is_negative());
+        debug_assert!(dentry.is_negative());
         // 分配inode_num
         let new_inode_num = self
             .ext4_fs
@@ -281,7 +281,7 @@ impl InodeOp for Ext4Inode {
                     return Err(Errno::ENOENT);
                 }
             };
-            assert!(old_dir_entry.file_type == new_dir_entry.file_type);
+            debug_assert!(old_dir_entry.file_type == new_dir_entry.file_type);
             new_dir
                 .as_any()
                 .downcast_ref::<Ext4Inode>()
@@ -309,9 +309,9 @@ impl InodeOp for Ext4Inode {
     //  1.old_dentry不是负目录项, new_dentry是负目录项
     //  2. new_dentry的父子关系已经建立
     fn link<'a>(&'a self, old_dentry: Arc<Dentry>, new_dentry: Arc<Dentry>) {
-        assert!(!old_dentry.is_negative());
-        assert!(new_dentry.is_negative());
-        assert!(
+        debug_assert!(!old_dentry.is_negative());
+        debug_assert!(new_dentry.is_negative());
+        debug_assert!(
             new_dentry
                 .inner
                 .lock()
@@ -339,8 +339,8 @@ impl InodeOp for Ext4Inode {
     }
     fn symlink<'a>(&'a self, dentry: Arc<Dentry>, target: String) {
         // dentry应该是负目录项
-        assert!(dentry.is_negative());
-        assert!(target.len() < 4096); // 符号链接目标路径长度限制
+        debug_assert!(dentry.is_negative());
+        debug_assert!(target.len() < 4096); // 符号链接目标路径长度限制
                                       // 分配inode_num
         let new_inode_num = self
             .ext4_fs
@@ -437,8 +437,8 @@ impl InodeOp for Ext4Inode {
     }
     fn mkdir<'a>(&'a self, dentry: Arc<Dentry>, mode: u16) {
         // dentry应该是负目录项
-        assert!(dentry.is_negative());
-        assert!(mode & S_IFDIR != 0);
+        debug_assert!(dentry.is_negative());
+        debug_assert!(mode & S_IFDIR != 0);
         let ext4_block_size = self.get_block_size();
         // 分配inode_num
         let new_inode_num = self
@@ -509,7 +509,7 @@ impl InodeOp for Ext4Inode {
     /// 不同的字符设备类型, 使用Inode不同
     /// 目前仅支持字符设备, 设备号都是静态分配
     fn mknod<'a>(&'a self, dentry: Arc<Dentry>, mode: u16, dev: DevT) {
-        assert!(dentry.is_negative());
+        debug_assert!(dentry.is_negative());
         let file_type = mode & S_IFMT;
         match file_type {
             S_IFIFO => {
@@ -572,7 +572,7 @@ impl InodeOp for Ext4Inode {
                     (5, 0) => {
                         // /dev/tty
                         // 分配inode_num
-                        assert!(dentry.absolute_path.starts_with("/dev/tty"));
+                        debug_assert!(dentry.absolute_path.starts_with("/dev/tty"));
                         let new_inode_num = self
                             .ext4_fs
                             .upgrade()
@@ -585,7 +585,7 @@ impl InodeOp for Ext4Inode {
                         dentry.inner.lock().inode = Some(tty_inode);
                     } // /dev/tty
                     (10, 0) => {
-                        assert!(dentry.absolute_path == "/dev/rtc");
+                        debug_assert!(dentry.absolute_path == "/dev/rtc");
                         let new_inode_num = self
                             .ext4_fs
                             .upgrade()
@@ -600,7 +600,7 @@ impl InodeOp for Ext4Inode {
                     // /dev/urandom
                     (1, 9) => {
                         log::error!("urandom absolute_path: {:?}", dentry.absolute_path);
-                        assert!(dentry.absolute_path == "/dev/urandom");
+                        debug_assert!(dentry.absolute_path == "/dev/urandom");
                         let new_inode_num = self
                             .ext4_fs
                             .upgrade()
@@ -612,7 +612,7 @@ impl InodeOp for Ext4Inode {
                     }
                     (10, 237) => {
                         // /dev/loop-control
-                        assert!(dentry.absolute_path == "/dev/loop-control");
+                        debug_assert!(dentry.absolute_path == "/dev/loop-control");
                         let new_inode_num = self
                             .ext4_fs
                             .upgrade()
