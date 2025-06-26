@@ -523,11 +523,11 @@ impl Socket {
             panic!();
         }
         //必须是af_alg的socket
-        assert!(
+        debug_assert!(
             addr.salg_family == Domain::AF_ALG as u16,
             "[Socket_bind_af_alg]:the socket domain is not AF_ALG"
         );
-        assert!(
+        debug_assert!(
             self.get_is_af_alg() == true,
             "[Socket_bind_af_alg]:the socket is not af_alg"
         );
@@ -1067,7 +1067,7 @@ pub unsafe fn socket_address_from_unix(
     len: usize,
     socket: &Socket,
 ) -> Result<Vec<u8>, Errno> {
-    assert!(
+    debug_assert!(
         socket.domain == Domain::AF_UNIX,
         "[socket_address_from_unix]: the socket domain is not AF_UNIX"
     );
@@ -2147,7 +2147,7 @@ impl ALG_Option {
     //optval已经复制到内核
     pub fn set(&self, socket: &Socket, opt: &[u8]) -> SyscallRet {
         log::error!("[ALG_Option_set]opt is {:?}", opt);
-        assert!(socket.domain == Domain::AF_ALG);
+        debug_assert!(socket.domain == Domain::AF_ALG);
         match self {
             ALG_Option::ALG_SET_KEY => {
                 // 设置密钥

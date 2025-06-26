@@ -381,7 +381,7 @@ impl Ext4InodeDisk {
 // Extent tree
 impl Ext4InodeDisk {
     pub fn init_extent_tree(&mut self) {
-        assert!(self.use_extent_tree(), "not use extent tree");
+        debug_assert!(self.use_extent_tree(), "not use extent tree");
         // 初始化extent tree
         let header_ptr = self.block.as_mut_ptr() as *mut Ext4ExtentHeader;
         unsafe {
@@ -389,17 +389,17 @@ impl Ext4InodeDisk {
         }
     }
     fn extent_header(&self) -> Ext4ExtentHeader {
-        assert!(self.use_extent_tree(), "not use extent tree");
-        assert!(!self.has_inline_data());
+        debug_assert!(self.use_extent_tree(), "not use extent tree");
+        debug_assert!(!self.has_inline_data());
         // extent_header是block的前12字节
         unsafe {
             let extent_header_ptr = self.block.as_ptr() as *const Ext4ExtentHeader;
-            assert!((*extent_header_ptr).magic == 0xF30A, "magic number error");
+            debug_assert!((*extent_header_ptr).magic == 0xF30A, "magic number error");
             *extent_header_ptr
         }
     }
     fn extent_idxs(&self, extent_header: &Ext4ExtentHeader) -> Vec<Ext4ExtentIdx> {
-        assert!(extent_header.depth > 0, "not index node");
+        debug_assert!(extent_header.depth > 0, "not index node");
         let mut extent_idx = Vec::new();
         // extent_idx是block的后4字节
         unsafe {
@@ -411,7 +411,7 @@ impl Ext4InodeDisk {
         extent_idx
     }
     fn extents(&self, extent_header: &Ext4ExtentHeader) -> Vec<Ext4Extent> {
-        assert!(extent_header.depth == 0, "not leaf node");
+        debug_assert!(extent_header.depth == 0, "not leaf node");
         let mut extents = Vec::new();
         unsafe {
             // 偏移量是3个u32, 是extent_header的大小
@@ -661,7 +661,7 @@ impl Ext4InodeDisk {
         let mut extent_header = self.extent_header();
         let mut extents = self.extents(&extent_header);
         let mid = extents.len() / 2;
-        assert!(
+        debug_assert!(
             mid == 2,
             "split_leaf_block for Ext4InodeDisk should be called when extents.len == 4"
         );
@@ -1521,7 +1521,7 @@ impl Ext4Inode {
         // }
         let dir_size = self.inner.read().inode_on_disk.get_size();
         log::error!("[Ext4Inode::lookup] dir_size: {}, name: {}", dir_size, name);
-        assert!(
+        debug_assert!(
             dir_size & (PAGE_SIZE as u64 - 1) == 0,
             "dir_size is not page aligned, {}",
             dir_size
@@ -1533,14 +1533,14 @@ impl Ext4Inode {
         dir_content.find(name)
     }
     pub fn getdents(&self, buf: &mut [u8], offset: usize) -> Result<(usize, usize), Errno> {
-        assert!(self.inner.read().inode_on_disk.is_dir(), "not a directory");
+        debug_assert!(self.inner.read().inode_on_disk.is_dir(), "not a directory");
         let inner = self.inner.read();
         let link_count = inner.inode_on_disk.links_count as usize;
         if link_count == 0 {
             return Err(Errno::ENOENT); // 目录已被删除
         }
         let dir_size = inner.inode_on_disk.get_size();
-        assert!(
+        debug_assert!(
             dir_size & (PAGE_SIZE as u64 - 1) == 0,
             "dir_size is not page aligned"
         );
@@ -1646,7 +1646,7 @@ impl Ext4Inode {
             let mut inner = self.inner.write();
             // 处理inline data类型
             if inner.inode_on_disk.has_inline_data() {
-                assert!(current_size <= EXT4_MAX_INLINE_DATA as u64);
+                debug_assert!(current_size <= EXT4_MAX_INLINE_DATA as u64);
                 inner.inode_on_disk.block[new_size as usize..current_size as usize].fill(0);
                 // 更新inode的size
                 inner.inode_on_disk.set_size(new_size);
@@ -1704,7 +1704,7 @@ impl Ext4Inode {
         let mut inner_guard = self.inner.write();
         let inode_on_disk = &mut inner_guard.inode_on_disk;
         if inode_on_disk.has_inline_data() {
-            assert!(current_size <= EXT4_MAX_INLINE_DATA as u64);
+            debug_assert!(current_size <= EXT4_MAX_INLINE_DATA as u64);
             // 将inline data转换为extent tree
             if current_size > 0 {
                 let page = self.get_page_cache(0).unwrap();
@@ -1849,7 +1849,7 @@ impl Ext4Inode {
 // Todo: 更新inode的时间戳
 impl Ext4Inode {
     pub fn set_entry(&self, old_name: &str, new_inode_num: u32, new_file_type: u8) {
-        assert!(self.inner.read().inode_on_disk.is_dir(), "not a directory");
+        debug_assert!(self.inner.read().inode_on_disk.is_dir(), "not a directory");
         log::info!(
             "[Ext4Inode::set_entry] old_name: {}, new_inode_num: {}, new_file_type: {}",
             old_name,
@@ -1857,7 +1857,7 @@ impl Ext4Inode {
             new_file_type
         );
         let dir_size = self.inner.read().inode_on_disk.get_size();
-        assert!(
+        debug_assert!(
             dir_size & (PAGE_SIZE as u64 - 1) == 0,
             "dir_size is not page aligned"
         );
@@ -1876,7 +1876,7 @@ impl Ext4Inode {
     ///     1. 注意可能使用inline_data
     /// ToOptimize: 获得page_cache后, 直接修改page_cache的内容, 而不是重新读取buf
     pub fn add_entry(&self, dentry: Arc<Dentry>, inode_num: u32, file_type: u8) {
-        assert!(self.inner.read().inode_on_disk.is_dir(), "not a directory");
+        debug_assert!(self.inner.read().inode_on_disk.is_dir(), "not a directory");
         log::error!(
             "[Ext4Inode::add_entry] name: {}, inode_num: {}, file_type: {}",
             dentry.get_last_name(),
@@ -1884,7 +1884,7 @@ impl Ext4Inode {
             file_type
         );
         let old_dir_size = self.inner.read().inode_on_disk.get_size() as usize;
-        assert!(
+        debug_assert!(
             old_dir_size & (PAGE_SIZE - 1) == 0,
             "dir_size is not page aligned"
         );
@@ -1932,10 +1932,10 @@ impl Ext4Inode {
         }
     }
     pub fn delete_entry(&self, name: &str, inode_num: u32) -> Result<(), Errno> {
-        assert!(self.inner.read().inode_on_disk.is_dir(), "not a directory");
+        debug_assert!(self.inner.read().inode_on_disk.is_dir(), "not a directory");
         log::error!("[Ext4Inode::delete_entry] name: {}", name);
         let dir_size = self.inner.read().inode_on_disk.get_size();
-        assert!(
+        debug_assert!(
             dir_size & (PAGE_SIZE as u64 - 1) == 0,
             "dir_size is not page aligned"
         );

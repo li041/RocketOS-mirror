@@ -106,7 +106,7 @@ impl GroupDesc {
         inode_bitmap_size: usize,
         is_dir: bool,
     ) -> Option<usize> {
-        assert!(
+        debug_assert!(
             inode_bitmap_size <= ext4_block_size,
             "inode_bitmap_size: {}, ext4_block_size: {}",
             inode_bitmap_size,

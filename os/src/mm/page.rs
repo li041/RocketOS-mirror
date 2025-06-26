@@ -188,7 +188,7 @@ impl Page {
         T: Sized,
     {
         let type_size = core::mem::size_of::<T>();
-        assert!(
+        debug_assert!(
             offset + type_size <= PAGE_SIZE,
             "offset: {:#x}, type_size: {:#x}",
             offset,
@@ -205,7 +205,7 @@ impl Page {
                 let _guard = info.read(); // 加读锁
                 let ptr = unsafe {
                     let addr = self.addr_of_offset(offset);
-                    assert!(offset + core::mem::size_of::<T>() <= PAGE_SIZE);
+                    debug_assert!(offset + core::mem::size_of::<T>() <= PAGE_SIZE);
                     &*(addr as *const T)
                 };
                 f(ptr)
@@ -214,7 +214,7 @@ impl Page {
                 let _guard = info.read(); // 加读锁
                 let ptr = unsafe {
                     let addr = self.addr_of_offset(offset);
-                    assert!(offset + core::mem::size_of::<T>() <= PAGE_SIZE);
+                    debug_assert!(offset + core::mem::size_of::<T>() <= PAGE_SIZE);
                     &*(addr as *const T)
                 };
                 f(ptr)
@@ -228,7 +228,7 @@ impl Page {
                 let mut guard = info.write(); // 加写锁
                 let ptr = unsafe {
                     let addr = self.addr_of_offset(offset);
-                    assert!(offset + core::mem::size_of::<T>() <= PAGE_SIZE);
+                    debug_assert!(offset + core::mem::size_of::<T>() <= PAGE_SIZE);
                     &mut *(addr as *mut T)
                 };
                 guard.modified = true;
@@ -238,7 +238,7 @@ impl Page {
                 let mut guard = info.write(); // 加写锁
                 let ptr = unsafe {
                     let addr = self.addr_of_offset(offset);
-                    assert!(offset + core::mem::size_of::<T>() <= PAGE_SIZE);
+                    debug_assert!(offset + core::mem::size_of::<T>() <= PAGE_SIZE);
                     &mut *(addr as *mut T)
                 };
                 guard.modified = true;

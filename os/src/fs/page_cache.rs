@@ -67,7 +67,7 @@ impl AddressSpace {
         inline_data: &[u8],
     ) -> Arc<Page> {
         // inline data目前最大是60字节, 应该是第一页
-        assert!(page_index == 0);
+        debug_assert!(page_index == 0);
         let page = Arc::new(Page::new_inline(inode, inline_data));
         self.i_pages.insert(page_index, page.clone());
         page

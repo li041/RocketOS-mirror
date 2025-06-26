@@ -31,7 +31,6 @@ use crate::{
         flags::{FUTEX_PRIVATE_FLAG, FUTEX_WAKE},
     },
     mm::{MapArea, MapPermission, MapType, MemorySet, VPNRange, VirtAddr, KERNEL_SPACE},
-    mutex::SpinNoIrqLock,
     net::addr::is_unspecified,
     signal::{SiField, Sig, SigHandler, SigInfo, SigPending, SigSet, SignalStack, UContext},
     syscall::errno::{self, Errno, SyscallRet},
@@ -84,12 +83,12 @@ pub struct Task {
     // 基本变量
     tid: RwLock<TidHandle>,                                 // 线程id
     tgid: AtomicUsize,                                      // 线程组id
-    tid_address: SpinNoIrqLock<TidAddress>,                 // 线程id地址
+    tid_address: Mutex<TidAddress>,                 // 线程id地址
     status: Mutex<TaskStatus>,                              // 任务状态
     time_stat: SyncUnsafeCell<TimeStat>,                    // 任务时间统计
-    parent: Arc<SpinNoIrqLock<Option<Weak<Task>>>>,         // 父任务
-    children: Arc<SpinNoIrqLock<BTreeMap<Tid, Arc<Task>>>>, // 子任务
-    thread_group: Arc<SpinNoIrqLock<ThreadGroup>>,          // 线程组
+    parent: Arc<Mutex<Option<Weak<Task>>>>,         // 父任务
+    children: Arc<Mutex<BTreeMap<Tid, Arc<Task>>>>, // 子任务
+    thread_group: Arc<Mutex<ThreadGroup>>,          // 线程组
     exit_code: AtomicI32,                                   // 退出码
     exe_path: Arc<RwLock<String>>,                          // 执行路径
 
@@ -97,19 +96,19 @@ pub struct Task {
     // 包括System V shm管理
     memory_set: RwLock<Arc<RwLock<MemorySet>>>, // 地址空间
     // futex管理, 线程局部
-    robust_list_head: AtomicUsize, // struct robust_list_head* head
+    robust_list_head: AtomicUsize, //  线程局部的robust futex链表头
     // 文件系统
     fd_table: Mutex<Arc<FdTable>>,
-    root: Arc<SpinNoIrqLock<Arc<Path>>>,
-    pwd: Arc<SpinNoIrqLock<Arc<Path>>>,
+    root: Arc<Mutex<Arc<Path>>>,
+    pwd: Arc<Mutex<Arc<Path>>>,
     umask: AtomicU16, // 文件权限掩码
     // 信号处理
-    sig_pending: SpinNoIrqLock<SigPending>,      // 待处理信号
-    sig_handler: Arc<SpinNoIrqLock<SigHandler>>, // 信号处理函数
-    sig_stack: SpinNoIrqLock<Option<SignalStack>>, // 额外信号栈
+    sig_pending: Mutex<SigPending>,      // 待处理信号
+    sig_handler: Arc<Mutex<SigHandler>>, // 信号处理函数
+    sig_stack: Mutex<Option<SignalStack>>, // 额外信号栈
     itimerval: Arc<RwLock<[ITimerVal; 3]>>,      // 定时器
     rlimit: Arc<RwLock<[RLimit; 16]>>,           // 资源限制
-    cpu_mask: SpinNoIrqLock<CpuMask>,            // CPU掩码
+    cpu_mask: Mutex<CpuMask>,            // CPU掩码
     // 权限设置
     pgid: AtomicUsize, // 进程组id
     uid: AtomicU32,    // 用户id
@@ -147,26 +146,26 @@ impl Task {
             kstack: KernelStack(0),
             tid: RwLock::new(TidHandle(0)),
             tgid: AtomicUsize::new(0),
-            tid_address: SpinNoIrqLock::new(TidAddress::new()),
+            tid_address: Mutex::new(TidAddress::new()),
             status: Mutex::new(TaskStatus::Ready),
             time_stat: SyncUnsafeCell::new(TimeStat::default()),
-            parent: Arc::new(SpinNoIrqLock::new(None)),
-            children: Arc::new(SpinNoIrqLock::new(BTreeMap::new())),
-            thread_group: Arc::new(SpinNoIrqLock::new(ThreadGroup::new())),
+            parent: Arc::new(Mutex::new(None)),
+            children: Arc::new(Mutex::new(BTreeMap::new())),
+            thread_group: Arc::new(Mutex::new(ThreadGroup::new())),
             exit_code: AtomicI32::new(0),
             exe_path: Arc::new(RwLock::new(String::new())),
             memory_set: RwLock::new(Arc::new(RwLock::new(MemorySet::new_bare()))),
             robust_list_head: AtomicUsize::new(0),
             fd_table: Mutex::new(FdTable::new_bare()),
-            root: Arc::new(SpinNoIrqLock::new(Path::zero_init())),
-            pwd: Arc::new(SpinNoIrqLock::new(Path::zero_init())),
+            root: Arc::new(Mutex::new(Path::zero_init())),
+            pwd: Arc::new(Mutex::new(Path::zero_init())),
             umask: AtomicU16::new(0),
-            sig_pending: SpinNoIrqLock::new(SigPending::new()),
-            sig_handler: Arc::new(SpinNoIrqLock::new(SigHandler::new())),
-            sig_stack: SpinNoIrqLock::new(None),
+            sig_pending: Mutex::new(SigPending::new()),
+            sig_handler: Arc::new(Mutex::new(SigHandler::new())),
+            sig_stack: Mutex::new(None),
             itimerval: Arc::new(RwLock::new([ITimerVal::default(); 3])),
             rlimit: Arc::new(RwLock::new([RLimit::default(); RLIM_NLIMITS])),
-            cpu_mask: SpinNoIrqLock::new(CpuMask::ALL),
+            cpu_mask: Mutex::new(CpuMask::ALL),
             pgid: AtomicUsize::new(0),
             uid: AtomicU32::new(0),
             euid: AtomicU32::new(0),
@@ -210,27 +209,27 @@ impl Task {
             kstack: KernelStack(kstack),
             tid: RwLock::new(tid),
             tgid,
-            tid_address: SpinNoIrqLock::new(TidAddress::new()),
+            tid_address: Mutex::new(TidAddress::new()),
             status: Mutex::new(TaskStatus::Ready),
             time_stat: SyncUnsafeCell::new(TimeStat::default()),
-            parent: Arc::new(SpinNoIrqLock::new(None)),
+            parent: Arc::new(Mutex::new(None)),
             // 注：children结构中保留了对任务的Arc引用
-            children: Arc::new(SpinNoIrqLock::new(BTreeMap::new())),
-            thread_group: Arc::new(SpinNoIrqLock::new(ThreadGroup::new())),
+            children: Arc::new(Mutex::new(BTreeMap::new())),
+            thread_group: Arc::new(Mutex::new(ThreadGroup::new())),
             exit_code: AtomicI32::new(0),
             exe_path: Arc::new(RwLock::new(String::from("/initproc"))),
             memory_set: RwLock::new(Arc::new(RwLock::new(memory_set))),
             robust_list_head: AtomicUsize::new(0),
             fd_table: Mutex::new(FdTable::new()),
-            root: Arc::new(SpinNoIrqLock::new(root_path.clone())),
-            pwd: Arc::new(SpinNoIrqLock::new(root_path)),
+            root: Arc::new(Mutex::new(root_path.clone())),
+            pwd: Arc::new(Mutex::new(root_path)),
             umask: AtomicU16::new(S_IWGRP | S_IWOTH), // 默认umask为022
-            sig_pending: SpinNoIrqLock::new(SigPending::new()),
-            sig_handler: Arc::new(SpinNoIrqLock::new(SigHandler::new())),
-            sig_stack: SpinNoIrqLock::new(None),
+            sig_pending: Mutex::new(SigPending::new()),
+            sig_handler: Arc::new(Mutex::new(SigHandler::new())),
+            sig_stack: Mutex::new(None),
             itimerval: Arc::new(RwLock::new([ITimerVal::default(); 3])),
             rlimit: Arc::new(RwLock::new([RLimit::default(); RLIM_NLIMITS])),
-            cpu_mask: SpinNoIrqLock::new(CpuMask::ALL),
+            cpu_mask: Mutex::new(CpuMask::ALL),
             pgid,
             uid,
             euid,
@@ -273,7 +272,7 @@ impl Task {
         children_tid_ptr: usize,
     ) -> Result<Arc<Self>, Errno> {
         let tid = tid_alloc();
-        let tid_address = SpinNoIrqLock::new(TidAddress::new());
+        let tid_address = Mutex::new(TidAddress::new());
         let exit_code = AtomicI32::new(0);
         let status = Mutex::new(TaskStatus::Ready);
         let tgid;
@@ -308,7 +307,7 @@ impl Task {
             log::warn!("[kernel_clone] handle CLONE_SIGHAND");
             sig_handler = self.sig_handler.clone();
         } else {
-            sig_handler = Arc::new(SpinNoIrqLock::new(
+            sig_handler = Arc::new(Mutex::new(
                 self.op_sig_handler_mut(|handler| handler.clone()),
             ))
         }
@@ -357,15 +356,15 @@ impl Task {
         else {
             log::info!("[kernel_clone] child task{} is a process", tid);
             tgid = AtomicUsize::new(tid.0);
-            parent = Arc::new(SpinNoIrqLock::new(Some(Arc::downgrade(self))));
-            children = Arc::new(SpinNoIrqLock::new(BTreeMap::new()));
-            thread_group = Arc::new(SpinNoIrqLock::new(ThreadGroup::new()));
+            parent = Arc::new(Mutex::new(Some(Arc::downgrade(self))));
+            children = Arc::new(Mutex::new(BTreeMap::new()));
+            thread_group = Arc::new(Mutex::new(ThreadGroup::new()));
             itimerval = Arc::new(RwLock::new([ITimerVal::default(); 3]));
             rlimit = Arc::new(RwLock::new([RLimit::default(); RLIM_NLIMITS]));
         }
 
         if flags.contains(CloneFlags::CLONE_PARENT) {
-            parent = Arc::new(SpinNoIrqLock::new(self.parent.lock().clone()));
+            parent = Arc::new(Mutex::new(self.parent.lock().clone()));
         }
 
         // 对vfork情况做特殊处理
@@ -402,12 +401,12 @@ impl Task {
         let kstack = KernelStack(kstack);
 
         // 初始化其他未初始化属性
-        sig_pending = SpinNoIrqLock::new(SigPending::new());
-        sig_stack = SpinNoIrqLock::new(None);
+        sig_pending = Mutex::new(SigPending::new());
+        sig_stack = Mutex::new(None);
         let tid = RwLock::new(tid);
         let robust_list_head = AtomicUsize::new(0);
         let time_stat = SyncUnsafeCell::new(TimeStat::default());
-        cpu_mask = SpinNoIrqLock::new(CpuMask::ALL);
+        cpu_mask = Mutex::new(CpuMask::ALL);
         let umask = AtomicU16::new(self.umask.load(core::sync::atomic::Ordering::Relaxed));
         let exe_path = self.exe_path.clone();
         // 创建新任务
@@ -1571,10 +1570,10 @@ pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
 
 // 在clone时没有设置`CLONE_THREAD`标志, 为新任务创建新的`Path`结构
 // 需要深拷贝`Path`, 但共享底层的`Dentry`和`VfsMount`
-fn clone_path(old_path: &Arc<SpinNoIrqLock<Arc<Path>>>) -> Arc<SpinNoIrqLock<Arc<Path>>> {
+fn clone_path(old_path: &Arc<Mutex<Arc<Path>>>) -> Arc<Mutex<Arc<Path>>> {
     let old_path = old_path.lock();
     let new_path = Path::from_existed_user(&old_path);
-    Arc::new(SpinNoIrqLock::new(new_path))
+    Arc::new(Mutex::new(new_path))
 }
 
 // 把参数, 环境变量, 辅助信息压入用户栈

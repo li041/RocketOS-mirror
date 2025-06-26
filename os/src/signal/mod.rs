@@ -76,7 +76,7 @@ pub fn handle_signal() {
         #[cfg(target_arch = "loongarch64")]
         if task.can_restart()   // 优先判断是否可以重启以恢复原有状态
             && action.flags.contains(SigActionFlag::SA_RESTART)
-            && task.is_interrupted()
+            && task.is_interrupted() && action.sa_handler != SIG_DFL && action.sa_handler != SIG_IGN
         {
             log::warn!("[handle_signal] handle SA_RESTART");
             trap_cx.set_sepc(trap_cx.era - 4);

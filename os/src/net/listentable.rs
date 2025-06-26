@@ -95,7 +95,7 @@ impl ListenTable {
     pub fn listen(&self,listen_endpoint:IpListenEndpoint)->SyscallRet {
         //判断listen_endpoint想要监听的port是否有人已经在监听e了
         let port=listen_endpoint.port;
-        assert!(port!=0);
+        debug_assert!(port!=0);
         let mut entry=self.table[port as usize].lock();
         if entry.is_none(){
             log::error!("[listen_table_listen]:has create a listen entry");

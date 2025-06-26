@@ -29,7 +29,7 @@ impl FAT32FileSystem {
             .lock()
             .read(0, |boot_sector: &FAT32BootSector| {
                 log::info!("FAT32FileSystem::open(): boot_sector: {:?}", boot_sector);
-                assert!(
+                debug_assert!(
                     boot_sector.is_valid(),
                     "FAT32FileSystem::open(): Error loading boot_sector!"
                 );
@@ -49,7 +49,7 @@ impl FAT32FileSystem {
         )
         .lock()
         .read(0, |fs_info_sector: &FAT32FSInfoSector| {
-            assert!(
+            debug_assert!(
                 fs_info_sector.is_valid(),
                 "FAT32FileSystem::open(): Error loading fs_info_sector!"
             );

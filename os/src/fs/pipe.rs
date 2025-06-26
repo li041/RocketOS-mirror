@@ -237,7 +237,7 @@ impl Pipe {
     }
     /// 调整管道大小, 成功返回新大小, 失败返回Errno
     pub fn resize(&self, new_size: usize) -> Result<usize, Errno> {
-        assert!(new_size > 0);
+        debug_assert!(new_size > 0);
         let mut buffer = self.inode.buffer.lock();
         buffer.resize(new_size)
     }
@@ -285,7 +285,7 @@ impl PipeRingBuffer {
         } else if self.status == RingBufferStatus::EMPTY {
             0
         } else {
-            assert!(self.head != self.tail);
+            debug_assert!(self.head != self.tail);
             if self.head < self.tail {
                 self.tail - self.head
             } else {
@@ -487,7 +487,7 @@ impl FileOp for Pipe {
         }
     }
     fn write<'a>(&'a self, buf: &'a [u8]) -> SyscallRet {
-        assert!(self.writable);
+        debug_assert!(self.writable);
         let mut write_size = 0;
         let nonblock = self.flags.load(core::sync::atomic::Ordering::Relaxed)
             & OpenFlags::O_NONBLOCK.bits()

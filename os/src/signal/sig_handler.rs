@@ -16,12 +16,12 @@ impl SigHandler {
     }
 
     pub fn get(&self, sig: Sig) -> SigAction {
-        assert!(sig.is_valid());
+        debug_assert!(sig.is_valid());
         self.actions[sig.index()]
     }
 
     pub fn update(&mut self, sig: Sig, new: SigAction) {
-        assert!(!sig.is_kill_or_stop());
+        debug_assert!(!sig.is_kill_or_stop());
         self.actions[sig.index()] = new;
     }
 

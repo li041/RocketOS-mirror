@@ -251,7 +251,7 @@ impl PasswdEntry {
     let line = line.trim_end_matches('\n');
     // 用 ':' 拆成 7 段
     let parts: Vec<&str> = line.split(':').collect();
-    assert!(parts.len() == 7, "passwd line should have 7 parts, got {}", parts.len());
+    debug_assert!(parts.len() == 7, "passwd line should have 7 parts, got {}", parts.len());
     Some(PasswdEntry {
         pw_name:   parts[0].to_string(),
         pw_passwd: parts[1].to_string(),

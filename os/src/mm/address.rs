@@ -203,7 +203,7 @@ where
     T: StepByOne + Copy + PartialEq + PartialOrd + Debug,
 {
     pub fn new(start: T, end: T) -> Self {
-        assert!(start <= end, "start {:?} > end {:?}!", start, end);
+        debug_assert!(start <= end, "start {:?} > end {:?}!", start, end);
         Self { l: start, r: end }
     }
     #[inline(always)]

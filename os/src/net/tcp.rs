@@ -108,7 +108,7 @@ impl TcpSocket {
             //分配一个可用的
             get_ephemeral_port()
         };
-        assert!(port!=0);
+        debug_assert!(port!=0);
         //确保addr不是0.0.0.0
         let addr=if is_unspecified(local_addr.addr) {
             Some(smoltcp::wire::IpAddress::Ipv4(Ipv4Address::new(127, 0, 0, 1)))

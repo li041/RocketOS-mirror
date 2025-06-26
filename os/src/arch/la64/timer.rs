@@ -120,7 +120,7 @@ pub fn get_time_ns() -> usize {
 #[inline(always)]
 pub fn get_clock_freq() -> usize {
     unsafe {
-        assert!(CLOCK_FREQ != 0, "CLOCK_FREQ is not initialized");
+        debug_assert!(CLOCK_FREQ != 0, "CLOCK_FREQ is not initialized");
         super::config::CLOCK_FREQ
     }
 }

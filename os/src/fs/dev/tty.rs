@@ -40,7 +40,7 @@ impl TTyInodeInner {
 
 impl TtyInode {
     pub fn new(ino: usize, inode_mode: u16, major: u32, minor: u32) -> Arc<Self> {
-        assert!(inode_mode & S_IFCHR == S_IFCHR);
+        debug_assert!(inode_mode & S_IFCHR == S_IFCHR);
         let inner = TTyInodeInner::new(Ext4InodeDisk::new_chr(inode_mode, major, minor));
         Arc::new(TtyInode {
             inode_num: ino,

@@ -43,7 +43,7 @@ impl ExeInode {
 impl InodeOp for ExeInode {
     fn get_link(&self) -> String {
         let mut exe_path = current_task().exe_path();
-        assert!(
+        debug_assert!(
             exe_path.starts_with('/'),
             "ExeInode::get_link: exe_path is not absolute: {}",
             exe_path

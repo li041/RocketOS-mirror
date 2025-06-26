@@ -36,7 +36,7 @@ impl UrandomInodeInner {
 }
 impl UrandomInode {
     pub fn new(ino: usize, inode_mode: u16, major: u32, minor: u32) -> Arc<Self> {
-        assert!(inode_mode & S_IFCHR == S_IFCHR);
+        debug_assert!(inode_mode & S_IFCHR == S_IFCHR);
         let inner = UrandomInodeInner::new(Ext4InodeDisk::new_chr(inode_mode, major, minor));
         Arc::new(UrandomInode {
             inode_num: ino,

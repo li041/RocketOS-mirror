@@ -45,7 +45,6 @@ pub fn sys_clone(
     tls_ptr: usize,
     children_tid_ptr: usize,
 ) -> SyscallRet {
-    // ToDo: 更新错误检验
     log::error!("[sys_clone] flags: {:b}, stack_ptr: {:x}, parent_tid_ptr: {:x}, tls_ptr: {:x}, chilren_tid_ptr: {:x}", flags, stack_ptr, parent_tid_ptr, tls_ptr, children_tid_ptr);
     let flags = match CloneFlags::from_bits(flags as u32) {
         None => {
@@ -97,11 +96,11 @@ pub fn sys_clone(
     flags: u32,
     stack_ptr: usize,
     parent_tid_ptr: usize,
-    chilren_tid_ptr: usize,
+    children_tid_ptr: usize,
     tls_ptr: usize,
 ) -> SyscallRet {
     // ToDo: 更新错误检验
-    log::error!("[sys_clone] flags: {:b}, stack_ptr: {:x}, parent_tid_ptr: {:x}, tls_ptr: {:x}, chilren_tid_ptr: {:x}", flags, stack_ptr, parent_tid_ptr, tls_ptr, chilren_tid_ptr);
+    log::error!("[sys_clone] flags: {:b}, stack_ptr: {:x}, parent_tid_ptr: {:x}, tls_ptr: {:x}, children_tid_ptr: {:x}", flags, stack_ptr, parent_tid_ptr, tls_ptr, children_tid_ptr);
     let flags = match CloneFlags::from_bits(flags as u32) {
         None => {
             log::error!("clone flags is None: {}", flags);
@@ -111,7 +110,7 @@ pub fn sys_clone(
     };
     log::error!("[sys_clone] flags: {:?}", flags);
     let task = current_task();
-    let new_task = task.kernel_clone(&flags, stack_ptr, chilren_tid_ptr)?;
+    let new_task = task.kernel_clone(&flags, stack_ptr, children_tid_ptr)?;
     let new_task_tid = new_task.tid();
 
     if flags.contains(CloneFlags::CLONE_PARENT_SETTID) {
@@ -120,16 +119,9 @@ pub fn sys_clone(
         log::error!("parent_tid_ptr: {:x}", parent_tid_ptr);
         copy_to_user(parent_tid_ptr as *mut u8, &content as *const u8, 8)?;
     }
-    if flags.contains(CloneFlags::CLONE_CHILD_SETTID) {
-        log::warn!("[sys_clone] handle CLONE_CHILD_SETTID");
-        let content = (new_task_tid as u64).to_le_bytes();
-        log::error!("chilren_tid_ptr: {:x}", parent_tid_ptr);
-        copy_to_user(chilren_tid_ptr as *mut u8, &content as *const u8, 8)?;
-        new_task.set_tas(new_task.tid());
-    }
     if flags.contains(CloneFlags::CLONE_CHILD_CLEARTID) {
         log::warn!("[sys_clone] handle CLONE_CHILD_CLEARTID");
-        new_task.set_tac(chilren_tid_ptr);
+        new_task.set_tac(children_tid_ptr);
     }
     if flags.contains(CloneFlags::CLONE_SETTLS) {
         log::warn!("[sys_clone] handle CLONE_SETTLS");
@@ -139,6 +131,11 @@ pub fn sys_clone(
         save_trap_context(&new_task, trap_cx);
     }
     add_task(new_task);
+    if flags.contains(CloneFlags::CLONE_VFORK) {
+        log::warn!("[sys_clone] handle CLONE_VFORK");
+        // vfork的特殊处理, 需要阻塞父进程直到子进程调用execve或exit
+        wait();
+    }
     drop(task);
     // yield_current_task();
     Ok(new_task_tid)

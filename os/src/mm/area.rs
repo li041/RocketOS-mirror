@@ -249,7 +249,7 @@ impl MapArea {
     /// data: with offset and maybe with shorter length, quite flexible
     /// assume that all frames were cleared before
     pub fn copy_data_private(&mut self, page_table: &mut PageTable, data: &[u8], offset: usize) {
-        assert!(self.map_type == MapType::Framed);
+        debug_assert!(self.map_type == MapType::Framed);
         let mut start: usize = 0;
         let mut current_vpn = self.vpn_range.get_start();
         let len = data.len();

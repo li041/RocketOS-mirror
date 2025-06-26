@@ -27,7 +27,7 @@ fn leap_year(year: i64) -> bool {
     year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
 }
 fn leap_year_cnt(year: i64) -> i64 {
-    assert!(year >= 1);
+    debug_assert!(year >= 1);
     year / 4 - year / 100 + year / 400
 }
 

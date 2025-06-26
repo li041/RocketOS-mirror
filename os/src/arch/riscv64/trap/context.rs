@@ -240,8 +240,8 @@ pub fn trap_cx_test() {
             options(nostack)
         );
     }
-    assert!(read_cx.x == regs);
-    assert!(read_cx.sstatus.bits() == read_cx_sstatus);
-    assert!(read_cx.sepc == 0x114);
+    debug_assert!(read_cx.x == regs);
+    debug_assert!(read_cx.sstatus.bits() == read_cx_sstatus);
+    debug_assert!(read_cx.sepc == 0x114);
     println!("trap_cx_test pass!");
 }

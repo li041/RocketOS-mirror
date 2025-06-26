@@ -27,7 +27,7 @@ impl BlockCache {
     /// Load a new BlockCache from disk.
     /// 从磁盘start_block_id开始连续读取cache_size大小的数据到内存中
     pub fn new(fs_block_id: usize, block_device: Arc<dyn BlockDevice>, cache_size: usize) -> Self {
-        assert!(
+        debug_assert!(
             cache_size & (VIRTIO_BLOCK_SIZE - 1) == 0,
             "Cache size must be a multiple of VIRTIO_BLOCK_SIZE, which is {}",
             cache_size
@@ -55,7 +55,7 @@ impl BlockCache {
         T: Sized,
     {
         let type_size = core::mem::size_of::<T>();
-        assert!(
+        debug_assert!(
             offset + type_size <= self.cache_size,
             "offset: {}, type_size: {}, cache_size: {}",
             offset,
@@ -71,7 +71,7 @@ impl BlockCache {
         T: Sized,
     {
         let type_size = core::mem::size_of::<T>();
-        assert!(offset + type_size <= self.cache_size);
+        debug_assert!(offset + type_size <= self.cache_size);
         self.modified = true;
         let addr = self.addr_of_offset(offset);
         unsafe { &mut *(addr as *mut T) }
