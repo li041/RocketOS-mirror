@@ -14,11 +14,12 @@ use errno::{Errno, SyscallRet};
 use fs::{
     sys_chdir, sys_chroot, sys_close, sys_copy_file_range, sys_dup, sys_dup3, sys_faccessat,
     sys_fadvise64, sys_fallocate, sys_fchdir, sys_fchmod, sys_fchmodat, sys_fchown, sys_fchownat,
-    sys_fcntl, sys_fstat, sys_fstatat, sys_fsync, sys_ftruncate, sys_getcwd, sys_getdents64,
-    sys_ioctl, sys_linkat, sys_lseek, sys_mkdirat, sys_mknodat, sys_mount, sys_msync, sys_openat,
-    sys_openat2, sys_pipe2, sys_ppoll, sys_pread, sys_pselect6, sys_pwrite, sys_read,
-    sys_readlinkat, sys_readv, sys_renameat2, sys_sendfile, sys_statfs, sys_statx, sys_symlinkat,
-    sys_sync, sys_umask, sys_umount2, sys_unlinkat, sys_utimensat, sys_write, sys_writev,
+    sys_fcntl, sys_fstat, sys_fstatat, sys_fstatfs, sys_fsync, sys_ftruncate, sys_getcwd,
+    sys_getdents64, sys_ioctl, sys_linkat, sys_lseek, sys_mkdirat, sys_mknodat, sys_mount,
+    sys_msync, sys_openat, sys_openat2, sys_pipe2, sys_ppoll, sys_pread, sys_preadv, sys_pselect6,
+    sys_pwrite, sys_pwritev, sys_read, sys_readlinkat, sys_readv, sys_renameat2, sys_sendfile,
+    sys_statfs, sys_statx, sys_symlinkat, sys_sync, sys_sync_file_range, sys_truncate, sys_umask,
+    sys_umount2, sys_unlinkat, sys_utimensat, sys_write, sys_writev,
 };
 use mm::{
     sys_brk, sys_get_mempolicy, sys_madvise, sys_membarrier, sys_mlock, sys_mmap, sys_mprotect,
@@ -63,7 +64,7 @@ use crate::{
     timer::{ITimerVal, TimeSpec},
 };
 pub use fs::FcntlOp;
-pub use fs::AT_SYMLINK_NOFOLLOW;
+pub use fs::{AT_SYMLINK_NOFOLLOW, NAME_MAX};
 pub use task::sys_exit;
 pub mod errno;
 mod fs;
@@ -89,6 +90,8 @@ const SYSCALL_LINKAT: usize = 37;
 const SYSCALL_UMOUNT2: usize = 39;
 const SYSCALL_MOUNT: usize = 40;
 const SYSCALL_STATFS: usize = 43;
+const SYSCALL_FSTATFS: usize = 44;
+const SYSCALL_TRUNCATE: usize = 45;
 const SYSCALL_FTRUNCATE: usize = 46;
 const SYSCALL_FALLOCATE: usize = 47;
 const SYSCALL_FACCESSAT: usize = 48;
@@ -110,6 +113,8 @@ const SYSCALL_READV: usize = 65;
 const SYSCALL_WRITEV: usize = 66;
 const SYSCALL_PREAD: usize = 67;
 const SYSCALL_PWRITE: usize = 68;
+const SYSCALL_PREADV: usize = 69;
+const SYSCALL_PWRITEV: usize = 70;
 const SYSCALL_SENDFILE: usize = 71;
 const SYSCALL_PSELECT6: usize = 72;
 const SYSCALL_PPOLL: usize = 73;
@@ -118,6 +123,7 @@ const SYSCALL_FSTATAT: usize = 79;
 const SYSCALL_FSTAT: usize = 80;
 const SYSCALL_SYNC: usize = 81;
 const SYSCALL_FSYNC: usize = 82;
+const SYSCALL_SYNC_FILE_RANGE: usize = 84;
 const SYSCALL_UTIMENSAT: usize = 88;
 const SYSCALL_ACCT: usize = 89;
 const SYSCALL_EXIT: usize = 93;
@@ -278,7 +284,9 @@ pub fn syscall(
         ),
         SYSCALL_SETSID => sys_setsid(),
         SYSCALL_STATFS => sys_statfs(a0 as *const u8, a1 as *mut StatFs),
-        SYSCALL_FTRUNCATE => sys_ftruncate(a0, a1),
+        SYSCALL_FSTATFS => sys_fstatfs(a0, a1 as *mut StatFs),
+        SYSCALL_TRUNCATE => sys_truncate(a0 as *const u8, a1 as isize),
+        SYSCALL_FTRUNCATE => sys_ftruncate(a0, a1 as isize),
         SYSCALL_FALLOCATE => sys_fallocate(a0, a1 as i32, a2 as isize, a3 as isize),
         SYSCALL_FACCESSAT => sys_faccessat(a0 as usize, a1 as *const u8, a2 as i32, a3 as i32),
         SYSCALL_CHDIR => sys_chdir(a0 as *const u8),
@@ -299,6 +307,8 @@ pub fn syscall(
         SYSCALL_WRITEV => sys_writev(a0, a1 as *const IoVec, a2),
         SYSCALL_PREAD => sys_pread(a0, a1 as *mut u8, a2, a3 as isize),
         SYSCALL_PWRITE => sys_pwrite(a0, a1 as *const u8, a2, a3 as isize),
+        SYSCALL_PREADV => sys_preadv(a0, a1 as *const IoVec, a2, a3 as isize),
+        SYSCALL_PWRITEV => sys_pwritev(a0, a1 as *const IoVec, a2, a3 as isize),
         SYSCALL_SENDFILE => sys_sendfile(a0, a1, a2 as *mut usize, a3),
         SYSCALL_PSELECT6 => sys_pselect6(a0, a1, a2, a3, a4 as *const TimeSpec, a5),
         SYSCALL_PPOLL => sys_ppoll(a0 as *mut PollFd, a1, a2 as *const TimeSpec, a3),
@@ -309,6 +319,7 @@ pub fn syscall(
         SYSCALL_FSTAT => sys_fstat(a0 as i32, a1 as *mut Stat),
         SYSCALL_SYNC => sys_sync(),
         SYSCALL_FSYNC => sys_fsync(a0),
+        SYSCALL_SYNC_FILE_RANGE => sys_sync_file_range(a0, a1 as isize, a2 as isize, a3 as i32),
         SYSCALL_UTIMENSAT => {
             sys_utimensat(a0 as i32, a1 as *const u8, a2 as *const TimeSpec, a3 as i32)
         }

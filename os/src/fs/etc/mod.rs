@@ -6,7 +6,7 @@ use super::{
     dentry::{self, insert_core_dentry, Dentry},
     file::OpenFlags,
     mount::VfsMount,
-    namei::{filename_create, parse_path, path_openat, Nameidata},
+    namei::{filename_create, parse_path_uncheck, path_openat, Nameidata},
     path::Path,
     proc::meminfo::MemInfoFile,
     uapi::DevT,
@@ -17,7 +17,7 @@ pub fn init_etcfs(root_path: Arc<Path>) {
     let etc_path = "/etc";
     // let mut nd = Nameidata::new(etc_path, AT_FDCWD);
     let mut nd = Nameidata {
-        path_segments: parse_path(etc_path),
+        path_segments: parse_path_uncheck(etc_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,

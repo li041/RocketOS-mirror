@@ -599,6 +599,9 @@ impl FileOp for Pipe {
     fn fsync(&self) -> SyscallRet {
         return Err(Errno::EINVAL);
     }
+    fn fadvise(&self, _offset: usize, _len: usize, _advice: i32) -> SyscallRet {
+        Err(Errno::ESPIPE)
+    }
     fn add_wait_queue(&self, tid: Tid) {
         self.inode.buffer.lock().add_waiter(tid);
     }
@@ -607,6 +610,10 @@ impl FileOp for Pipe {
     }
     fn writable(&self) -> bool {
         self.writable
+    }
+    fn can_seek(&self) -> Result<(), Errno> {
+        log::error!("[Pipe::can_seek] Pipe does not support seeking");
+        Err(Errno::ESPIPE) // 管道不支持偏移
     }
     fn seek(&self, offset: isize, whence: super::uapi::Whence) -> SyscallRet {
         return Err(Errno::ESPIPE);

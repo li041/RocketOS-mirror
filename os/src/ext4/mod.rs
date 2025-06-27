@@ -27,7 +27,7 @@ use dentry::{EXT4_DT_CHR, EXT4_DT_DIR, EXT4_DT_FIFO, EXT4_DT_LNK};
 use fs::EXT4_BLOCK_SIZE;
 use inode::{
     load_inode, write_inode, write_inode_on_disk, Ext4Inode, EXT4_EXTENTS_FL, EXT4_INLINE_DATA_FL,
-    S_IALLUGO, S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFLNK, S_IFMT, S_IFREG, S_ISGID,
+    S_IALLUGO, S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFLNK, S_IFMT, S_IFREG, S_ISGID, S_ISVTX,
 };
 
 use core::any::Any;
@@ -97,7 +97,9 @@ impl InodeOp for Ext4Inode {
         );
         if let Some(child) = parent_entry.get_child(name) {
             // 先查找parent_entry的child
-            debug_assert!(child.absolute_path == format!("{}/{}", parent_entry.absolute_path, name));
+            debug_assert!(
+                child.absolute_path == format!("{}/{}", parent_entry.absolute_path, name)
+            );
             return child.clone();
         } else {
             // 从目录中查找
@@ -341,7 +343,7 @@ impl InodeOp for Ext4Inode {
         // dentry应该是负目录项
         debug_assert!(dentry.is_negative());
         debug_assert!(target.len() < 4096); // 符号链接目标路径长度限制
-                                      // 分配inode_num
+                                            // 分配inode_num
         let new_inode_num = self
             .ext4_fs
             .upgrade()
@@ -378,6 +380,15 @@ impl InodeOp for Ext4Inode {
         // 1. 更新inode的硬链接数, ctime
         let inode = dentry.get_inode();
         let inode_num = inode.get_inode_num();
+        // 检查粘滞位，如果设置了粘滞位, 且当前任务的uid不是文件的所有者, 返回EPERM
+        if self.get_mode() & S_ISVTX != 0 && current_task().fsuid() != self.get_uid() {
+            log::warn!(
+                "[Ext4Inode::unlink] sticky bit set, uid: {}, inode_uid: {}",
+                current_task().fsuid(),
+                self.get_uid()
+            );
+            return Err(Errno::EPERM);
+        }
         if let Some(ext4_inode) = inode.as_any().downcast_ref::<Ext4Inode>() {
             ext4_inode.sub_nlinks();
             // Todo: 检查硬链接数是否为0, 如果是则加入orphan list延迟删除

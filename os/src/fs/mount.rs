@@ -22,7 +22,7 @@ use super::{
     etc::init_etcfs,
     inode::InodeOp,
     manager::{Fake_FS, FileSystemOp},
-    namei::{filename_create, parse_path, Nameidata},
+    namei::{filename_create, parse_path_uncheck, Nameidata},
     path::Path,
     proc::init_procfs,
     tmp::init_tmpfs,

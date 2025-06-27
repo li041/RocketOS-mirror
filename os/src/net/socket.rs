@@ -19,6 +19,7 @@ use core::{
 
 use crate::{
     arch::{config::SysResult, mm::copy_to_user},
+    ext4::inode::{S_IFDIR, S_IFSOCK},
     fs::{
         fdtable::FdFlags, file::OpenFlags, inode::InodeOp, namei::path_openat, pipe::Pipe,
         uapi::IoVec,
@@ -60,6 +61,18 @@ use super::{
     unix::{Database, NscdRequest, RequestType},
     IP,
 };
+
+lazy_static::lazy_static! {
+    pub static ref SOCKET_INODE: Arc<SocketInode> = Arc::new(SocketInode {});
+}
+pub struct SocketInode {}
+
+impl InodeOp for SocketInode {
+    fn get_mode(&self) -> u16 {
+        S_IFSOCK
+    }
+}
+
 /// Set O_NONBLOCK flag on the open fd
 pub const SOCK_NONBLOCK: usize = 0x800;
 pub const SOCK_CLOEXEC: usize = 0x80000;
@@ -246,7 +259,7 @@ impl Socket {
     //     let mut wait=self.waiter.lock();
     //     wait.pop().unwrap_or(0)
     // }
-    
+
     pub fn set_pend_send(&self, buf: &[u8]) {
         // 锁住 mutex，得到 &mut Option<Vec<u8>>
         let mut guard = self.pend_send.lock();
@@ -599,7 +612,6 @@ impl Socket {
                             socket_peer_ucred: Mutex::new(None),
                             //todo,是复制还是新建立
                             // waiter:Mutex::new(Vec::new()),
-
                         },
                         from_ipendpoint_to_socketaddr(remote_addr),
                     ))
@@ -1516,7 +1528,7 @@ impl FileOp for Socket {
             if self.buffer.is_some() {
                 // Todo: 这里不对, 不应该使用w_ready()检查, 同时w_ready()返回false时也不应该返回Ok(0)
                 // if self.buffer.as_ref().unwrap().w_ready() {
-                    return self.buffer.as_ref().unwrap().write(buf);
+                return self.buffer.as_ref().unwrap().write(buf);
                 // }
                 // return Ok(0);
             }
@@ -1581,7 +1593,7 @@ impl FileOp for Socket {
         panic!("can not get offset socket");
     }
     fn get_inode(&self) -> Arc<dyn InodeOp> {
-        panic!("can not get inode socket");
+        SOCKET_INODE.clone()
     }
     fn r_ready(&self) -> bool {
         log::error!("[sokcet_readable]:poll readable");

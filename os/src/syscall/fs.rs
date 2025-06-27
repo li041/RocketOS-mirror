@@ -8,7 +8,7 @@ use virtio_drivers::PAGE_SIZE;
 use crate::arch::config::USER_MAX_VA;
 use crate::arch::timer::{get_time_ms, get_time_ns, get_time_us};
 use crate::ext4::dentry;
-use crate::ext4::inode::{S_IFREG, S_ISGID};
+use crate::ext4::inode::{S_IFREG, S_IFSOCK, S_ISGID};
 use crate::fs::dentry::{chown, dentry_check_access, LinuxDirent64, F_OK, R_OK, W_OK, X_OK};
 use crate::fs::fd_set::init_fdset;
 use crate::fs::fdtable::FdFlags;
@@ -311,6 +311,64 @@ pub fn sys_pread(fd: usize, buf: *mut u8, count: usize, offset: isize) -> Syscal
     }
 }
 
+pub fn sys_preadv(fd: usize, iov_ptr: *const IoVec, iovcnt: usize, offset: isize) -> SyscallRet {
+    if offset < 0 {
+        return Err(Errno::EINVAL);
+    }
+    if iovcnt == 0 {
+        return Ok(0);
+    }
+    if iovcnt > i32::MAX as usize {
+        return Err(Errno::EINVAL);
+    }
+    let task = current_task();
+    let file = task.fd_table().get_file(fd);
+    if file.is_none() {
+        return Err(Errno::EBADF);
+    }
+    let file = file.unwrap();
+    if !file.readable() {
+        return Err(Errno::EBADF);
+    }
+    if file.get_inode().can_lookup() {
+        return Err(Errno::EISDIR);
+    }
+
+    let mut iovecs = vec![IoVec::default(); iovcnt];
+    copy_from_user(iov_ptr, iovecs.as_mut_ptr(), iovcnt)?;
+
+    let mut total_read = 0;
+    let mut current_offset = offset as usize;
+    let mut iovec_total_len = 0;
+
+    for iovec in iovecs.iter() {
+        iovec_total_len += iovec.len;
+        if iovec.len == 0 {
+            continue;
+        }
+        if iovec_total_len > isize::MAX as usize {
+            log::error!("[sys_preadv] total length of iovec exceeds ssize_t max");
+            return Err(Errno::EINVAL);
+        }
+        if current_offset.checked_add(iovec.len).is_none() {
+            return Err(Errno::EINVAL);
+        }
+
+        let mut ker_buf = vec![0u8; iovec.len];
+        let read_len = file.pread(&mut ker_buf, current_offset)?;
+        if read_len == 0 {
+            break;
+        }
+
+        copy_to_user(iovec.base as *mut u8, ker_buf.as_ptr(), read_len)?;
+
+        total_read += read_len;
+        current_offset += read_len;
+    }
+
+    Ok(total_read)
+}
+
 pub fn sys_pwrite(fd: usize, buf: *const u8, count: usize, offset: isize) -> SyscallRet {
     // log::info!(
     //     "[sys_pwrite] fd: {}, buf: {:?}, count: {}, offset: {}",
@@ -348,6 +406,68 @@ pub fn sys_pwrite(fd: usize, buf: *const u8, count: usize, offset: isize) -> Sys
         log::error!("[sys_pwrite] fd {} not opened", fd);
         Err(Errno::EBADF)
     }
+}
+
+pub fn sys_pwritev(fd: usize, iov_ptr: *const IoVec, iovcnt: usize, offset: isize) -> SyscallRet {
+    log::info!(
+        "[sys_pwritev] fd: {}, iov_ptr: {:?}, iovcnt: {}, offset: {}",
+        fd,
+        iov_ptr,
+        iovcnt,
+        offset
+    );
+    if offset < 0 {
+        return Err(Errno::EINVAL);
+    }
+    if iovcnt == 0 {
+        return Ok(0);
+    }
+    if iovcnt > i32::MAX as usize {
+        return Err(Errno::EINVAL);
+    }
+    let task = current_task();
+    let file = task.fd_table().get_file(fd);
+    if file.is_none() {
+        return Err(Errno::EBADF);
+    }
+    let file = file.unwrap();
+    // 先检查是否支持随机访问， 再检查权限
+    file.can_seek()?;
+    if !file.writable() {
+        return Err(Errno::EBADF);
+    }
+    if file.get_inode().can_lookup() {
+        return Err(Errno::EISDIR);
+    }
+
+    let mut iovecs = vec![IoVec::default(); iovcnt];
+    copy_from_user(iov_ptr, iovecs.as_mut_ptr(), iovcnt)?;
+
+    let mut total_written = 0;
+    let mut current_offset = offset as usize;
+    let mut iovec_total_len = 0;
+
+    for iovec in iovecs.iter() {
+        iovec_total_len += iovec.len;
+        if iovec.len == 0 {
+            continue;
+        }
+        if iovec_total_len > isize::MAX as usize {
+            log::error!("[sys_pwritev] total length of iovec exceeds ssize_t max");
+            return Err(Errno::EINVAL);
+        }
+        if current_offset.checked_add(iovec.len).is_none() {
+            return Err(Errno::EINVAL);
+        }
+
+        let mut ker_buf = vec![0u8; iovec.len];
+        copy_from_user(iovec.base as *const u8, ker_buf.as_mut_ptr(), iovec.len)?;
+        let written = file.pwrite(&ker_buf, current_offset)?;
+        total_written += written;
+        current_offset += written;
+    }
+
+    Ok(total_written)
 }
 
 /// 注意Fd_flags并不会在dup中继承
@@ -453,7 +573,7 @@ pub fn sys_linkat(
         return Err(Errno::ENAMETOOLONG);
     }
     // Todo: fake, 需要支持mount
-    if oldpath == "/proc/meminfo" {
+    if oldpath == "/proc/meminfo" || oldpath == "/proc/cpuinfo" {
         return Err(Errno::EXDEV);
     }
     if flags & !(AT_SYMLINK_FOLLOW | AT_EMPTY_PATH) != 0 {
@@ -746,6 +866,8 @@ pub const AT_EMPTY_PATH: i32 = 0x1000;
 /// 中间路径部分始终会跟随符号链接, 只有最后一部分受AT_SYMLINK_NOFOLLOW影响
 pub const AT_SYMLINK_NOFOLLOW: i32 = 0x100;
 pub const AT_SYMLINK_FOLLOW: i32 = 0x400;
+pub const AT_NO_AUTOMOUNT: i32 = 0x800;
+pub const AT_STATX_SYNC_TYPE: i32 = 0x6000;
 
 pub fn sys_fstatat(dirfd: i32, pathname: *const u8, statbuf: *mut Stat, flags: i32) -> SyscallRet {
     if flags & AT_EMPTY_PATH != 0 {
@@ -1432,6 +1554,7 @@ pub fn sys_ppoll(
             let mut file_vec = Vec::new();
             for i in 0..nfds {
                 let poll_fd = &mut poll_fds[i];
+                log::info!("[sys_ppoll] poll_fd: {:?}", poll_fd);
                 if poll_fd.fd < 0 {
                     continue;
                 } else {
@@ -1920,80 +2043,265 @@ pub fn sys_sendfile(
         len = in_file.read(&mut buf)?;
         in_file.seek(origin_offset as isize, Whence::SeekSet)?;
         // 将新的偏移量写回用户空间
-        copy_to_user(offset_ptr, &(offset + len + 1), 1)?;
+        copy_to_user(offset_ptr, &(offset + len), 1)?;
     }
     let ret = out_file.write(&buf[..len])?;
     log::info!("[sys_sendfile] ret: {}", ret);
     Ok(ret)
 }
 
-pub fn sys_ftruncate(fildes: usize, length: usize) -> SyscallRet {
+pub fn sys_ftruncate(fildes: usize, length: isize) -> SyscallRet {
     log::info!("[sys_ftruncate] fd: {}, length: {}", fildes, length);
+    if length < 0 {
+        log::error!("[sys_ftruncate] length is negative");
+        return Err(Errno::EINVAL);
+    }
     let task = current_task();
     if let Some(file) = task.fd_table().get_file(fildes) {
-        if file.get_inode().get_mode() & S_IFDIR != 0 {
+        let mode = file.get_inode().get_mode();
+        if mode & S_IFSOCK == S_IFSOCK {
+            log::error!("[sys_ftruncate] ftruncate on a socket");
+            return Err(Errno::EINVAL);
+        }
+        if mode & S_IFDIR == S_IFDIR {
             log::error!("[sys_ftruncate] ftruncate on a directory");
             return Err(Errno::EISDIR);
         }
-        file.truncate(length)
+        if !file.writable() {
+            log::error!("[sys_ftruncate] file is not writable");
+            return Err(Errno::EINVAL);
+        }
+        file.truncate(length as usize)
     } else {
         Err(Errno::EBADF)
     }
 }
 
+pub fn sys_truncate(path: *const u8, length: isize) -> SyscallRet {
+    const MAX_FILE_SIZE: usize = 16 * 1024 * 1024;
+    log::info!("[sys_truncate] path: {:?}, length: {}", path, length);
+
+    if length < 0 {
+        log::error!("[sys_truncate] negative length");
+        return Err(Errno::EINVAL);
+    }
+    if length >= MAX_FILE_SIZE as isize {
+        log::error!("[sys_truncate] length exceeds maximum file size");
+        return Err(Errno::EFBIG);
+    }
+    let path = c_str_to_string(path)?;
+    if path.len() > PATH_MAX as usize {
+        log::error!("[sys_truncate] pathname too long");
+        return Err(Errno::ENAMETOOLONG);
+    }
+    let mut nd = Nameidata::new(&path, AT_FDCWD)?;
+    let dentry = filename_lookup(&mut nd, true)?;
+
+    if dentry.is_dir() {
+        log::error!("[sys_truncate] truncate on directory");
+        return Err(Errno::EISDIR);
+    }
+    dentry_check_access(&dentry, W_OK, true)?;
+    dentry.get_inode().truncate(length as usize)
+}
+
 /* loongarch */
 // Todo: 使用mask指示内核需要返回哪些信息
+// pub fn sys_statx(
+//     dirfd: i32,
+//     pathname: *const u8,
+//     flags: i32,
+//     _mask: u32,
+//     statxbuf: *mut Statx,
+//     // statbuf: *mut Stat,
+// ) -> SyscallRet {
+//     log::info!(
+//         "[sys_statx] dirfd: {}, pathname: {:?}, flags: {}, mask: {}",
+//         dirfd,
+//         pathname,
+//         flags,
+//         _mask
+//     );
+//     if flags & AT_EMPTY_PATH != 0 {
+//         if let Some(file) = current_task().fd_table().get_file(dirfd as usize) {
+//             let inode = file.get_inode();
+//             let statx = Statx::from(inode.getattr());
+//             log::error!("statx: statx: {:?}", statx);
+//             copy_to_user(statxbuf, &statx as *const Statx, 1)?;
+//             return Ok(0);
+//         }
+//         // 根据fd获取文件失败
+//         return Err(Errno::EBADF);
+//     }
+//     let path = c_str_to_string(pathname)?;
+//     if path.is_empty() {
+//         log::error!("[sys_statx] pathname is empty");
+//         return Err(Errno::EINVAL);
+//     }
+//     let mut nd = Nameidata::new(&path, dirfd)?;
+//     let follow_symlink = flags & AT_SYMLINK_NOFOLLOW == 0;
+//     match filename_lookup(&mut nd, follow_symlink) {
+//         Ok(dentry) => {
+//             let inode = dentry.get_inode();
+//             let statx = Statx::from(inode.getattr());
+//             // log::error!("statx: statx: {:?}", statx);
+//             if let Err(e) = copy_to_user(statxbuf, &statx as *const Statx, 1) {
+//                 // let stat = Stat::from(inode.getattr());
+//                 // if let Err(e) = copy_to_user(statbuf, &stat as *const Stat, 1) {
+//                 log::error!("statx: copy_to_user failed: {:?}", e);
+//                 return Err(e);
+//             }
+//             return Ok(0);
+//         }
+//         Err(e) => {
+//             log::info!("[sys_statx] fail to statx: {}, {:?}", path, e);
+//             return Err(e);
+//         }
+//     }
+// }
+
+/// 请求文件类型 (stx_mode & S_IFMT)
+pub const STATX_TYPE: u32 = 0x00000001;
+/// 请求文件权限模式 (stx_mode & ~S_IFMT)
+pub const STATX_MODE: u32 = 0x00000002;
+/// 请求硬链接计数 (stx_nlink)
+pub const STATX_NLINK: u32 = 0x00000004;
+/// 请求文件所有者UID (stx_uid)
+pub const STATX_UID: u32 = 0x00000008;
+/// 请求文件所属组GID (stx_gid)
+pub const STATX_GID: u32 = 0x00000010;
+/// 请求最后访问时间 (stx_atime)
+pub const STATX_ATIME: u32 = 0x00000020;
+/// 请求最后修改时间 (stx_mtime)
+pub const STATX_MTIME: u32 = 0x00000040;
+/// 请求最后状态变更时间 (stx_ctime)
+pub const STATX_CTIME: u32 = 0x00000080;
+/// 请求inode编号 (stx_ino)
+pub const STATX_INO: u32 = 0x00000100;
+/// 请求文件大小 (stx_size)
+pub const STATX_SIZE: u32 = 0x00000200;
+/// 请求分配的磁盘块数 (stx_blocks)
+pub const STATX_BLOCKS: u32 = 0x00000400;
+
+/// 基础统计信息 (包含传统stat结构中的所有字段)
+pub const STATX_BASIC_STATS: u32 = 0x000007ff;
+pub const STATX_ALL: u32 = 0x00000fff;
+
+/// 请求文件创建时间 (stx_btime)
+pub const STATX_BTIME: u32 = 0x00000800;
+/// 请求挂载点ID (stx_mnt_id)
+pub const STATX_MNT_ID: u32 = 0x00001000;
+/// 请求直接I/O对齐信息
+pub const STATX_DIOALIGN: u32 = 0x00002000;
+/// 请求扩展的唯一挂载点ID
+pub const STATX_MNT_ID_UNIQUE: u32 = 0x00004000;
+/// 请求子卷信息 (stx_subvol)
+pub const STATX_SUBVOL: u32 = 0x00008000;
 pub fn sys_statx(
     dirfd: i32,
     pathname: *const u8,
     flags: i32,
-    _mask: u32,
+    mask: u32,
     statxbuf: *mut Statx,
-    // statbuf: *mut Stat,
 ) -> SyscallRet {
     log::info!(
         "[sys_statx] dirfd: {}, pathname: {:?}, flags: {}, mask: {}",
         dirfd,
         pathname,
         flags,
-        _mask
+        mask
     );
+
+    // 检查无效的标志组合
+    const VALID_FLAGS: i32 =
+        AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT | AT_STATX_SYNC_TYPE;
+    if (flags & !VALID_FLAGS) != 0 {
+        log::error!("[sys_statx] invalid flags: {}", flags);
+        return Err(Errno::EINVAL);
+    }
+
+    // 检查 mask 是否有效
+    const VALID_MASK: u32 = STATX_TYPE
+        | STATX_MODE
+        | STATX_NLINK
+        | STATX_UID
+        | STATX_GID
+        | STATX_ATIME
+        | STATX_MTIME
+        | STATX_CTIME
+        | STATX_INO
+        | STATX_SIZE
+        | STATX_BLOCKS
+        | STATX_BTIME
+        | STATX_ALL;
+    if (mask & !VALID_MASK) != 0 {
+        log::error!("[sys_statx] invalid mask: {}", mask);
+        return Err(Errno::EINVAL);
+    }
+
+    // 处理 AT_EMPTY_PATH 标志
     if flags & AT_EMPTY_PATH != 0 {
+        if pathname.is_null() || unsafe { *pathname } != 0 {
+            log::error!("[sys_statx] AT_EMPTY_PATH requires empty pathname");
+            return Err(Errno::EINVAL);
+        }
+
         if let Some(file) = current_task().fd_table().get_file(dirfd as usize) {
             let inode = file.get_inode();
             let statx = Statx::from(inode.getattr());
-            log::error!("statx: statx: {:?}", statx);
-            copy_to_user(statxbuf, &statx as *const Statx, 1)?;
+            // 根据 mask 过滤不需要的字段
+            let filtered_statx = filter_statx_by_mask(statx, mask);
+            log::debug!("statx: {:?}", filtered_statx);
+            copy_to_user(statxbuf, &filtered_statx as *const Statx, 1)?;
             return Ok(0);
         }
-        // 根据fd获取文件失败
         return Err(Errno::EBADF);
     }
+
+    // 检查路径名是否为空
     let path = c_str_to_string(pathname)?;
     if path.is_empty() {
         log::error!("[sys_statx] pathname is empty");
-        return Err(Errno::EINVAL);
+        return Err(Errno::ENOENT);
     }
+
+    // 处理过长的路径名
+    if path.len() > PATH_MAX as usize {
+        log::error!("[sys_statx] pathname too long");
+        return Err(Errno::ENAMETOOLONG);
+    }
+
+    // 查找文件
     let mut nd = Nameidata::new(&path, dirfd)?;
     let follow_symlink = flags & AT_SYMLINK_NOFOLLOW == 0;
+
     match filename_lookup(&mut nd, follow_symlink) {
         Ok(dentry) => {
             let inode = dentry.get_inode();
             let statx = Statx::from(inode.getattr());
-            // log::error!("statx: statx: {:?}", statx);
-            if let Err(e) = copy_to_user(statxbuf, &statx as *const Statx, 1) {
-                // let stat = Stat::from(inode.getattr());
-                // if let Err(e) = copy_to_user(statbuf, &stat as *const Stat, 1) {
+            // 根据 mask 过滤不需要的字段
+            let filtered_statx = filter_statx_by_mask(statx, mask);
+            if let Err(e) = copy_to_user(statxbuf, &filtered_statx as *const Statx, 1) {
                 log::error!("statx: copy_to_user failed: {:?}", e);
                 return Err(e);
             }
-            return Ok(0);
+            Ok(0)
         }
         Err(e) => {
             log::info!("[sys_statx] fail to statx: {}, {:?}", path, e);
-            return Err(e);
+            Err(e)
         }
     }
+}
+
+/// 根据 mask 过滤不需要的 statx 字段
+fn filter_statx_by_mask(mut statx: Statx, mut mask: u32) -> Statx {
+    if mask == 0 {
+        // 如果 mask 为 0，默认返回基本字段
+        mask = STATX_BASIC_STATS;
+    }
+    // Todo: 根据 mask 清除不需要的字段
+    statx
 }
 
 /* loongarch end */
@@ -2005,7 +2313,13 @@ pub fn sys_statfs(path: *const u8, buf: *mut StatFs) -> SyscallRet {
         log::error!("[sys_statfs] pathname is empty");
         return Err(Errno::EINVAL);
     }
+    if path.len() > PATH_MAX as usize {
+        log::error!("[sys_statfs] pathname too long");
+        return Err(Errno::ENAMETOOLONG);
+    }
     log::info!("[sys_statfs] path: {:?}, buf: {:?}", path, buf);
+    let mut nd = Nameidata::new(&path, AT_FDCWD)?;
+    let dentry = filename_lookup(&mut nd, true)?;
     // 特殊处理根目录, 因为根目录的dentry是空字符串, path传入的是"/"
     // if path == "/" {
     let root_dentry = current_task().root().dentry.clone();
@@ -2020,22 +2334,27 @@ pub fn sys_statfs(path: *const u8, buf: *mut StatFs) -> SyscallRet {
             return Err(e);
         }
     }
-    // } else {
-    // Todo: 需要支持/tmp的tmpfs
-    // let mut nd = Nameidata::new(&path, AT_FDCWD);
-    // let target_dentry = lookup_dentry(&mut nd);
-    // let mount = get_mount_by_dentry(target_dentry).unwrap();
-    // match mount.statfs(buf) {
-    //     Ok(_) => {
-    //         log::info!("[sys_statfs] success to statfs");
-    //         return Ok(0);
-    //     }
-    //     Err(e) => {
-    //         log::info!("[sys_statfs] fail to statfs: {}, {:?}", path, e);
-    //         return Err(e);
-    //     }
-    // }
-    // }
+}
+
+/// Todo: 需要支持除根目录以外的vfs挂j
+pub fn sys_fstatfs(fd: usize, buf: *mut StatFs) -> SyscallRet {
+    log::info!("[sys_fstatfs] fd: {}, buf: {:?}", fd, buf);
+    let task = current_task();
+    if let Some(file) = task.fd_table().get_file(fd) {
+        // let dentry = file.get_path().dentry.clone();
+        let dentry = task.root().dentry.clone();
+        let mount = get_mount_by_dentry(dentry).ok_or(Errno::ENOENT)?;
+        match mount.statfs(buf) {
+            Ok(_) => {
+                log::info!("[sys_fstatfs] success to fstatfs");
+                return Ok(0);
+            }
+            Err(e) => {
+                return Err(e);
+            }
+        }
+    }
+    Err(Errno::EBADF)
 }
 
 pub fn sys_copy_file_range(
@@ -2230,11 +2549,11 @@ pub fn sys_faccessat(fd: usize, pathname: *const u8, mode: i32, flags: i32) -> S
         return Err(Errno::EINVAL);
     }
     // 检查 flags 是否只包含支持的标志
-    // let supported_flags = AT_EACCESS | AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH;
-    // if flags & !supported_flags != 0 {
-    //     log::error!("[sys_faccessat] Unsupported flags: {:#x}", flags);
-    //     return Err(Errno::EINVAL);
-    // }
+    let supported_flags = AT_EACCESS | AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH | 0x60;
+    if flags & !supported_flags != 0 {
+        log::error!("[sys_faccessat] Unsupported flags: {:#x}", flags);
+        return Err(Errno::EINVAL);
+    }
     log::info!(
         "[sys_faccessat] fd: {}, pathname: {:?}, mode: {}, flags: {}",
         fd,
@@ -2265,6 +2584,28 @@ pub fn sys_fsync(fd: usize) -> SyscallRet {
         return file.fsync();
     }
     return Err(Errno::EBADF);
+}
+
+// 定义标志位常量
+pub const SYNC_FILE_RANGE_WAIT_BEFORE: i32 = 1;
+pub const SYNC_FILE_RANGE_WRITE: i32 = 2;
+pub const SYNC_FILE_RANGE_WAIT_AFTER: i32 = 4;
+
+/// Todo: 现在只有错误检查，还需要实现具体的同步逻辑
+pub fn sys_sync_file_range(fd: usize, offset: isize, nbytes: isize, flags: i32) -> SyscallRet {
+    if offset < 0 || nbytes < 0 {
+        return Err(Errno::EINVAL);
+    }
+    // 检查标志位有效性
+    let valid_flags =
+        SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WRITE | SYNC_FILE_RANGE_WAIT_AFTER;
+
+    if flags & !valid_flags != 0 {
+        return Err(Errno::EINVAL);
+    }
+    let file = current_task().fd_table().get_file(fd).ok_or(Errno::EBADF)?;
+    // Todo:
+    return file.fsync();
 }
 
 pub const MS_ASYNC: i32 = 1;
@@ -2359,9 +2700,11 @@ pub fn sys_fchmod(fd: usize, mode: usize) -> SyscallRet {
             return Err(Errno::EBADF);
         }
         // 修改权限
-        file.get_inode().set_perm(mode as u16)
+        file.get_inode().set_perm(mode as u16);
+        Ok(0)
+    } else {
+        Err(Errno::EBADF)
     }
-    Err(Errno::EBADF)
 }
 
 /// 文件名的最大长度
@@ -2451,6 +2794,13 @@ pub fn sys_fchown(fd: usize, owner: u32, group: u32) -> SyscallRet {
     chown(&file.get_inode(), owner, group)
 }
 
+pub const POSIX_FADV_NORMAL: i32 = 0;
+pub const POSIX_FADV_RANDOM: i32 = 1;
+pub const POSIX_FADV_SEQUENTIAL: i32 = 2;
+pub const POSIX_FADV_WILLNEED: i32 = 3;
+pub const POSIX_FADV_DONTNEED: i32 = 4;
+pub const POSIX_FADV_NOREUSE: i32 = 5;
+
 pub fn sys_fadvise64(fd: usize, offset: usize, len: usize, advice: i32) -> SyscallRet {
     log::info!(
         "[sys_fadvise64] fd: {}, offset: {}, len: {}, advice: {}",
@@ -2460,8 +2810,14 @@ pub fn sys_fadvise64(fd: usize, offset: usize, len: usize, advice: i32) -> Sysca
         advice
     );
     log::warn!("[sys_fadvise64] Unimplemented");
+    // 检查合法的 advice 类型
+    match advice {
+        0..=5 => {}
+        _ => return Err(Errno::EINVAL),
+    }
+    let file = current_task().fd_table().get_file(fd).ok_or(Errno::EBADF)?;
     // 目前不支持任何操作
-    Ok(0)
+    file.fadvise(offset, len, advice)
 }
 
 /* fake end */

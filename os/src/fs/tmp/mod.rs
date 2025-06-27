@@ -4,7 +4,7 @@ use crate::ext4::inode::S_IFDIR;
 
 use super::{
     dentry::insert_core_dentry,
-    namei::{filename_create, parse_path, Nameidata},
+    namei::{filename_create, parse_path_uncheck, Nameidata},
     path::Path,
 };
 
@@ -12,7 +12,7 @@ pub fn init_tmpfs(root_path: Arc<Path>) {
     let tmp_path = "/tmp";
     // let mut nd = Nameidata::new(tmp_path, AT_FDCWD);
     let mut nd = Nameidata {
-        path_segments: parse_path(tmp_path),
+        path_segments: parse_path_uncheck(tmp_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,

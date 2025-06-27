@@ -4,7 +4,7 @@ use super::{
     dentry::{self, insert_core_dentry, Dentry},
     file::OpenFlags,
     mount::VfsMount,
-    namei::{filename_create, parse_path, path_openat, Nameidata},
+    namei::{filename_create, parse_path_uncheck, path_openat, Nameidata},
     path::Path,
     uapi::DevT,
     AT_FDCWD,
@@ -30,7 +30,7 @@ pub fn init_devfs(root_path: Arc<Path>) {
     let dev_path = "/dev";
     // let mut nd = Nameidata::new(dev_path, AT_FDCWD);
     let mut nd = Nameidata {
-        path_segments: parse_path(dev_path),
+        path_segments: parse_path_uncheck(dev_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,
@@ -48,7 +48,7 @@ pub fn init_devfs(root_path: Arc<Path>) {
     // /dev/cpu_dma_latency
     let cpu_dma_latency_path = "/dev/cpu_dma_latency";
     let mut nd = Nameidata {
-        path_segments: parse_path(cpu_dma_latency_path),
+        path_segments: parse_path_uncheck(cpu_dma_latency_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,
@@ -67,7 +67,7 @@ pub fn init_devfs(root_path: Arc<Path>) {
     let shm_path = "/dev/shm";
     let shm_mode = S_IFDIR as u16 | 0o755;
     nd = Nameidata {
-        path_segments: parse_path(shm_path),
+        path_segments: parse_path_uncheck(shm_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,
@@ -86,7 +86,7 @@ pub fn init_devfs(root_path: Arc<Path>) {
     let tty_mode = S_IFCHR as u16 | 0o666;
     let tty_devt = DevT::tty_devt();
     nd = Nameidata {
-        path_segments: parse_path(tty_path),
+        path_segments: parse_path_uncheck(tty_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,
@@ -113,7 +113,7 @@ pub fn init_devfs(root_path: Arc<Path>) {
     let tty_mode = S_IFCHR as u16 | 0o666;
     let tty_devt = DevT::tty_devt();
     nd = Nameidata {
-        path_segments: parse_path(tty_path),
+        path_segments: parse_path_uncheck(tty_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,
@@ -140,7 +140,7 @@ pub fn init_devfs(root_path: Arc<Path>) {
     let rtc_mode = S_IFCHR as u16 | 0o666;
     let rtc_devt = DevT::rtc_devt();
     nd = Nameidata {
-        path_segments: parse_path(rtc_path),
+        path_segments: parse_path_uncheck(rtc_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,
@@ -167,7 +167,7 @@ pub fn init_devfs(root_path: Arc<Path>) {
     let null_mode = S_IFCHR as u16 | 0o666;
     let null_devt = DevT::null_devt();
     nd = Nameidata {
-        path_segments: parse_path(null_path),
+        path_segments: parse_path_uncheck(null_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,
@@ -194,7 +194,7 @@ pub fn init_devfs(root_path: Arc<Path>) {
     let zero_mode = S_IFCHR as u16 | 0o666;
     let zero_devt = DevT::zero_devt();
     nd = Nameidata {
-        path_segments: parse_path(zero_path),
+        path_segments: parse_path_uncheck(zero_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,
@@ -220,7 +220,7 @@ pub fn init_devfs(root_path: Arc<Path>) {
     let urandom_node = S_IFCHR as u16 | 0o666;
     let urandom_devt = DevT::urandom_devt();
     nd = Nameidata {
-        path_segments: parse_path(urandom_path),
+        path_segments: parse_path_uncheck(urandom_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,
@@ -247,7 +247,7 @@ pub fn init_devfs(root_path: Arc<Path>) {
     let loop_control_mode = S_IFCHR as u16 | 0o666;
     let loop_control_devt = DevT::loop_control_devt();
     nd = Nameidata {
-        path_segments: parse_path(loop_control_path),
+        path_segments: parse_path_uncheck(loop_control_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,
@@ -274,7 +274,7 @@ pub fn init_devfs(root_path: Arc<Path>) {
     let loop0_mode = S_IFBLK as u16 | 0o666;
     let loop_devt = DevT::loopx_devt(0);
     nd = Nameidata {
-        path_segments: parse_path(loop0_path),
+        path_segments: parse_path_uncheck(loop0_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,

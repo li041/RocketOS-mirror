@@ -10,7 +10,7 @@ use super::{
     dentry::{self, insert_core_dentry, Dentry},
     file::OpenFlags,
     mount::VfsMount,
-    namei::{filename_create, parse_path, path_openat, Nameidata},
+    namei::{filename_create, parse_path_uncheck, path_openat, Nameidata},
     path::Path,
     pipe::PipeInode,
     uapi::DevT,
@@ -40,7 +40,7 @@ pub fn init_procfs(root_path: Arc<Path>) {
     let proc_path = "/proc";
     // let mut nd = Nameidata::new(proc_path, AT_FDCWD);
     let mut nd = Nameidata {
-        path_segments: parse_path(proc_path),
+        path_segments: parse_path_uncheck(proc_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,
@@ -58,7 +58,7 @@ pub fn init_procfs(root_path: Arc<Path>) {
     };
     let sys_path = "/proc/sys";
     let mut nd = Nameidata {
-        path_segments: parse_path(sys_path),
+        path_segments: parse_path_uncheck(sys_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,
@@ -75,7 +75,7 @@ pub fn init_procfs(root_path: Arc<Path>) {
     };
     let kernel_path = "/proc/sys/kernel";
     let mut nd = Nameidata {
-        path_segments: parse_path(kernel_path),
+        path_segments: parse_path_uncheck(kernel_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,
@@ -92,7 +92,7 @@ pub fn init_procfs(root_path: Arc<Path>) {
     };
     let taint_path = "/proc/sys/kernel/tainted";
     let mut nd = Nameidata {
-        path_segments: parse_path(taint_path),
+        path_segments: parse_path_uncheck(taint_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,
@@ -119,7 +119,7 @@ pub fn init_procfs(root_path: Arc<Path>) {
     let osrelease_path = "/proc/sys/kernel/osrelease";
     let osrelease_mode = S_IFREG as u16 | 0o444;
     let mut nd = Nameidata {
-        path_segments: parse_path(osrelease_path),
+        path_segments: parse_path_uncheck(osrelease_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,
@@ -140,7 +140,7 @@ pub fn init_procfs(root_path: Arc<Path>) {
     let pid_max_path = "/proc/sys/kernel/pid_max";
     let pid_max_mode = S_IFREG as u16 | 0o444;
     nd = Nameidata {
-        path_segments: parse_path(pid_max_path),
+        path_segments: parse_path_uncheck(pid_max_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,
@@ -168,7 +168,7 @@ pub fn init_procfs(root_path: Arc<Path>) {
     let mounts_path = "/proc/mounts";
     let mounts_mode = S_IFREG as u16 | 0o444;
     nd = Nameidata {
-        path_segments: parse_path(mounts_path),
+        path_segments: parse_path_uncheck(mounts_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,
@@ -196,7 +196,7 @@ pub fn init_procfs(root_path: Arc<Path>) {
     let meminfo_path = "/proc/meminfo";
     let meminfo_mode = S_IFREG as u16 | 0o444;
     nd = Nameidata {
-        path_segments: parse_path(meminfo_path),
+        path_segments: parse_path_uncheck(meminfo_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,
@@ -223,7 +223,7 @@ pub fn init_procfs(root_path: Arc<Path>) {
     // /proc/self
     let self_path = "/proc/self";
     let mut nd = Nameidata {
-        path_segments: parse_path(self_path),
+        path_segments: parse_path_uncheck(self_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,
@@ -242,7 +242,7 @@ pub fn init_procfs(root_path: Arc<Path>) {
     let exe_path = "/proc/self/exe";
     let exe_mode = S_IFLNK as u16 | 0o444;
     nd = Nameidata {
-        path_segments: parse_path(exe_path),
+        path_segments: parse_path_uncheck(exe_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,
@@ -272,7 +272,7 @@ pub fn init_procfs(root_path: Arc<Path>) {
     let fd_path = "/proc/self/fd";
     let fd_mode = S_IFDIR as u16 | 0o755;
     nd = Nameidata {
-        path_segments: parse_path(fd_path),
+        path_segments: parse_path_uncheck(fd_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,
@@ -306,7 +306,7 @@ pub fn init_procfs(root_path: Arc<Path>) {
     let maps_path = "/proc/self/maps";
     let maps_mode = S_IFREG as u16 | 0o744;
     nd = Nameidata {
-        path_segments: parse_path(maps_path),
+        path_segments: parse_path_uncheck(maps_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,
@@ -332,7 +332,7 @@ pub fn init_procfs(root_path: Arc<Path>) {
     let smaps_path = "/proc/self/smaps";
     let smaps_mode = S_IFREG as u16 | 0o444;
     nd = Nameidata {
-        path_segments: parse_path(smaps_path),
+        path_segments: parse_path_uncheck(smaps_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,
@@ -358,7 +358,7 @@ pub fn init_procfs(root_path: Arc<Path>) {
     let pagemap_path = "/proc/self/pagemap";
     let pagemap_mode = S_IFREG as u16 | 0o444;
     nd = Nameidata {
-        path_segments: parse_path(pagemap_path),
+        path_segments: parse_path_uncheck(pagemap_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,
@@ -384,7 +384,7 @@ pub fn init_procfs(root_path: Arc<Path>) {
     let status_path = "/proc/self/status";
     let status_mode = S_IFREG as u16 | 0o444;
     nd = Nameidata {
-        path_segments: parse_path(status_path),
+        path_segments: parse_path_uncheck(status_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,
@@ -410,7 +410,7 @@ pub fn init_procfs(root_path: Arc<Path>) {
     // /proc/pid
     let pid_path = "/proc/pid";
     let mut nd = Nameidata {
-        path_segments: parse_path(pid_path),
+        path_segments: parse_path_uncheck(pid_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,
@@ -429,7 +429,7 @@ pub fn init_procfs(root_path: Arc<Path>) {
     let pid_stat_path = "/proc/pid/stat";
     let pid_stat_mode = S_IFREG as u16 | 0o444;
     nd = Nameidata {
-        path_segments: parse_path(pid_stat_path),
+        path_segments: parse_path_uncheck(pid_stat_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,
@@ -456,7 +456,7 @@ pub fn init_procfs(root_path: Arc<Path>) {
     let cpuinfo_path = "/proc/cpuinfo";
     let cpuinfo_mode = S_IFREG as u16 | 0o444;
     nd = Nameidata {
-        path_segments: parse_path(cpuinfo_path),
+        path_segments: parse_path_uncheck(cpuinfo_path),
         dentry: root_path.dentry.clone(),
         mnt: root_path.mnt.clone(),
         depth: 0,

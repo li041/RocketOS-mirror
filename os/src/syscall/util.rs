@@ -41,7 +41,7 @@ pub struct Utsname {
 impl Default for Utsname {
     fn default() -> Self {
         Self {
-            sysname: Self::from_str("RocketOS"),
+            sysname: Self::from_str("Linux"),
             nodename: Self::from_str("LAPTOP"),
             release: Self::from_str("5.15.146.1-standard"),
             version: Self::from_str("#1 SMP Thu Jan"),
@@ -83,13 +83,18 @@ pub struct Tms {
     pub cstime: usize,
 }
 
-impl Default for Tms {
-    fn default() -> Self {
+impl Tms {
+    fn new() -> Self {
+        let task = current_task();
+        let time_stat = task.time_stat();
+        let utime = time_stat.user_time();
+        let stime = time_stat.sys_time();
+        let (cutime, cstime) = time_stat.child_user_system_time();
         Self {
-            utime: 1,
-            stime: 1,
-            cutime: 1,
-            cstime: 1,
+            utime: utime.as_us(),
+            stime: stime.as_us(),
+            cutime: cutime.as_us(),
+            cstime: cstime.as_us(),
         }
     }
 }
@@ -124,10 +129,7 @@ pub fn sys_uname(uts: usize) -> SyscallRet {
 #[allow(unused)]
 pub fn sys_times(buf: usize) -> SyscallRet {
     let buf = buf as *mut Tms;
-    let tms = Tms::default();
-    // unsafe {
-    //     core::ptr::write(buf, tms);
-    // }
+    let tms = Tms::new();
     copy_to_user(buf, &tms as *const Tms, 1)?;
     Ok(0)
 }

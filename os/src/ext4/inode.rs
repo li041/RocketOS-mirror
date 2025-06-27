@@ -62,6 +62,7 @@ pub const S_IFBLK: u16 = 0x6000; // Block device, 如/dev/loop0
 pub const S_IFDIR: u16 = 0x4000; // Directory
 pub const S_IFREG: u16 = 0x8000; // Regular file
 pub const S_IFLNK: u16 = 0xA000; // Symbolic link
+pub const S_IFSOCK: u16 = 0xC000; // Socket
 pub const S_IALLUGO: u16 = 0xFFF; // All permissions
 
 // inode flags
@@ -1651,6 +1652,21 @@ impl Ext4Inode {
                 // 更新inode的size
                 inner.inode_on_disk.set_size(new_size);
                 return Ok(0);
+            }
+        }
+        // 如果 current_size 位于一个页的中间，清零该页剩余部分
+        if current_size % PAGE_SIZE as u64 != 0 {
+            let page_index = current_size / PAGE_SIZE as u64;
+            if let Some(page) = self.get_page_cache(page_index as usize) {
+                let offset = (new_size % PAGE_SIZE as u64) as usize;
+                page.modify(0, |data: &mut [u8; PAGE_SIZE]| {
+                    data[offset..].fill(0);
+                });
+            } else {
+                log::warn!(
+                    "[Ext4Inode::extend_size] Expected existing page at {}, but not found",
+                    page_index
+                );
             }
         }
         // 清理页缓存
