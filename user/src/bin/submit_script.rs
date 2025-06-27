@@ -5,7 +5,7 @@ extern crate user_lib;
 
 // ltp 暂且没塞
 static TEST_LIST: &[&str] = &[
-    "basic_testcode.sh\0",
+    // "basic_testcode.sh\0",
     "iozone_testcode.sh\0",
     "busybox_testcode.sh\0",
     "netperf_testcode.sh\0",

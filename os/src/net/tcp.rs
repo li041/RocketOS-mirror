@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-30 16:26:09
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-19 17:45:14
+ * @LastEditTime: 2025-06-25 11:06:59
  * @FilePath: /RocketOS_netperfright/os/src/net/tcp.rs
  * @Description: tcp file 
  * 
@@ -341,7 +341,8 @@ impl TcpSocket {
                     Ok(())
                 }
                 else {
-                    log::error!("[tcpconnect]:connect failed");
+                    println!("[tcpconnect]:connect failed");
+                    println!("state is {:?}",self.get_state());
                     Err(Errno::ECONNREFUSED)
                 }
             })

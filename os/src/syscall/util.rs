@@ -58,11 +58,13 @@ impl Utsname {
         data
     }
     pub fn set_nodename(&mut self, nodename: &[u8]) {
+        //not longer than 64 bytes
         let len = core::cmp::min(nodename.len(), 64);
         self.nodename = [0u8; 65];
         self.nodename[..len].copy_from_slice(&nodename[..len]);
     }
     pub fn set_domainname(&mut self, domainname: &[u8]) {
+        //not longer than 64 bytes
         let len = core::cmp::min(domainname.len(), 64);
         self.domainname = [0u8; 65];
         self.domainname[..len].copy_from_slice(&domainname[..len]);
@@ -172,13 +174,23 @@ impl TryFrom<usize> for SyslogAction {
     }
 }
 
-pub fn sys_syslog(log_type: usize, buf: *mut u8, len: usize) -> SyscallRet {
+pub fn sys_syslog(log_type: usize, buf: *mut u8, len: isize) -> SyscallRet {
+    log::info!("[syslog]log_type is {:?},buf is {:?},len is {:?}",log_type,buf,len);
+    let task=current_task();
+    if task.egid()!=0&&task.euid()!=0 {
+        return Err(Errno::EPERM);
+    }
+    if buf.is_null()||len<=1||len>=8 {
+
+        return Err(Errno::EINVAL);
+    }
     const LOG_BUF_LEN: usize = 4096;
     const LOG: &str = "<5>[    0.000000] Linux version 5.10.102.1-microsoft-standard-WSL2 (rtrt@TEAM-NPUCORE) (gcc (Ubuntu 9.4.0-1ubuntu1~20.04) 9.4.0, GNU ld (GNU Binutils for Ubuntu) 2.34) #1 SMP Thu Mar 10 13:31:47 CST 2022";
     // let token = current_user_token();
     let log_type = SyslogAction::try_from(log_type)?;
     let log = LOG.as_bytes();
     let len = LOG.len().min(len as usize);
+
     match log_type {
         SyslogAction::CLOSE | SyslogAction::OPEN => Ok(0),
         SyslogAction::READ => copy_to_user(buf, log.as_ptr(), len),
@@ -248,6 +260,8 @@ pub const CLOCK_THREAD_CPUTIME_ID: usize = 3;
 pub const CLOCK_MONOTONIC_RAW: usize = 4;
 /// 一个不可设置的系统级实时时钟，用于测量真实（即墙上时钟）时间
 pub const CLOCK_REALTIME_COARSE: usize = 5;
+pub const CLOCK_MONOTONIC_COARSE:usize =6;
+pub const CLOCK_BOOTTIME:usize=7;
 pub fn sys_clock_gettime(clock_id: usize, timespec: *mut TimeSpec) -> SyscallRet {
     //如果tp是NULL, 函数不会存储时间值, 但仍然会执行其他检查（如 `clockid` 是否有效）。
     if timespec.is_null() {
@@ -264,12 +278,12 @@ pub fn sys_clock_gettime(clock_id: usize, timespec: *mut TimeSpec) -> SyscallRet
             // log::info!("[sys_clock_gettime] CLOCK_REALTIME: {:?}", time);
             copy_to_user(timespec, &time as *const TimeSpec, 1)?;
         }
-        CLOCK_MONOTONIC | CLOCK_MONOTONIC_RAW => {
+        CLOCK_MONOTONIC | CLOCK_MONOTONIC_RAW | CLOCK_MONOTONIC_COARSE|CLOCK_BOOTTIME=> {
             let time = TimeSpec::new_machine_time();
             // log::info!("[sys_clock_gettime] CLOCK_MONOTONIC: {:?}", time);
             copy_to_user(timespec, &time as *const TimeSpec, 1)?;
         }
-        CLOCK_PROCESS_CPUTIME_ID => {
+        CLOCK_PROCESS_CPUTIME_ID|CLOCK_THREAD_CPUTIME_ID  => {
             // let time = TimeSpec::new_process_time();
             let task = current_task();
             let (utime, stime) = task.process_us_time();
@@ -426,7 +440,10 @@ pub fn sys_getrusage(who: i32, rusage: *mut RUsage) -> SyscallRet {
    如果 res 非空，则将其存储在 res 指向的 timespec 结构体中。
    如果 clock_settime() 的参数 tp 指向的时间值不是 res 的倍数，则将其截断为 res 的倍数。（Todo)
 */
-pub fn sys_clock_getres(_clockid: usize, res: usize) -> SyscallRet {
+pub fn sys_clock_getres(clockid: usize, res: usize) -> SyscallRet {
+    if (clockid as isize)<0 {
+        return Err(Errno::EINVAL);
+    }
     if res == 0 {
         return Ok(0);
     }

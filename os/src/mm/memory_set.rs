@@ -607,6 +607,10 @@ impl MemorySet {
         let ph_count = u16::from_le_bytes(elf_head[56..58].try_into().unwrap());
         let ph_entsize = u16::from_le_bytes(elf_head[54..56].try_into().unwrap());
 
+        if elf_head[0..4] != [0x7f, 0x45, 0x4c, 0x46] {
+            return Err(Errno::ENOEXEC);
+        }
+
         // 只读取头部信息
         let elf = xmas_elf::ElfFile::new(&elf_head).unwrap();
 
@@ -614,7 +618,6 @@ impl MemorySet {
         let pgtbl_ppn = memory_set.page_table.token();
         let elf_header = elf.header;
         let magic = elf_header.pt1.magic;
-        assert_eq!(magic, [0x7f, 0x45, 0x4c, 0x46], "invalid elf!");
         let mut entry_point = elf_header.pt2.entry_point() as usize;
         let mut aux_vec: Vec<AuxHeader> = Vec::with_capacity(64);
         let mut ph_va = 0;
