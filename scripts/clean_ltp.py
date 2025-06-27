@@ -15,7 +15,7 @@ def cleanup_files(input_file, target_dir, ch):
         
         # 判断是否需要删除
         first_char = filename[0].lower()
-        if first_char < ch.lower() and filename not in keep_files:
+        if first_char <= ch.lower() and filename not in keep_files:
             print(f"Deleting: {filename}")
             os.remove(full_path)
 
