@@ -128,6 +128,10 @@ impl TimeVal {
     pub fn timespec_to_ticks(&self) -> usize {
         self.sec * TICKS_PER_SEC + self.usec / (1_000 / TICKS_PER_SEC)
     }
+
+    pub fn as_us(&self) -> usize {
+        self.sec * USEC_PER_SEC + self.usec
+    }
 }
 
 impl PartialEq for TimeVal {

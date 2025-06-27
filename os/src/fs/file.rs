@@ -88,6 +88,9 @@ pub trait FileOp: Any + Send + Sync {
     fn fsync(&self) -> SyscallRet {
         unimplemented!();
     }
+    fn fadvise(&self, _offset: usize, _len: usize, _advice: i32) -> SyscallRet {
+        unimplemented!();
+    }
     // Get the file offset
     fn get_offset(&self) -> usize {
         unimplemented!();
@@ -98,6 +101,9 @@ pub trait FileOp: Any + Send + Sync {
     }
     // writable
     fn writable(&self) -> bool {
+        unimplemented!();
+    }
+    fn can_seek(&self) -> Result<(), Errno> {
         unimplemented!();
     }
     fn add_wait_queue(&self, tid: usize) {
@@ -367,6 +373,10 @@ impl FileOp for File {
     fn fsync(&self) -> SyscallRet {
         self.inner_handler(|inner| inner.inode.fsync())
     }
+    // Todo:
+    fn fadvise(&self, _offset: usize, _len: usize, _advice: i32) -> SyscallRet {
+        Ok(0)
+    }
     fn get_offset(&self) -> usize {
         self.inner_handler(|inner| inner.offset)
     }
@@ -381,6 +391,13 @@ impl FileOp for File {
         (inner_guard.flags.contains(OpenFlags::O_WRONLY)
             || inner_guard.flags.contains(OpenFlags::O_RDWR))
             && !inner_guard.flags.contains(OpenFlags::O_PATH)
+    }
+    fn can_seek(&self) -> Result<(), Errno> {
+        Ok(())
+    }
+    // 总是就绪的
+    fn hang_up(&self) -> bool {
+        false
     }
     fn r_ready(&self) -> bool {
         true

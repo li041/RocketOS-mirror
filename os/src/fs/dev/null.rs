@@ -171,4 +171,7 @@ impl FileOp for NullFile {
     fn get_flags(&self) -> OpenFlags {
         self.flags
     }
+    fn fsync(&self) -> SyscallRet {
+        Err(Errno::ESPIPE)
+    }
 }

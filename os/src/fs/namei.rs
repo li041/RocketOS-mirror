@@ -46,7 +46,7 @@ use crate::{
         },
         AT_FDCWD,
     },
-    syscall::{errno::Errno, AT_SYMLINK_NOFOLLOW},
+    syscall::{errno::Errno, AT_SYMLINK_NOFOLLOW, NAME_MAX},
     task::current_task,
 };
 use alloc::{
@@ -70,7 +70,7 @@ pub struct Nameidata {
 }
 
 /// 特殊处理根目录, 如果path为`\`, 则path_segments格外压入`.`
-pub fn parse_path(path: &str) -> Vec<String> {
+pub fn parse_path_uncheck(path: &str) -> Vec<String> {
     let mut path_segments: Vec<String> = Vec::new();
     for segment in path.split("/") {
         if !segment.is_empty() {
@@ -81,6 +81,27 @@ pub fn parse_path(path: &str) -> Vec<String> {
         path_segments.push(".".to_string());
     }
     path_segments
+}
+
+pub fn parse_path(path: &str) -> Result<Vec<String>, Errno> {
+    let mut path_segments: Vec<String> = Vec::new();
+    for segment in path.split("/") {
+        if !segment.is_empty() {
+            if segment.len() > NAME_MAX {
+                log::error!(
+                    "[parse_path] segment '{}' is too long, max length is {}",
+                    segment,
+                    NAME_MAX
+                );
+                return Err(Errno::ENAMETOOLONG);
+            }
+            path_segments.push(segment.to_string());
+        }
+    }
+    if path_segments.is_empty() && path.starts_with("/") {
+        path_segments.push(".".to_string());
+    }
+    Ok(path_segments)
 }
 
 // pub fn parse_path(path: &str) -> Vec<String> {
@@ -116,7 +137,7 @@ impl Nameidata {
     /// 绝对路径dentry初始化为root, 相对路径则是cwd
     /// 相当于linux中的`path_init`
     pub fn new(filename: &str, dfd: i32) -> Result<Self, Errno> {
-        let path_segments: Vec<String> = parse_path(filename);
+        let path_segments: Vec<String> = parse_path(filename)?;
         let path: Arc<Path>;
         let cur_task = current_task();
         if filename.starts_with("/") {
@@ -172,7 +193,7 @@ impl Nameidata {
     }
     // used by `openat2`
     pub fn new2(filename: &str, dfd: i32, in_root: bool) -> Result<Self, Errno> {
-        let path_segments: Vec<String> = parse_path(filename);
+        let path_segments: Vec<String> = parse_path_uncheck(filename);
         let path: Arc<Path>;
         let cur_task = current_task();
         if filename.starts_with("/") {
@@ -232,11 +253,11 @@ impl Nameidata {
         })
     }
 
-    pub fn resolve_symlink(&mut self, symlink_target: &str) {
+    pub fn resolve_symlink(&mut self, symlink_target: &str) -> Result<(), Errno> {
         if symlink_target.starts_with("/") {
             // 绝对路径符号链接，重新解析
             self.dentry = current_task().root().dentry.clone();
-            self.path_segments = parse_path(&symlink_target);
+            self.path_segments = parse_path_uncheck(&symlink_target);
             self.depth = 0; // 重新从头解析
         } else {
             // 相对路径符号链接，插入到当前解析路径
@@ -269,6 +290,7 @@ impl Nameidata {
             self.path_segments = new_segments;
             log::error!("path_segments: {:?}", self.path_segments);
         }
+        Ok(())
     }
 }
 
@@ -329,9 +351,13 @@ pub fn open_last_lookups(
             if !dentry.is_negative() {
                 if dentry.is_symlink() {
                     if flags.contains(OpenFlags::O_NOFOLLOW) {
-                        // 路径最后一个分量是符号链接, 但禁止跟随, 直接返回符号链接的dentry
-                        let path = Path::new(nd.mnt.clone(), dentry.clone());
-                        return Ok(Arc::new(File::new(path, dentry.get_inode(), flags)));
+                        // 路径最后一个分量是符号链接, 但禁止跟随, 返回ELOOP
+                        if flags.contains(OpenFlags::O_DIRECTORY) {
+                            return Err(Errno::ENOTDIR);
+                        }
+                        return Err(Errno::ELOOP);
+                        // let path = Path::new(nd.mnt.clone(), dentry.clone());
+                        // return Ok(Arc::new(File::new(path, dentry.get_inode(), flags)));
                     }
                     let symlink_target = dentry.get_inode().get_link();
                     log::warn!(
@@ -340,7 +366,7 @@ pub fn open_last_lookups(
                         symlink_target
                     );
                     // 根据符号链接目标, 更新nd
-                    nd.resolve_symlink(&symlink_target);
+                    nd.resolve_symlink(&symlink_target)?;
                     follow_symlink += 1;
                     continue;
                 }
