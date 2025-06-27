@@ -336,7 +336,7 @@ pub fn syscall(
         SYSCALL_CLOCK_GETTIME => sys_clock_gettime(a0, a1 as *mut TimeSpec),
         SYSCALL_CLOCK_GETRES => sys_clock_getres(a0, a1),
         SYSCALL_CLOCK_NANOSLEEP => sys_clock_nanosleep(a0, a1 as i32, a2, a3),
-        SYSCALL_SYSLOG => sys_syslog(a0, a1 as *mut u8, a3),
+        SYSCALL_SYSLOG => sys_syslog(a0, a1 as *mut u8, a3 as isize),
         SYSCALL_SCHED_SETSCHEDULER => sys_sched_setscheduler(a0 as isize, a1 as i32, a2),
         SYSCALL_SCHED_GETSCHEDULER => sys_sched_getscheduler(a0 as isize),
         SYSCALL_SCHED_GETPARAM => sys_sched_getparam(a0 as isize, a1),

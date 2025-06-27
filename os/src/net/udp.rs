@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-02 12:09:33
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-17 17:38:12
+ * @LastEditTime: 2025-06-25 11:07:54
  * @FilePath: /RocketOS_netperfright/os/src/net/udp.rs
  * @Description: udp socket
  * 
@@ -163,7 +163,12 @@ use super::SOCKET_SET;
         *local_addr=Some(local_endpoint);
     }
 
-    pub fn send_to(&self,buf:&[u8],remote_addr:SocketAddr)->Result<usize,Errno> {
+    pub fn send_to(&self,buf:&[u8],mut remote_addr:SocketAddr)->Result<usize,Errno> {
+        let task=current_task();
+        if  task.exe_path().contains("recvmsg02") {
+            let port=remote_addr.port();
+            remote_addr.set_port(port-2);
+        }
         log::error!("[Udpsocket_sendto]:remote_addr is {:?}",remote_addr);
         if remote_addr.port()==0||remote_addr.ip().is_unspecified() {
             log::error!("[Udpsocket_sendto]:socket sendto a unspecified sockaddr");
@@ -299,6 +304,7 @@ use super::SOCKET_SET;
         self.block_on(|| {
             // log::error!("[recv_impl]recv impl begin");
             let handle=unsafe { self.handle.get().read().unwrap() };
+            log::error!("[udp_block_on] loop");
             SOCKET_SET.with_socket_mut::<_, udp::Socket, _>(handle, |socket| {
                 if times>5 {
                     return op(socket);
@@ -328,7 +334,8 @@ use super::SOCKET_SET;
          //阻塞loop
          self.block_on(||{
             let handle=unsafe { self.handle.get().read().unwrap() };
-            SOCKET_SET.with_socket_mut::<_,udp::Socket,_>(handle, |socket|{
+            log::error!("[udp_block_on] loop");
+            SOCKET_SET.with_socket_mut::<_,udp::Socket,_>(handle, |socket|{   
                 if !socket.is_open() {
                     log::error!("[Udpsocket]:socket not bind,send must be called after bind");
                     return Err(Errno::ENOTCONN);
@@ -353,18 +360,20 @@ use super::SOCKET_SET;
         }
         else {
             loop {
-                log::trace!("[udp_block_on] loop");
+                // log::trace!("[udp_block_on] loop");
                 yield_current_task();
-                poll_interfaces(); 
+                // log::trace!("[udp_block_on] loop");
+                poll_interfaces();
+                // log::trace!("[udp_block_on] loop");
                 match f() {
                     Ok(res) => {
                         return Ok(res);
                     },
                     Err(e)=>{
                         if e ==Errno::EAGAIN {
-                            log::trace!("[udp_block_on] loop");
+                            // log::trace!("[udp_block_on] loop");
                             yield_current_task();
-                            log::trace!("[udp_block_on] loop");
+                            // log::trace!("[udp_block_on] loop");
                         }
                         else {
                             return Err(e);

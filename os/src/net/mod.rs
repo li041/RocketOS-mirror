@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-30 16:26:05
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-17 18:19:34
+ * @LastEditTime: 2025-06-25 11:05:18
  * @FilePath: /RocketOS_netperfright/os/src/net/mod.rs
  * @Description: net mod for interface wrapper,socketset
  *
@@ -444,6 +444,7 @@ fn snoop_tcp_packet(buf: &[u8], sockets: &mut SocketSet<'_>) -> Result<(), smolt
     Ok(())
 }
 pub fn poll_interfaces() {
+    log::trace!("[udp_block_on] loop");
     SOCKET_SET.poll_interfaces();
 }
 

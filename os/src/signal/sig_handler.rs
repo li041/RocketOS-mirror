@@ -91,7 +91,7 @@ impl ActionType {
             | Sig::SIGXCPU
             | Sig::SIGXFSZ
             | Sig::SIGSYS => ActionType::Core,
-            Sig::SIGSTOP | Sig::SIGTSTP | Sig::SIGTTIN | Sig::SIGTTOU |Sig::SIGALRM=> ActionType::Stop,
+            Sig::SIGSTOP | Sig::SIGTSTP | Sig::SIGTTIN | Sig::SIGTTOU => ActionType::Stop,
             Sig::SIGCHLD | Sig::SIGURG | Sig::SIGWINCH => ActionType::Ignore,
             Sig::SIGCONT => ActionType::Cont,
             _ => ActionType::Term,

@@ -4,7 +4,7 @@ use core::{ops::{Deref, DerefMut}, pin};
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-31 22:34:08
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-17 17:34:14
+ * @LastEditTime: 2025-06-25 00:48:25
  * @FilePath: /RocketOS_netperfright/os/src/net/listentable.rs
  * @Description: listentable file
  * 
@@ -158,7 +158,7 @@ impl ListenTable {
     //这个函数根据输入的参数port查看对应的entry的handle vec,由底层smoltcp完成数据链路层和物理层的连接，并改变状态，如果状态合理，需要
     //得到对应的local_addr,remote_addr
     pub fn accept(&self, port: u16) -> Result<(SocketHandle, (IpEndpoint, IpEndpoint)),Errno> {
-        log::error!("[ListenTable_accept]:accept port is {:?}",port);
+        log::trace!("[ListenTable_accept]:accept port is {:?}",port);
         if let Some(entry) = self.table[port as usize].lock().deref_mut() {
             log::error!("[ListenTable_accept]:entry listenendpoint {:?}",entry.listen_endpoint);
             let syn_queue: &mut VecDeque<SocketHandle> = &mut entry.syn_queue;
@@ -228,14 +228,14 @@ impl ListenTable {
 }
 fn is_connected(handle: SocketHandle) -> bool {
     SOCKET_SET.with_socket::<_, tcp::Socket, _>(handle, |socket| {
-        log::error!("[is_connected] socket state is {:?}",socket.state());
+        // log::error!("[is_connected] socket state is {:?}",socket.state());
         !matches!(socket.state(), State::Listen | State::SynReceived)
     })
 }
 fn is_closed(handle: SocketHandle) -> bool {
     SOCKET_SET
         .with_socket::<_, tcp::Socket, _>(handle, |socket| {
-            log::error!("[is_closed] socket state is {:?}",socket.state());
+            // log::error!("[is_closed] socket state is {:?}",socket.state());
             matches!(socket.state(), State::Closed)
         })
 }
