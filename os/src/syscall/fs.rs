@@ -2107,58 +2107,79 @@ pub fn sys_truncate(path: *const u8, length: isize) -> SyscallRet {
 
 /* loongarch */
 // Todo: 使用mask指示内核需要返回哪些信息
-// pub fn sys_statx(
-//     dirfd: i32,
-//     pathname: *const u8,
-//     flags: i32,
-//     _mask: u32,
-//     statxbuf: *mut Statx,
-//     // statbuf: *mut Stat,
-// ) -> SyscallRet {
-//     log::info!(
-//         "[sys_statx] dirfd: {}, pathname: {:?}, flags: {}, mask: {}",
-//         dirfd,
-//         pathname,
-//         flags,
-//         _mask
-//     );
-//     if flags & AT_EMPTY_PATH != 0 {
-//         if let Some(file) = current_task().fd_table().get_file(dirfd as usize) {
-//             let inode = file.get_inode();
-//             let statx = Statx::from(inode.getattr());
-//             log::error!("statx: statx: {:?}", statx);
-//             copy_to_user(statxbuf, &statx as *const Statx, 1)?;
-//             return Ok(0);
-//         }
-//         // 根据fd获取文件失败
-//         return Err(Errno::EBADF);
-//     }
-//     let path = c_str_to_string(pathname)?;
-//     if path.is_empty() {
-//         log::error!("[sys_statx] pathname is empty");
-//         return Err(Errno::EINVAL);
-//     }
-//     let mut nd = Nameidata::new(&path, dirfd)?;
-//     let follow_symlink = flags & AT_SYMLINK_NOFOLLOW == 0;
-//     match filename_lookup(&mut nd, follow_symlink) {
-//         Ok(dentry) => {
-//             let inode = dentry.get_inode();
-//             let statx = Statx::from(inode.getattr());
-//             // log::error!("statx: statx: {:?}", statx);
-//             if let Err(e) = copy_to_user(statxbuf, &statx as *const Statx, 1) {
-//                 // let stat = Stat::from(inode.getattr());
-//                 // if let Err(e) = copy_to_user(statbuf, &stat as *const Stat, 1) {
-//                 log::error!("statx: copy_to_user failed: {:?}", e);
-//                 return Err(e);
-//             }
-//             return Ok(0);
-//         }
-//         Err(e) => {
-//             log::info!("[sys_statx] fail to statx: {}, {:?}", path, e);
-//             return Err(e);
-//         }
-//     }
-// }
+pub fn sys_statx(
+    dirfd: i32,
+    pathname: *const u8,
+    flags: i32,
+    mask: u32,
+    statxbuf: *mut Statx,
+    // statbuf: *mut Stat,
+) -> SyscallRet {
+    log::info!(
+        "[sys_statx] dirfd: {}, pathname: {:?}, flags: {}, mask: {}",
+        dirfd,
+        pathname,
+        flags,
+        mask
+    );
+    if flags < 0 {
+        log::error!("[sys_statx] invalid flags: {}", flags);
+        return Err(Errno::EINVAL);
+    }
+    if flags & AT_EMPTY_PATH != 0 {
+        if let Some(file) = current_task().fd_table().get_file(dirfd as usize) {
+            let inode = file.get_inode();
+            let statx = Statx::from(inode.getattr());
+            log::error!("statx: statx: {:?}", statx);
+            copy_to_user(statxbuf, &statx as *const Statx, 1)?;
+            return Ok(0);
+        }
+        // 根据fd获取文件失败
+        return Err(Errno::EBADF);
+    }
+    const VALID_MASK: u32 = STATX_TYPE
+        | STATX_MODE
+        | STATX_NLINK
+        | STATX_UID
+        | STATX_GID
+        | STATX_ATIME
+        | STATX_MTIME
+        | STATX_CTIME
+        | STATX_INO
+        | STATX_SIZE
+        | STATX_BLOCKS
+        | STATX_BTIME
+        | STATX_ALL;
+    if (mask & !VALID_MASK) != 0 {
+        log::error!("[sys_statx] invalid mask: {}", mask);
+        return Err(Errno::EINVAL);
+    }
+    let path = c_str_to_string(pathname)?;
+    if path.is_empty() {
+        log::error!("[sys_statx] pathname is empty");
+        return Err(Errno::ENOENT);
+    }
+    let mut nd = Nameidata::new(&path, dirfd)?;
+    let follow_symlink = flags & AT_SYMLINK_NOFOLLOW == 0;
+    match filename_lookup(&mut nd, follow_symlink) {
+        Ok(dentry) => {
+            let inode = dentry.get_inode();
+            let statx = Statx::from(inode.getattr());
+            // log::error!("statx: statx: {:?}", statx);
+            if let Err(e) = copy_to_user(statxbuf, &statx as *const Statx, 1) {
+                // let stat = Stat::from(inode.getattr());
+                // if let Err(e) = copy_to_user(statbuf, &stat as *const Stat, 1) {
+                log::error!("statx: copy_to_user failed: {:?}", e);
+                return Err(e);
+            }
+            return Ok(0);
+        }
+        Err(e) => {
+            log::info!("[sys_statx] fail to statx: {}, {:?}", path, e);
+            return Err(e);
+        }
+    }
+}
 
 /// 请求文件类型 (stx_mode & S_IFMT)
 pub const STATX_TYPE: u32 = 0x00000001;
@@ -2197,102 +2218,97 @@ pub const STATX_DIOALIGN: u32 = 0x00002000;
 pub const STATX_MNT_ID_UNIQUE: u32 = 0x00004000;
 /// 请求子卷信息 (stx_subvol)
 pub const STATX_SUBVOL: u32 = 0x00008000;
-pub fn sys_statx(
-    dirfd: i32,
-    pathname: *const u8,
-    flags: i32,
-    mask: u32,
-    statxbuf: *mut Statx,
-) -> SyscallRet {
-    log::info!(
-        "[sys_statx] dirfd: {}, pathname: {:?}, flags: {}, mask: {}",
-        dirfd,
-        pathname,
-        flags,
-        mask
-    );
+// pub fn sys_statx(
+//     dirfd: i32,
+//     pathname: *const u8,
+//     flags: i32,
+//     mask: u32,
+//     statxbuf: *mut Statx,
+// ) -> SyscallRet {
+//     log::info!(
+//         "[sys_statx] dirfd: {}, pathname: {:?}, flags: {}, mask: {}",
+//         dirfd,
+//         pathname,
+//         flags,
+//         mask
+//     );
 
-    // 检查无效的标志组合
-    const VALID_FLAGS: i32 =
-        AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT | AT_STATX_SYNC_TYPE;
-    if (flags & !VALID_FLAGS) != 0 {
-        log::error!("[sys_statx] invalid flags: {}", flags);
-        return Err(Errno::EINVAL);
-    }
+//     // 检查无效的标志组合
+//     const VALID_FLAGS: i32 =
+//         AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT | AT_STATX_SYNC_TYPE;
+//     if (flags & !VALID_FLAGS) != 0 {
+//         log::error!("[sys_statx] invalid flags: {}", flags);
+//         return Err(Errno::EINVAL);
+//     }
 
-    // 检查 mask 是否有效
-    const VALID_MASK: u32 = STATX_TYPE
-        | STATX_MODE
-        | STATX_NLINK
-        | STATX_UID
-        | STATX_GID
-        | STATX_ATIME
-        | STATX_MTIME
-        | STATX_CTIME
-        | STATX_INO
-        | STATX_SIZE
-        | STATX_BLOCKS
-        | STATX_BTIME
-        | STATX_ALL;
-    if (mask & !VALID_MASK) != 0 {
-        log::error!("[sys_statx] invalid mask: {}", mask);
-        return Err(Errno::EINVAL);
-    }
+//     // 检查 mask 是否有效
+//     const VALID_MASK: u32 = STATX_TYPE
+//         | STATX_MODE
+//         | STATX_NLINK
+//         | STATX_UID
+//         | STATX_GID
+//         | STATX_ATIME
+//         | STATX_MTIME
+//         | STATX_CTIME
+//         | STATX_INO
+//         | STATX_SIZE
+//         | STATX_BLOCKS
+//         | STATX_BTIME
+//         | STATX_ALL;
+//     if (mask & !VALID_MASK) != 0 {
+//         log::error!("[sys_statx] invalid mask: {}", mask);
+//         return Err(Errno::EINVAL);
+//     }
 
-    // 处理 AT_EMPTY_PATH 标志
-    if flags & AT_EMPTY_PATH != 0 {
-        if pathname.is_null() || unsafe { *pathname } != 0 {
-            log::error!("[sys_statx] AT_EMPTY_PATH requires empty pathname");
-            return Err(Errno::EINVAL);
-        }
+//     // 检查路径名是否为空
+//     let path = c_str_to_string(pathname)?;
+//     if path.is_empty() {
+//         log::error!("[sys_statx] pathname is empty");
+//         return Err(Errno::ENOENT);
+//     }
 
-        if let Some(file) = current_task().fd_table().get_file(dirfd as usize) {
-            let inode = file.get_inode();
-            let statx = Statx::from(inode.getattr());
-            // 根据 mask 过滤不需要的字段
-            let filtered_statx = filter_statx_by_mask(statx, mask);
-            log::debug!("statx: {:?}", filtered_statx);
-            copy_to_user(statxbuf, &filtered_statx as *const Statx, 1)?;
-            return Ok(0);
-        }
-        return Err(Errno::EBADF);
-    }
+//     // 处理过长的路径名
+//     if path.len() > PATH_MAX as usize {
+//         log::error!("[sys_statx] pathname too long");
+//         return Err(Errno::ENAMETOOLONG);
+//     }
 
-    // 检查路径名是否为空
-    let path = c_str_to_string(pathname)?;
-    if path.is_empty() {
-        log::error!("[sys_statx] pathname is empty");
-        return Err(Errno::ENOENT);
-    }
+//     // 处理 AT_EMPTY_PATH 标志
+//     if flags & AT_EMPTY_PATH != 0 {
+//         if let Some(file) = current_task().fd_table().get_file(dirfd as usize) {
+//             let inode = file.get_inode();
+//             let statx = Statx::from(inode.getattr());
+//             // 根据 mask 过滤不需要的字段
+//             let filtered_statx = filter_statx_by_mask(statx, mask);
+//             log::debug!("statx: {:?}", filtered_statx);
+//             copy_to_user(statxbuf, &filtered_statx as *const Statx, 1)?;
+//             return Ok(0);
+//         }
+//         return Err(Errno::EBADF);
+//     }
 
-    // 处理过长的路径名
-    if path.len() > PATH_MAX as usize {
-        log::error!("[sys_statx] pathname too long");
-        return Err(Errno::ENAMETOOLONG);
-    }
+//     // 查找文件
+//     let mut nd = Nameidata::new(&path, dirfd)?;
+//     let follow_symlink = flags & AT_SYMLINK_NOFOLLOW == 0;
 
-    // 查找文件
-    let mut nd = Nameidata::new(&path, dirfd)?;
-    let follow_symlink = flags & AT_SYMLINK_NOFOLLOW == 0;
-
-    match filename_lookup(&mut nd, follow_symlink) {
-        Ok(dentry) => {
-            let inode = dentry.get_inode();
-            let statx = Statx::from(inode.getattr());
-            // 根据 mask 过滤不需要的字段
-            let filtered_statx = filter_statx_by_mask(statx, mask);
-            if let Err(e) = copy_to_user(statxbuf, &filtered_statx as *const Statx, 1) {
-                log::error!("statx: copy_to_user failed: {:?}", e);
-                return Err(e);
-            }
-            Ok(0)
-        }
-        Err(e) => {
-            log::info!("[sys_statx] fail to statx: {}, {:?}", path, e);
-            Err(e)
-        }
-    }
-}
+//     match filename_lookup(&mut nd, follow_symlink) {
+//         Ok(dentry) => {
+//             let inode = dentry.get_inode();
+//             let statx = Statx::from(inode.getattr());
+//             // 根据 mask 过滤不需要的字段
+//             let filtered_statx = filter_statx_by_mask(statx, mask);
+//             if let Err(e) = copy_to_user(statxbuf, &filtered_statx as *const Statx, 1) {
+//                 log::error!("statx: copy_to_user failed: {:?}", e);
+//                 return Err(e);
+//             }
+//             Ok(0)
+//         }
+//         Err(e) => {
+//             log::info!("[sys_statx] fail to statx: {}, {:?}", path, e);
+//             Err(e)
+//         }
+//     }
+// }
 
 /// 根据 mask 过滤不需要的 statx 字段
 fn filter_statx_by_mask(mut statx: Statx, mut mask: u32) -> Statx {
