@@ -257,11 +257,6 @@ pub fn sys_rt_sigsuspend(mask: usize) -> SyscallRet {
 
         save_trap_context(&task, trap_cx);
 
-        unsafe {
-            // LoongArch 汇编：切换 sp 到新的 TrapContext 栈顶
-            asm!("move $sp, {}", in(reg) new_sp);
-        }
-
         // 调用信号处理
         handle_signal();
 
@@ -276,6 +271,7 @@ pub fn sys_rt_sigsuspend(mask: usize) -> SyscallRet {
         drop(task);
 
         unsafe {
+            asm!("move $sp, {}", in(reg) new_sp);
             // LoongArch 跳转回用户态
             asm!(
                 "la.global $t0, __return_to_user", // 加载地址到 t0
