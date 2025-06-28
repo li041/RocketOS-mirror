@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-03 16:40:04
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-28 13:22:51
+ * @LastEditTime: 2025-06-28 21:10:21
  * @FilePath: /RocketOS_netperfright/os/src/net/socket.rs
  * @Description: socket file
  *
@@ -21,8 +21,7 @@ use crate::{
     arch::{config::SysResult, mm::copy_to_user},
     ext4::inode::{S_IFDIR, S_IFSOCK},
     fs::{
-        fdtable::FdFlags, file::OpenFlags, inode::InodeOp, namei::path_openat, pipe::Pipe,
-        uapi::IoVec,
+        fdtable::FdFlags, file::OpenFlags, inode::InodeOp, namei::path_openat, path::Path, pipe::Pipe, uapi::IoVec, AT_FDCWD
     },
     net::{
         alg::{encode_text, AlgType},
@@ -746,9 +745,8 @@ impl Socket {
         let binding = self.get_socket_path();
         let s_path = core::str::from_utf8(binding.as_slice()).unwrap();
         log::error!("[accept_unix] s_path is {:?}", s_path);
-        let mut count = 0;
         loop {
-            let file = path_openat(s_path, OpenFlags::O_CLOEXEC, -100, 0)?;
+            let file = path_openat(s_path, OpenFlags::O_CLOEXEC, AT_FDCWD, 0)?;
             if file.r_ready() {
                 let n = file.read(peer_path.as_mut_slice())?;
                 log::error!("[accept_unix] accept len is {:?}", n);
@@ -762,7 +760,6 @@ impl Socket {
             } else {
                 yield_current_task();
             }
-            count += 1;
         }
         //
         let file = self.get_unix_file();
@@ -780,7 +777,7 @@ impl Socket {
         peer_path.truncate(len);
         let s_peer = core::str::from_utf8(peer_path.as_slice()).unwrap();
         log::error!("[accept_unix] accept peer path is {:?} ", s_peer);
-        let peer_file = path_openat(s_peer, OpenFlags::O_CLOEXEC, -100, 0)?;
+        let peer_file = path_openat(s_peer, OpenFlags::O_CLOEXEC, AT_FDCWD, 0)?;
         Ok(Socket {
             dont_route: false,
             domain: self.domain.clone(),
@@ -956,7 +953,7 @@ impl Socket {
             println!("[socket recv_from] s_self is {:?}", s_self);
             let mut times=0;
             loop {
-                let file = path_openat(s_self, OpenFlags::O_CLOEXEC, -100, 0)?;
+                let file = path_openat(s_self, OpenFlags::O_CLOEXEC, AT_FDCWD, 0)?;
                 times+=1;
                 if times>20 {
                     return Err(Errno::ECONNREFUSED);
@@ -1166,7 +1163,7 @@ pub unsafe fn socket_address_from_unix(
     // `sockaddr_un` 头部前两个字节是 sa_family，我们先跳过
     // 这样 raw_path 对应的就是 sun_path 字段的整个内容，长度为 len - 2
     let raw_path = &kernel_buf[2..];
-
+    
     // 如果第一个字节是 '\0'，那么这是“抽象命名空间”：
     //   抽象套接字的名字从 raw_path[1] 开始，到第一个 '\0'（如果有）结束，
     //   或者直到 raw_path 的末尾。
@@ -1497,7 +1494,7 @@ impl FileOp for Socket {
             let self_path = self.get_socket_path();
             let s_self = core::str::from_utf8(self_path.as_slice()).unwrap();
             loop {
-                let file = path_openat(s_self, OpenFlags::O_CLOEXEC, -100, 0)?;
+                let file = path_openat(s_self, OpenFlags::O_CLOEXEC, AT_FDCWD, 0)?;
                 log::error!("[socket_read]s_self path is {:?}", s_self);
                 if file.r_ready() {
                     let mut flag: Vec<u8> = vec![0; 1];
@@ -1684,7 +1681,7 @@ impl FileOp for Socket {
             } else {
                 let path = self.get_socket_path();
                 let s_path = core::str::from_utf8(path.as_slice()).unwrap();
-                let file = path_openat(s_path, OpenFlags::O_CLOEXEC, -100, 0).unwrap();
+                let file = path_openat(s_path, OpenFlags::O_CLOEXEC, AT_FDCWD, 0).unwrap();
                 return file.get_offset() > 0;
             }
         }
@@ -1748,6 +1745,9 @@ impl FileOp for Socket {
     }
     fn set_flags(&self, flags: OpenFlags) {
         self.set_nonblocking(flags.contains(OpenFlags::O_NONBLOCK));
+    }
+    fn get_path(&self) -> Arc<crate::fs::path::Path> {
+        Path::zero_init()
     }
 }
 

@@ -2565,7 +2565,7 @@ pub fn sys_faccessat(fd: usize, pathname: *const u8, mode: i32, flags: i32) -> S
         return Err(Errno::EINVAL);
     }
     // 检查 flags 是否只包含支持的标志
-    let supported_flags = AT_EACCESS | AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH | 0x60 | 0x2 | 0xfffe;
+    let supported_flags = AT_EACCESS | AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH | 0x60 | 0x2 | 0xfffe|0x1;
     if flags & !supported_flags != 0 {
         log::error!("[sys_faccessat] Unsupported flags: {:#x}", flags);
         return Err(Errno::EINVAL);

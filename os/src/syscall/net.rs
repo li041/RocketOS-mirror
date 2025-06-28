@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-02 23:04:54
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-28 13:35:37
+ * @LastEditTime: 2025-06-28 20:57:33
  * @FilePath: /RocketOS_netperfright/os/src/syscall/net.rs
  * @Description: net syscall
  *
@@ -16,7 +16,7 @@ use crate::{
         file::{FileOp, OpenFlags},
         namei::path_openat,
         pipe::{self, make_pipe},
-        uapi::IoVec,
+        uapi::IoVec, AT_FDCWD,
     },
     net::{
         addr::{from_ipendpoint_to_socketaddr, LOOP_BACK_IP},
@@ -180,7 +180,7 @@ pub fn syscall_bind(socketfd: usize, socketaddr: usize, socketlen: usize) -> Sys
         socket.set_is_af_unix(true);
         socket.set_unix_path(path.as_slice());
         //需要查看是否存在这个文件，如果存在不用创建，如果不存在需要创建新文件
-        let file = path_openat(s_path, OpenFlags::O_CREAT, -100, 0)?;
+        let file = path_openat(s_path, OpenFlags::O_CREAT, AT_FDCWD, 0)?;
         socket.set_unix_file(file);
         //设置自己的ucred
         let pid = task.tid();
@@ -382,7 +382,7 @@ pub fn syscall_connect(socketfd: usize, socketaddr: usize, socketlen: usize) -> 
             socket.set_unix_path(path.as_slice());
             return Ok(0);
         }
-        let peer_file = path_openat(s_path, OpenFlags::O_CLOEXEC, -100, 0)?;
+        let peer_file = path_openat(s_path, OpenFlags::O_CLOEXEC, AT_FDCWD, 0)?;
         socket.set_peer_unix_file(peer_file);
         let mut self_path = socket.get_socket_path();
         log::error!(
@@ -393,7 +393,7 @@ pub fn syscall_connect(socketfd: usize, socketaddr: usize, socketlen: usize) -> 
             //server端必然已经建立这个文件
             self_path = path.clone();
             socket.set_unix_path(self_path.as_slice());
-            let file = path_openat(s_path, OpenFlags::O_CLOEXEC, -100, 0)?;
+            let file = path_openat(s_path, OpenFlags::O_CLOEXEC, AT_FDCWD, 0)?;
             socket.set_unix_file(file);
         }
         let self_file = socket.get_unix_file();
@@ -1110,13 +1110,18 @@ pub fn syscall_sendmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallR
     let mut peer_path = Vec::new();
     if socket.domain == Domain::AF_UNIX {
         log::error!("[1d]");
-        peer_path = unsafe {
+        if user_hdr.name.is_null() {
+            peer_path=socket.get_socket_peer_path();
+        }
+        else{
+            peer_path = unsafe {
             socket_address_from_unix(
-                user_hdr.name as *const u8,
-                user_hdr.name_len as usize,
-                socket,
-            )
-        }?;
+                    user_hdr.name as *const u8,
+                    user_hdr.name_len as usize,
+                    socket,
+                )
+            }?;
+        }
         log::error!(
             "[syscall_sendmsg] path addr is peer path is {:?}",
             peer_path
@@ -1424,7 +1429,7 @@ pub fn syscall_setdomainname(domainname: *const u8, len: usize) -> SyscallRet {
     let mut kernel_domainname: Vec<u8> = vec![0; len];
     copy_from_user(domainname, kernel_domainname.as_mut_ptr(), len)?;
     log::error!("[syscall_setdomainname] domainname is {:?}", kernel_domainname);
-    let file = path_openat("/etc/domainname", OpenFlags::O_CLOEXEC, -100, 0)?;
+    let file = path_openat("/etc/domainname", OpenFlags::O_CLOEXEC, AT_FDCWD, 0)?;
     let offset=file.get_offset();
     let clean_vec= vec![0; offset as usize];
     file.pwrite(clean_vec.as_slice(), 0)?;
@@ -1450,7 +1455,7 @@ pub fn syscall_sethostname(hostname: *const u8, len: usize) -> SyscallRet {
     let mut kernel_hostname: Vec<u8> = vec![0; len];
     copy_from_user(hostname, kernel_hostname.as_mut_ptr(), len)?;
     log::error!("[syscall_sethostname] hostname is {:?}", kernel_hostname);
-    let file = path_openat("/etc/hostname", OpenFlags::O_CLOEXEC, -100, 0)?;
+    let file = path_openat("/etc/hostname", OpenFlags::O_CLOEXEC, AT_FDCWD, 0)?;
     file.pwrite(kernel_hostname.as_slice(), 0)?;
     Ok(0)
 }
