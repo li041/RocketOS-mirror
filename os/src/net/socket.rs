@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-03 16:40:04
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-26 15:10:22
+ * @LastEditTime: 2025-06-28 13:22:51
  * @FilePath: /RocketOS_netperfright/os/src/net/socket.rs
  * @Description: socket file
  *
@@ -387,7 +387,12 @@ impl Socket {
         }
         let inner=match socket_type {
             SocketType::SOCK_STREAM | SocketType::SOCK_SEQPACKET| SocketType::SOCK_RAW=> {
-                SocketInner::Tcp(TcpSocket::new())
+                if domain==Domain::AF_RDS {
+                    SocketInner::Udp(UdpSocket::new())
+                }else {
+                    SocketInner::Tcp(TcpSocket::new())
+                }
+                
             }
             SocketType::SOCK_DGRAM => SocketInner::Udp(UdpSocket::new()),
             _ => {

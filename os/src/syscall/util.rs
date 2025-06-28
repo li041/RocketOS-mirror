@@ -136,7 +136,7 @@ pub fn sys_times(buf: usize) -> SyscallRet {
     Ok(0)
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default,PartialEq, Eq)]
 pub enum SyslogAction {
     CLOSE = 0,
     OPEN = 1,
@@ -180,8 +180,7 @@ pub fn sys_syslog(log_type: usize, buf: *mut u8, len: isize) -> SyscallRet {
     if task.egid()!=0&&task.euid()!=0 {
         return Err(Errno::EPERM);
     }
-    if buf.is_null()||len<=1||len>=8 {
-
+    if buf.is_null()||len<=1 {
         return Err(Errno::EINVAL);
     }
     const LOG_BUF_LEN: usize = 4096;
@@ -190,7 +189,9 @@ pub fn sys_syslog(log_type: usize, buf: *mut u8, len: isize) -> SyscallRet {
     let log_type = SyslogAction::try_from(log_type)?;
     let log = LOG.as_bytes();
     let len = LOG.len().min(len as usize);
-
+    if log_type==SyslogAction::CONSOLE_LEVEL&&len>8 {
+        return Err(Errno::EINVAL);
+    }
     match log_type {
         SyslogAction::CLOSE | SyslogAction::OPEN => Ok(0),
         SyslogAction::READ => copy_to_user(buf, log.as_ptr(), len),

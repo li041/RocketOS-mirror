@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-02 23:04:54
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-26 22:56:42
+ * @LastEditTime: 2025-06-28 13:35:37
  * @FilePath: /RocketOS_netperfright/os/src/syscall/net.rs
  * @Description: net syscall
  *
@@ -1294,8 +1294,16 @@ pub fn syscall_recvmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallR
         return Err(Errno::EINVAL);
     }
     if user_hdr.name_len as usize > size_of::<SockAddrIn>() {
-        let user_msghdr = unsafe { &mut *(msg_ptr as *mut MessageHeaderRaw) };
-        user_msghdr.name_len = size_of::<SockAddrIn>() as u32;
+        user_hdr.name_len=size_of::<SockAddrIn>() as u32;
+        const NAME_LEN_OFFSET: usize = core::mem::size_of::<*mut u8>();
+        let user_name_len_ptr = (msg_ptr as *mut u8)
+            .wrapping_add(NAME_LEN_OFFSET) 
+            as *mut u32;                    
+        copy_to_user(
+            user_name_len_ptr,
+            &user_hdr.name_len as *const u32,              
+            1,          
+        )?;
     }
     // 3. 从用户空间拷贝 iovec 数组到内核
     let iovec_count = user_hdr.iovec_len as i32;
