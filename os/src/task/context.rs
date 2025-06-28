@@ -32,6 +32,17 @@ impl TaskContext {
             satp: satp,
         }
     }
+
+    pub fn idle_init_task_context(tp: usize) -> Self {
+        use crate::{mm::KERNEL_SATP, task::idle_task};
+
+        Self {
+            ra: idle_task as usize,
+            tp: tp,
+            s: [0; 12],
+            satp: *KERNEL_SATP,
+        }
+    }
 }
 
 #[cfg(target_arch = "riscv64")]
@@ -71,6 +82,17 @@ impl TaskContext {
             tp: tp,
             s: [0; 12],
             pgdl: pgdl_ppn << PAGE_SIZE_BITS,
+        }
+    }
+
+    pub fn idle_init_task_context(tp: usize) -> Self {
+        use crate::{mm::KERNEL_SATP, task::idle_task};
+
+        Self {
+            ra: idle_task as usize,
+            tp: tp,
+            s: [0; 12],
+            pgdl: *KERNEL_SATP << PAGE_SIZE_BITS,
         }
     }
 }

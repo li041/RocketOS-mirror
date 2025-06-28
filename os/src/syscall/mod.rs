@@ -62,6 +62,15 @@ use crate::{
     futex::robust_list::{sys_get_robust_list, sys_set_robust_list},
     mm::shm::ShmId,
     signal::{SigInfo, SigSet},
+    syscall::{
+        sched::{
+            sys_getpriority, sys_sched_get_priority_max, sys_sched_get_priority_min,
+            sys_sched_getattr, sys_sched_rr_get_interval, sys_sched_setattr, sys_sched_setparam,
+            sys_setpriority,
+        },
+        signal::{sys_rt_sigqueueinfo, sys_sigaltstack},
+        task::{sys_execveat, sys_getcpu},
+    },
     task::rusage::RUsage,
     time::KernelTimex,
     timer::{ITimerVal, TimeSpec},
@@ -142,6 +151,8 @@ const SYSCALL_FDATASYNC: usize = 83;
 const SYSCALL_SYNC_FILE_RANGE: usize = 84;
 const SYSCALL_UTIMENSAT: usize = 88;
 const SYSCALL_ACCT: usize = 89;
+const SYSCALL_CAPGET: usize = 90;
+const SYSCALL_CAPSET: usize = 91;
 const SYSCALL_EXIT: usize = 93;
 const SYSCALL_EXIT_GROUP: usize = 94;
 const SYSCALL_SET_TID_ADDRESS: usize = 96;
@@ -155,12 +166,16 @@ const SYSCALL_CLOCK_GETTIME: usize = 113;
 const SYSCALL_CLOCK_GETRES: usize = 114;
 const SYSCALL_CLOCK_NANOSLEEP: usize = 115;
 const SYSCALL_SYSLOG: usize = 116;
+const SYSCALL_SCHED_SETPARAM: usize = 118;
 const SYSCALL_SCHED_SETSCHEDULER: usize = 119;
 const SYSCALL_SCHED_GETSCHEDULER: usize = 120;
 const SYSCALL_SCHED_GETPARAM: usize = 121;
 const SYSCALL_SCHED_SETAFFINITY: usize = 122;
 const SYSCALL_SCHED_GETAFFINITY: usize = 123;
 const SYSCALL_YIELD: usize = 124;
+const SYSCALL_SCHED_GET_PRIORITY_MAX: usize = 125;
+const SYSCALL_SCHED_GET_PRIORITY_MIN: usize = 126;
+const SYSCALL_SCHED_RR_GET_INTERVAL: usize = 127;
 const SYSCALL_KILL: usize = 129;
 const SYSCALL_TKILL: usize = 130;
 const SYSCALL_TGKILL: usize = 131;
@@ -172,6 +187,8 @@ const SYSCALL_RT_SIGPENDING: usize = 136;
 const SYSCALL_RT_SIGTIMEDWAIT: usize = 137;
 const SYSCALL_RT_SIGQUEUEINFO: usize = 138;
 const SYSCALL_RT_SIGRETURN: usize = 139;
+const SYSCALL_SETPRIORITY: usize = 140;
+const SYSCALL_GETPRIORITY: usize = 141;
 const SYACALL_SETREGRID: usize = 143;
 const SYSCALL_SETGID: usize = 144;
 const SYSCALL_SETREUID: usize = 145;
@@ -192,6 +209,7 @@ const SYSCALL_SETHOSTNAME: usize = 161;
 const SYSCALL_SETDOMAINNAME: usize = 162;
 const SYSCALL_GETRUSAGE: usize = 165;
 const SYSCALL_UMASK: usize = 166;
+const SYSCALL_GETCPU: usize = 168;
 const SYSCALL_GET_TIME: usize = 169;
 const SYSCALL_GITPID: usize = 172;
 const SYSCALL_GETPPID: usize = 173;
@@ -235,8 +253,11 @@ const SYSCALL_ACCEPT4: usize = 242;
 const SYSCALL_WAIT4: usize = 260;
 const SYSCALL_PRLIMIT: usize = 261;
 const SYSCALL_FANOTIFY: usize = 262;
+const SYSCALL_SCHED_SETATTR: usize = 274;
+const SYSCALL_SCHED_GETATTR: usize = 275;
 const SYSCALL_RENAMEAT2: usize = 276;
 const SYSCALL_GETRANDOM: usize = 278;
+const SYSCALL_EXECVEAT: usize = 281;
 const SYSCALL_MEMBARRIER: usize = 283;
 const SYSCALL_COPY_FILE_RANGE: usize = 285;
 const SYSCALL_PREADV2: usize = 286;
@@ -255,8 +276,6 @@ const SYSCALL_FACCESSAT2: usize = 439;
 const SYSCALL_SHUTDOMN: usize = 666;
 
 const CARELESS_SYSCALLS: [usize; 9] = [62, 63, 64, 72, 113, 124, 129, 165, 260];
-// const SYSCALL_NUM_2_NAME: [(&str, usize); 4] = [
-const SYSCALL_NUM_2_NAME: [(usize, &str); 1] = [(SYSCALL_SIGALTSTACK, "SYS_SIGALTSTACK")];
 #[no_mangle]
 pub fn syscall(
     a0: usize,
@@ -370,6 +389,8 @@ pub fn syscall(
             sys_utimensat(a0 as i32, a1 as *const u8, a2 as *const TimeSpec, a3 as i32)
         }
         SYSCALL_ACCT => sys_acct(a0 as *const u8),
+        // SYSCALL_CAPGET => sys_capget(a0, a1),
+        // SYSCALL_CAPSET => sys_capset(a0, a1),
         SYSCALL_EXIT => sys_exit(a0 as i32),
         SYSCALL_EXIT_GROUP => sys_exit_group(a0 as i32),
         SYSCALL_SET_TID_ADDRESS => sys_set_tid_address(a0),
@@ -383,23 +404,29 @@ pub fn syscall(
         SYSCALL_CLOCK_GETRES => sys_clock_getres(a0, a1),
         SYSCALL_CLOCK_NANOSLEEP => sys_clock_nanosleep(a0, a1 as i32, a2, a3),
         SYSCALL_SYSLOG => sys_syslog(a0, a1 as *mut u8, a3 as isize),
-        SYSCALL_SCHED_SETSCHEDULER => sys_sched_setscheduler(a0 as isize, a1 as i32, a2),
+        SYSCALL_SCHED_SETPARAM => sys_sched_setparam(a0 as isize, a1),
+        SYSCALL_SCHED_SETSCHEDULER => sys_sched_setscheduler(a0 as isize, a1 as u32, a2),
         SYSCALL_SCHED_GETSCHEDULER => sys_sched_getscheduler(a0 as isize),
         SYSCALL_SCHED_GETPARAM => sys_sched_getparam(a0 as isize, a1),
         SYSCALL_SCHED_SETAFFINITY => sys_sched_setaffinity(a0 as isize, a1, a2),
         SYSCALL_SCHED_GETAFFINITY => sys_sched_getaffinity(a0 as isize, a1, a2),
         SYSCALL_YIELD => sys_yield(),
+        SYSCALL_SCHED_GET_PRIORITY_MAX => sys_sched_get_priority_max(a0 as i32),
+        SYSCALL_SCHED_GET_PRIORITY_MIN => sys_sched_get_priority_min(a0 as i32),
+        SYSCALL_SCHED_RR_GET_INTERVAL => sys_sched_rr_get_interval(a0 as isize, a1),
         SYSCALL_KILL => sys_kill(a0 as isize, a1 as i32),
         SYSCALL_TKILL => sys_tkill(a0 as isize, a1 as i32),
         SYSCALL_TGKILL => sys_tgkill(a0 as isize, a1 as isize, a2 as i32),
-        // SYSCALL_SIGALTSTACK => sys_sigaltstack()
+        SYSCALL_SIGALTSTACK => sys_sigaltstack(a0, a1),
         SYSCALL_RT_SIGSUSPEND => sys_rt_sigsuspend(a0),
         SYSCALL_RT_SIGACTION => sys_rt_sigaction(a0 as i32, a1, a2, a3),
         SYSCALL_RT_SIGPROCMASK => sys_rt_sigprocmask(a0, a1, a2, a3),
         SYSCALL_RT_SIGPENDING => sys_rt_sigpending(a0),
         SYSCALL_RT_SIGTIMEDWAIT => sys_rt_sigtimedwait(a0, a1, a2),
-        //SYSCALL_RT_SIGQUEUEINFO => sys_rt_sigqueueinfo(),
+        SYSCALL_RT_SIGQUEUEINFO => sys_rt_sigqueueinfo(a0 as isize, a1 as i32, a2),
         SYSCALL_RT_SIGRETURN => sys_rt_sigreturn(),
+        SYSCALL_SETPRIORITY => sys_setpriority(a0 as i32, a1 as i32, a2 as i32),
+        SYSCALL_GETPRIORITY => sys_getpriority(a0 as i32, a1 as i32),
         SYACALL_SETREGRID => sys_setregid(a0 as i32, a1 as i32),
         SYSCALL_SETGID => sys_setgid(a0 as u32),
         SYSCALL_SETREUID => sys_setreuid(a0 as i32, a1 as i32),
@@ -418,11 +445,11 @@ pub fn syscall(
         SYSCALL_UNAME => sys_uname(a0),
         SYSCALL_GETRUSAGE => sys_getrusage(a0 as i32, a1 as *mut RUsage),
         SYSCALL_UMASK => sys_umask(a0),
+        SYSCALL_GETCPU => sys_getcpu(a0, a1),
         SYSCALL_GET_TIME => sys_get_time(a0),
         SYSCALL_GITPID => sys_getpid(),
         SYSCALL_GETPPID => sys_getppid(),
         SYSCALL_GETUID => sys_getuid(),
-
         SYSCALL_GETEUID => sys_geteuid(),
         SYSCALL_GETGID => sys_getgid(),
         SYSCALL_GETEGID => sys_getegid(),
@@ -453,6 +480,8 @@ pub fn syscall(
         SYSCALL_RECVFROM => syscall_recvfrom(a0, a1 as *mut u8, a2, a3, a4, a5),
         SYSCALL_SHUTDOWN => syscall_shutdown(a0, a1),
         SYSCALL_PRLIMIT => sys_prlimit64(a0, a1 as i32, a2 as *const RLimit, a3 as *mut RLimit),
+        SYSCALL_SCHED_SETATTR => sys_sched_setattr(a0 as isize, a1, a2 as u32),
+        SYSCALL_SCHED_GETATTR => sys_sched_getattr(a0 as isize, a1, a2 as u32, a3 as u32),
         SYSCALL_GETSOCKNAME => syscall_getsockname(a0, a1, a2),
         SYSCALL_GETPEERNAME => syscall_getpeername(a0, a1, a2),
         SYSCALL_RENAMEAT2 => sys_renameat2(
@@ -463,6 +492,13 @@ pub fn syscall(
             a4 as i32,
         ),
         SYSCALL_GETRANDOM => Ok(0),
+        SYSCALL_EXECVEAT => sys_execveat(
+            a0 as i32,
+            a1 as *mut u8,
+            a2 as *const usize,
+            a3 as *const usize,
+            a4 as i32,
+        ),
         SYSCALL_MEMBARRIER => sys_membarrier(a0 as i32, a1 as i32, a2 as u32),
         SYSCALL_COPY_FILE_RANGE => sys_copy_file_range(a0, a1, a2, a3, a4, a5 as i32),
         SYSCALL_PREADV2 => sys_preadv2(a0, a1 as *const IoVec, a2, a3 as i32, a4 as i32, a5 as i32),
@@ -490,15 +526,7 @@ pub fn syscall(
         SYSCALL_SETHOSTNAME => syscall_sethostname(a0 as *const u8, a1),
         SYSCALL_SHUTDOMN => sys_shutdown(),
         _ => {
-            println!(
-                "Unsupported syscall_id: {}, {}",
-                syscall_id,
-                SYSCALL_NUM_2_NAME
-                    .iter()
-                    .find(|x| x.0 == syscall_id)
-                    .map(|x| x.1)
-                    .unwrap_or("Unknown")
-            );
+            log::warn!("Unsupported syscall_id: {}", syscall_id,);
             Err(Errno::ENOSYS)
         }
     }

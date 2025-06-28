@@ -12,6 +12,7 @@ test = []
 virt = []
 vf2 = ["board"]
 la2000 = ["board"]
+smp = []
 
 board = []
 [dependencies]
@@ -42,6 +43,8 @@ embedded-hal = "=1.0.0-alpha.7"
 nb = "1.0"
 bit_field = "0.10.2"
 lazyinit="0.2.1"
+[target.'cfg(target_arch = "loongarch64")'.dependencies]
+loongArch64 = "0.2.4"
 [dependencies.smoltcp]
 git = "https://github.com/BiorelaxA/smoltcp.git"
 branch = "main"

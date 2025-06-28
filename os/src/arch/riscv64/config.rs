@@ -35,3 +35,6 @@ pub const USER_MAX_VA: usize = 0x0000_003f_ffff_ffff; // 256GB
 /* Ext4文件系统 */
 pub const EXT4_MAX_INLINE_DATA: usize = 60;
 pub static DTB_BASE: Mutex<Option<usize>> = Mutex::new(None);
+
+/* 最大核数 */
+pub const MAX_HARTS: usize = 4;

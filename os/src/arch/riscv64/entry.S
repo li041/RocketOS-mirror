@@ -22,7 +22,6 @@
 
 
     .section .bss.stack
-
     .globl boot_stack_lower_bound
 boot_stack_lower_bound:
 

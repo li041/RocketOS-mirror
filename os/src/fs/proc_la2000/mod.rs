@@ -26,6 +26,7 @@ use tainted::{TaintedFile, TAINTED};
 pub mod cpuinfo;
 pub mod exe;
 pub mod fd;
+pub mod interrupts;
 pub mod maps;
 pub mod meminfo;
 pub mod mounts;

@@ -1,4 +1,4 @@
-use core::{arch::asm, hint::black_box, panic};
+use core::{arch::asm, f32::MIN, hint::black_box, panic};
 
 use alloc::{sync::Arc, task};
 #[cfg(target_arch = "riscv64")]
@@ -15,14 +15,13 @@ use crate::{
         },
     },
     signal::{
-        handle_signal, FrameFlags, SiField, Sig, SigAction, SigContext, SigFrame, SigInfo,
-        SigRTFrame, SigSet, UContext,
+        handle_signal, FrameFlags, LinuxSigInfo, SiField, Sig, SigAction, SigContext, SigFrame,
+        SigInfo, SigRTFrame, SigSet, SigStack, UContext, MINSIGSTKSZ, SS_DISABLE, SS_ONSTACK,
     },
     syscall::errno::Errno,
     task::{
-        current_task, dump_scheduler, dump_wait_queue, for_each_task, get_group,
-        get_stack_top_by_sp, get_task, wait, wait_timeout, yield_current_task, Task, INITPROC,
-        INIT_PROC_PID,
+        current_task, dump_wait_queue, for_each_task, get_group,
+        get_stack_top_by_sp, get_task, wait, wait_timeout, yield_current_task, Task, INIT_PROC_PID,
     },
     timer::TimeSpec,
 };
@@ -71,7 +70,7 @@ pub fn sys_kill(pid: isize, sig: i32) -> SyscallRet {
 
     let sig = Sig::from(sig);
     log::info!("[sys_kill] pid: {} signal: {}", pid, sig.raw());
-    let siginfo = SigInfo::prepare_kill(current_task().tid(), sig);
+    let siginfo = SigInfo::prepare_kill(sig);
     match pid {
         pid if pid > 0 => {
             if let Some(task) = get_task(pid as usize) {
@@ -139,22 +138,14 @@ pub fn sys_tkill(tid: isize, sig: i32) -> SyscallRet {
         return Err(Errno::EINVAL);
     }
     let task = get_task(tid as usize).ok_or(Errno::ESRCH)?;
+    let siginfo = SigInfo::prepare_kill(sig);
     log::info!(
         "[sys_tkill] task{} send signal {:?} to task {}",
         current_task().tid(),
         sig,
         task.tid()
     );
-    task.receive_siginfo(
-        SigInfo {
-            signo: sig.raw(),
-            code: SigInfo::TKILL,
-            fields: SiField::Kill {
-                tid: current_task().tid(),
-            },
-        },
-        true,
-    );
+    task.receive_siginfo(siginfo, true);
     Ok(0)
 }
 
@@ -177,7 +168,7 @@ pub fn sys_tgkill(tgid: isize, tid: isize, sig: i32) -> SyscallRet {
         return Err(Errno::EINVAL);
     }
 
-    let siginfo = SigInfo::prepare_kill(current_task().tid(), sig);
+    let siginfo = SigInfo::prepare_tgkill(sig);
     if let Some(task) = get_task(tid as usize) {
         if task.tgid() != tgid as usize {
             return Err(Errno::ESRCH);
@@ -373,10 +364,9 @@ pub fn sys_rt_sigprocmask(how: usize, set: usize, oldset: usize, sigsetsize: usi
     // set不为NULL（为NULL时直接跳过，即忽略how）
     if set != 0 {
         let mut new_mask: SigSet = SigSet::empty();
-        log::error!("[sys_rt_sigprocmask] set_ptr is {:?}", set_ptr);
         copy_from_user(set_ptr, &mut new_mask as *mut SigSet, 1)?;
-        // log::info!("[sys_rt_sigprocmask] current mask {:?}", new_mask);
-        new_mask.remove(SigSet::SIGKILL | SigSet::SIGCONT);
+        log::error!("[sys_rt_sigprocmask] set is {:?}", new_mask);
+        new_mask.remove(SigSet::SIGKILL | SigSet::SIGSTOP);
         // log::info!("[sys_rt_sigprocmask] new mask {:?}", new_mask);
         let mut change_mask;
         match how {
@@ -606,7 +596,66 @@ pub fn sys_rt_sigtimedwait(set: usize, info: usize, timeout_ptr: usize) -> Sysca
 /// sigqueue() 将 sig 中指定的信号发送给 pid 中给出其 PID 的进程。
 /// 发送信号所需的权限与 kill(2) 相同。与 kill(2) 一样，可以使用空信号 (0) 检查是否存在具有给定 PID 的进程。
 /// Todo: 跟kill差不多，回来再说
-pub fn sys_rt_sigqueueinfo(pid: isize, sig: i32, value: usize) -> SyscallRet {
+pub fn sys_rt_sigqueueinfo(pid: isize, sig: i32, info: usize) -> SyscallRet {
+    fn check_kill_permission(sig: Sig, task: &Arc<Task>) -> SyscallRet {
+        // 验证信号合法性
+        if sig.raw() < 0 || sig.raw() > 64 {
+            return Err(Errno::EINVAL);
+        }
+        // 检验调用者是否有权限向目标进程发送信号
+        let caller_task = current_task();
+        let caller_uid = caller_task.uid();
+        let caller_euid = caller_task.euid();
+        if !caller_task.same_thread_group(task)
+            && !(caller_euid == 0
+                || caller_euid == task.suid()
+                || caller_euid == task.uid()
+                || caller_uid == task.suid()
+                || caller_uid == task.uid())
+        {
+            return Err(Errno::EPERM);
+        }
+        // 针对信号值为0的情况做特殊处理
+        if sig.raw() == 0 {
+            return Ok(usize::MAX);
+        }
+        return Ok(0);
+    }
+
+    // 初始化参数
+    let sig = Sig::from(sig);
+    let mut linux_siginfo = LinuxSigInfo::default();
+    copy_from_user(
+        info as *const LinuxSigInfo,
+        &mut linux_siginfo as *mut LinuxSigInfo,
+        1,
+    )?;
+    log::error!("{:?}", linux_siginfo);
+    let mut siginfo: SigInfo = linux_siginfo.into();
+    siginfo.signo = sig.raw();
+    log::error!(
+        "[sys_rt_sigqueueinfo] pid: {}, signal: {:?}, info: {:?}",
+        pid,
+        sig,
+        siginfo
+    );
+
+    // 发送信号
+    if let Some(task) = get_task(pid as usize) {
+        let ret = check_kill_permission(sig, &task)?;
+        if ret != usize::MAX {
+            // 向线程组发送信号
+            if task.is_process() {
+                task.receive_siginfo(siginfo, false);
+            }
+            // 向单个线程发送信号
+            else {
+                task.receive_siginfo(siginfo, true);
+            }
+        }
+    } else {
+        return Err(Errno::ESRCH);
+    }
     Ok(0)
 }
 
@@ -619,7 +668,7 @@ pub fn sys_rt_sigreturn() -> SyscallRet {
     let mut trap_cx = get_trap_context(&task);
     let mut ret: isize = -1;
     // 获取用户栈中sigcontext
-    let user_sp = trap_cx.get_sp();
+    let mut user_sp = trap_cx.get_sp();
     let sig_context_ptr = user_sp as *const SigContext;
     let mut sig_context: SigContext = SigContext::default();
     copy_from_user(sig_context_ptr, &mut sig_context as *mut SigContext, 1)?;
@@ -674,6 +723,14 @@ pub fn sys_rt_sigreturn() -> SyscallRet {
         panic!();
     }
 
+    let mut sig_stack = task.sigstack();
+    if sig_stack.ss_flags == SS_ONSTACK {
+        log::warn!("[sys_rt_sigreturn] use sigstack");
+        // 恢复sigstack
+        sig_stack.ss_flags = 0;
+        task.set_sigstack(sig_stack);
+    }
+
     #[cfg(target_arch = "riscv64")]
     {
         trap_cx.x = sig_context.x;
@@ -695,4 +752,32 @@ pub fn sys_rt_sigreturn() -> SyscallRet {
         save_trap_context(&task, trap_cx);
     }
     Ok(ret as usize)
+}
+
+/// sigaltstack() 允许线程定义新的备用信号堆栈和/或检索现有备用信号堆栈的状态。
+/// ss 参数用于指定新的备用信号堆栈，而 old_ss 参数用于检索有关当前已建立信号堆栈的信息。
+/// Todo: 支持自动解除
+pub fn sys_sigaltstack(ss: usize, old_ss: usize) -> SyscallRet {
+    log::info!("[sys_sigaltstack] uss: {:#x}, uoss: {:#x}", ss, old_ss);
+    let task = current_task();
+    if ss > USER_MAX || old_ss > USER_MAX {
+        return Err(Errno::EFAULT);
+    }
+    let uss_ptr = ss as *const SigStack;
+    let uoss_ptr = old_ss as *mut SigStack;
+    let mut new_stack: SigStack = SigStack::default();
+    copy_from_user(uss_ptr, &mut new_stack as *mut SigStack, 1)?;
+    log::error!("{:?}", new_stack);
+    if new_stack.ss_flags > SS_DISABLE {
+        return Err(Errno::EINVAL);
+    }
+    if new_stack.ss_size < MINSIGSTKSZ {
+        return Err(Errno::ENOMEM);
+    }
+    task.set_sigstack(new_stack);
+    if old_ss != 0 {
+        let old_stack = task.sigstack();
+        copy_to_user(uoss_ptr, &old_stack as *const SigStack, 1)?;
+    }
+    Ok(0)
 }

@@ -1,8 +1,13 @@
 use crate::{
     arch::{config::SysResult, trap::context::dump_trap_context},
+    clear_bss,
     signal::{SiField, Sig, SigInfo},
     syscall::errno::SyscallRet,
-    task::{add_task, current_task, processor::current_tp, schedule, scheduler::dump_scheduler},
+    task::{
+        add_task, current_task,
+        processor::current_tp,
+        schedule,
+    },
     timer::{self, ITimerVal, TimeSpec},
 };
 use alloc::{
@@ -39,6 +44,13 @@ lazy_static! {
     static ref TIME_MANAGER: TimeManager = TimeManager::new();
 }
 
+/************************************** 核心管理器 **************************************/
+
+// // 全局核心管理器
+// pub struct CpuManager {
+//     pub cpus: [CpuLocal; MAX_HART_COUNT], // 核心列表
+// }
+
 /************************************** 任务管理器 **************************************/
 // 创建任务时向其注册任务信息
 pub fn register_task(task: &Arc<Task>) {
@@ -55,6 +67,10 @@ pub fn get_task(tid: Tid) -> Option<Arc<Task>> {
 // 遍历所有任务
 pub fn for_each_task<T>(f: impl Fn(&Arc<Task>) -> T) -> Vec<T> {
     TASK_MANAGER.for_each(f)
+}
+// 获取所有任务列表
+pub fn get_all_tasks() -> Vec<Arc<Task>> {
+    TASK_MANAGER.for_each(|task| task.clone())
 }
 
 #[cfg(feature = "virt")]
@@ -505,7 +521,8 @@ pub fn real_timer_callback(tid: Tid) {
                 signo: Sig::SIGALRM.raw(),
                 code: SigInfo::TIMER,
                 fields: SiField::Kill {
-                    tid: current_task().tid(),
+                    tid: current_task().tid() as i32,
+                    uid: current_task().uid() as u32,
                 },
             },
             true,

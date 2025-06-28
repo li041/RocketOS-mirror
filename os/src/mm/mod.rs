@@ -36,3 +36,7 @@ pub fn init() {
     let _kernel_satp = KERNEL_SATP.clone();
     KERNEL_SPACE.lock().activate();
 }
+
+pub fn kernel_init() {
+    KERNEL_SPACE.lock().activate();
+}

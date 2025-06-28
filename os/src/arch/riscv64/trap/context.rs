@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use riscv::register::sstatus::{self, Sstatus, SPP};
 
 use crate::mm::frame_alloc;
-use crate::task::{get_stack_top_by_sp, Task};
+use crate::task::{get_stack_top_by_sp, idle_task, Task};
 use crate::{arch::config::PAGE_SIZE_BITS, arch::mm::map_temp};
 
 /// Trap Context
@@ -96,6 +96,18 @@ impl TrapContext {
         };
         cx.set_sp(ustack_top); // app's user stack pointer
         cx // return initial Trap Context of app
+    }
+
+    pub fn idle_trap_context() -> Self {
+        let mut sstatus = sstatus::read();
+        sstatus.set_spp(SPP::Supervisor);
+        Self {
+            x: [0; 32],
+            sstatus,
+            sepc: idle_task as usize, // idle_task function address
+            last_a0: 0,
+            kernel_tp: 0,
+        }
     }
 }
 

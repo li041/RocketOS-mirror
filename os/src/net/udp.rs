@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-02 12:09:33
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-25 11:07:54
+ * @LastEditTime: 2025-07-13 11:13:20
  * @FilePath: /RocketOS_netperfright/os/src/net/udp.rs
  * @Description: udp socket
  * 
@@ -67,7 +67,7 @@ use super::SOCKET_SET;
  impl UdpSocket {
     pub fn new()->Self {
         let udp_socket=SocketSetWrapper::new_udp_socket();
-        let handle=SOCKET_SET.add(udp_socket);
+        let handle=SOCKET_SET.lock().get().unwrap().add(udp_socket);
         UdpSocket { handle: UnsafeCell::new(Some(handle)),
             local_addr:RwLock::new(None)
             , remote_addr: RwLock::new(None),
@@ -104,7 +104,7 @@ use super::SOCKET_SET;
     }
     pub fn set_socket_ttl(&self,ttl:u8) {
         let handle=unsafe { self.handle.get().read().unwrap() };
-        SOCKET_SET.with_socket_mut::<_,udp::Socket,_>(handle, |socket|{
+        SOCKET_SET.lock().get_mut().unwrap().with_socket_mut::<_,udp::Socket,_>(handle, |socket|{
             //设置ttl
             socket.set_hop_limit(Some(ttl));
         });
@@ -146,7 +146,7 @@ use super::SOCKET_SET;
         log::error!("[Udpsocket_bind] bind endpoint is {:?}",endpoint);
         if !self.is_reuse_addr() {
             // // Check if the address is already in use
-            match  SOCKET_SET.bind_check(local_endpoint.addr, local_endpoint.port){
+            match  SOCKET_SET.lock().get().unwrap().bind_check(local_endpoint.addr, local_endpoint.port){
                 Ok(a) => {},
                 Err(e) => {
                 },
@@ -155,7 +155,7 @@ use super::SOCKET_SET;
         }
         let handle=unsafe { self.handle.get().read().unwrap() };
         log::error!("[Udpsocket_bind]:socket handle is {:?}",handle);
-        SOCKET_SET.with_socket_mut::<_,udp::Socket,_>(handle, |socket|{
+        SOCKET_SET.lock().get_mut().unwrap().with_socket_mut::<_,udp::Socket,_>(handle, |socket|{
             socket.bind(endpoint)
             .expect("socket bind() failed");
         });
@@ -260,7 +260,7 @@ use super::SOCKET_SET;
         log::error!("[udp_shutdown]begin shutdown");
         poll_interfaces();
         let handle=unsafe { self.handle.get().read().unwrap() };
-        SOCKET_SET.with_socket_mut::<_,udp::Socket,_>(handle, |socket|{
+        SOCKET_SET.lock().get_mut().unwrap().with_socket_mut::<_,udp::Socket,_>(handle, |socket|{
             socket.close();
         });
     }
@@ -273,7 +273,7 @@ use super::SOCKET_SET;
             };
         }
         let handle=unsafe { self.handle.get().read().unwrap() };
-        SOCKET_SET.with_socket_mut::<_,udp::Socket,_>(handle, |socket|{
+        SOCKET_SET.lock().get_mut().unwrap().with_socket_mut::<_,udp::Socket,_>(handle, |socket|{
             // loop {
             log::error!("[udp_poll]:readalbe:{},writealbe:{}",socket.can_recv(),socket.can_send());
             // if socket.can_recv()|socket.can_send() {
@@ -285,7 +285,7 @@ use super::SOCKET_SET;
     }
     pub fn with_socket<R>(&self, f: impl FnOnce(&udp::Socket) -> R) -> R {
         let handle=unsafe { self.handle.get().read().unwrap() };
-        SOCKET_SET.with_socket::<_,udp::Socket,_>(handle, |s| f(s))
+        SOCKET_SET.lock().get().unwrap().with_socket::<_,udp::Socket,_>(handle, |s| f(s))
     }
  }
 
@@ -305,7 +305,7 @@ use super::SOCKET_SET;
             // log::error!("[recv_impl]recv impl begin");
             let handle=unsafe { self.handle.get().read().unwrap() };
             log::error!("[udp_block_on] loop");
-            SOCKET_SET.with_socket_mut::<_, udp::Socket, _>(handle, |socket| {
+            SOCKET_SET.lock().get_mut().unwrap().with_socket_mut::<_, udp::Socket, _>(handle, |socket| {
                 if times>5 {
                     return op(socket);
                 }
@@ -335,12 +335,13 @@ use super::SOCKET_SET;
          self.block_on(||{
             let handle=unsafe { self.handle.get().read().unwrap() };
             log::error!("[udp_block_on] loop");
-            SOCKET_SET.with_socket_mut::<_,udp::Socket,_>(handle, |socket|{   
+            SOCKET_SET.lock().get_mut().unwrap().with_socket_mut::<_,udp::Socket,_>(handle, |socket|{   
                 if !socket.is_open() {
                     log::error!("[Udpsocket]:socket not bind,send must be called after bind");
                     return Err(Errno::ENOTCONN);
                 }
                 else if socket.can_send() {
+                    // println!("[udp_send]");
                     socket.send_slice(buf, remote_addr).expect("socket send failed");
                     Ok(buf.len())
                 }
@@ -361,7 +362,7 @@ use super::SOCKET_SET;
         else {
             loop {
                 // log::trace!("[udp_block_on] loop");
-                yield_current_task();
+                // yield_current_task();
                 // log::trace!("[udp_block_on] loop");
                 poll_interfaces();
                 // log::trace!("[udp_block_on] loop");
@@ -406,6 +407,6 @@ impl Drop for UdpSocket {
         // println!("drop udp socket");
         self.shutdown();
         let handle=unsafe { self.handle.get().read().unwrap() };
-        SOCKET_SET.remove(handle);
+        SOCKET_SET.lock().get().unwrap().remove(handle);
     }
 }

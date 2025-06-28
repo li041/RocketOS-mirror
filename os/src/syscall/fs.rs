@@ -616,6 +616,10 @@ pub fn sys_unlinkat(dirfd: i32, pathname: *const u8, flag: i32) -> SyscallRet {
             let dir_dentry = nd.dentry.clone();
             // 检查父目录是否有写权限
             dentry_check_access(&dir_dentry, W_OK, true)?;
+            if dentry.absolute_path == "/proc/interrupts" {
+                log::error!("[sys_unlinkat] cannot unlink /proc/interrupts");
+                return Err(Errno::EPERM);
+            }
             // 检查是否是目录
             if dentry.is_dir() && (flag & AT_REMOVEDIR) == 0 {
                 log::error!("[sys_unlinkat] cannot unlink a directory without AT_REMOVEDIR");
@@ -1780,6 +1784,7 @@ pub fn sys_ppoll(
     } else {
         // 不监听fd，只是为了等待信号
         wait();
+        current_task().cancel_restart();
         log::error!("[sys_ppoll] wakeup by signal");
         return Err(Errno::EINTR);
     }

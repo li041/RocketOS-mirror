@@ -1,16 +1,17 @@
 use core::arch::global_asm;
 
 use crate::{
-     arch::{mm::{copy_from_user, copy_to_user}, trap::mem_access::Instruction, BadV, CrMd, EStat, Interrupt, TLBRBadV, TLBRPrMd, PGD, PGDH, PGDL, PWCH, PWCL, TLBRERA}, fs::dentry::clean_dentry_cache, mm::VirtAddr, signal::{handle_signal, SiField, Sig, SigInfo}, syscall::syscall, task::{current_task, handle_timeout, yield_current_task}
+     arch::{mm::copy_to_user, CrMd, EStat, Interrupt, TLBRBadV, TLBRPrMd, PGD, PGDH, PGDL, PWCH, PWCL, TLBRERA}, fs::{dentry::clean_dentry_cache, proc::interrupts::record_interrupt}, mm::VirtAddr, signal::{handle_signal, SiField, Sig, SigInfo}, syscall::syscall, task::{current_task, handle_timeout, yield_current_task}
 };
 
-use super::{register, Exception, TIClr, Trap, ERA};
+use super::{mm::copy_from_user, register, BadV, Exception, TIClr, Trap, ERA};
 
 pub mod context;
 pub mod timer;
 pub mod mem_access;
 
 pub use context::TrapContext;
+use mem_access::Instruction;
 use timer::set_next_trigger;
 
 global_asm!(include_str!("trap.S"));
@@ -120,7 +121,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
                             ERA::read().get_pc()
                         );
                         task.receive_siginfo(
-                            SigInfo::new(Sig::SIGSEGV.raw(), SigInfo::KERNEL, SiField::Kill { tid: current_task().tid() }),
+                            SigInfo::new(Sig::SIGSEGV.raw(), SigInfo::KERNEL, SiField::NULL),
                             false,
                         );
                 }
@@ -132,6 +133,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
         // }
         Trap::Interrupt(Interrupt::Timer) => {
             TIClr::read().clear_timer().write();
+            record_interrupt(Interrupt::Timer as usize);
             set_next_trigger();
             handle_timeout();
             clean_dentry_cache();

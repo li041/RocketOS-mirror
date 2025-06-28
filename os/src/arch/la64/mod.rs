@@ -12,6 +12,7 @@ mod tlb;
 pub mod trampoline;
 pub mod trap;
 pub mod virtio_blk;
+pub mod hart;
 
 global_asm!(include_str!("entry.S"));
 global_asm!(include_str!("tlb_refill.S"));

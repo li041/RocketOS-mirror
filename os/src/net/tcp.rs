@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-30 16:26:09
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-25 11:06:59
+ * @LastEditTime: 2025-07-13 12:58:39
  * @FilePath: /RocketOS_netperfright/os/src/net/tcp.rs
  * @Description: tcp file 
  * 
@@ -12,7 +12,8 @@
 
 //本文将主要用于tcp的连接，按照linux中内容，主要状态转换为socket->bind(to a addr)->listen(listentable)->connect->send/recv
 
-use core::{cell::UnsafeCell, net::SocketAddr,sync::atomic::{AtomicBool, AtomicU8, Ordering}, time};
+use core::{cell::UnsafeCell, net::SocketAddr, ptr::copy_nonoverlapping, sync::atomic::{AtomicBool, AtomicU8, Ordering}, time};
+use alloc::vec;
 use smoltcp::{iface::SocketHandle, socket::tcp::{self, ConnectError, RecvError, SendError, State}, wire::{IpEndpoint, IpListenEndpoint, Ipv4Address}};
 use spin::Mutex;
 
@@ -120,9 +121,9 @@ impl TcpSocket {
     //client发送syn之后如果接收到server的syn ack则返回connected,这个设置似乎是由smoltcp完成
     //connect一般只发送而不recv
     //connecting时1使用
-    fn poll_connect(&self)->PollState {
-        let handle=unsafe { self.handle.get().read().unwrap() };
-        let writable =SOCKET_SET.with_socket::<_,tcp::Socket,_>(handle,|socket|{
+    fn poll_connect(&self,handle:SocketHandle)->PollState {
+        // let handle=unsafe { self.handle.get().read().unwrap() };
+        let writable =SOCKET_SET.lock().get().unwrap().with_socket::<_,tcp::Socket,_>(handle,|socket|{
             log::error!("[poll_connect]:socket state is {:?}",socket.state());
             match socket.state() {
                 tcp::State::SynSent => false,
@@ -147,7 +148,7 @@ impl TcpSocket {
         // let mut looptime=0;
         // loop {
         log::error!("[poll_stream] local addr is {:?} remote_addr is {:?}",self.local_addr().unwrap(),self.remote_addr().unwrap());
-            SOCKET_SET.with_socket::<_,tcp::Socket,_>(handle, |socket|{
+            SOCKET_SET.lock().get().unwrap().with_socket::<_,tcp::Socket,_>(handle, |socket|{
                 log::error!("[poll_stream]:socket may recv {},can recv{},can send {}",socket.may_recv(),socket.can_recv(),socket.can_send());
                 readable=!socket.may_recv() || socket.can_recv();
                 writeable=!socket.may_send() || socket.can_send();
@@ -161,7 +162,7 @@ impl TcpSocket {
     fn poll_listening(&self)->PollState {
         // poll_interfaces();
         let port=unsafe { self.loacl_addr.get().read().port };
-        let mut readable=LISTEN_TABLE.can_accept(port);
+        let mut readable=LISTEN_TABLE.lock().get().unwrap().can_accept(port);
         log::error!("[poll_listening]:readable is {:?}",readable);
         PollState { readable: readable
             , writeable: false }        
@@ -191,8 +192,10 @@ impl TcpSocket {
                             // let tid=task.tid();
                             // log::error!("[block_on] the current task is {:?}",tid);
                             // drop(task);
-                            // log::trace!("[tcp_block_on]");
+                            log::trace!("[tcp_block_on]");
                             yield_current_task();
+                            log::trace!("[tcp_block_on]");
+                            // println!("[tcp_block_on]");
                             // log::trace!("[tcp_block_on]");
                         }
                         else {
@@ -272,8 +275,10 @@ impl TcpSocket {
         self.update_state(STATE_CLOSED, STATE_CONNECTING, ||{
             //busy状态
             let handle=unsafe { self.handle.get().read()}.unwrap_or_else(||{
-                SOCKET_SET.add(SocketSetWrapper::new_tcp_socket())
+                SOCKET_SET.lock().get().unwrap().add(SocketSetWrapper::new_tcp_socket())
             });
+            unsafe { self.handle.get().write(Some(handle)) };
+            // println!("[tcpsocket_connect]handle is {:?}",unsafe{self.handle.get().read()});
             let bound_endpoint=self.bound_endpoint();
             let remote_ipendpoint=from_sockaddr_to_ipendpoint(remote_addr);
             log::error!("[TcpSocket:connect]:connect from {:?} to {:?}",bound_endpoint,remote_ipendpoint);
@@ -302,7 +307,7 @@ impl TcpSocket {
             // }).unwrap();
             log::trace!("[tcp_connect]");
             let (local_endpoint, remote_endpoint) =
-                SOCKET_SET.with_socket_mut::<_, tcp::Socket, Result<(IpEndpoint, IpEndpoint), Errno>>(handle, |socket| {
+                SOCKET_SET.lock().get_mut().unwrap().with_socket_mut::<_, tcp::Socket, Result<(IpEndpoint, IpEndpoint), Errno>>(handle, |socket| {
                     socket
                         .connect(iface.lock().context(), remote_ipendpoint, bound_endpoint)
                         .map_err(|e| match e {
@@ -330,8 +335,9 @@ impl TcpSocket {
             self.block_on(||{
                 //这里阻塞的轮询访问对于socket的i砸smoltcp中的状态，除了synsend之外均是说明connected,如果是synackrecived或者
                 //connected则说明连接建立，可以传输数据了
+                let handle=unsafe { self.handle.get().read().unwrap() };
                 log::error!("[Tcpsocket_connect]:still in block on connect");
-                let PollState{readable,writeable}=self.poll_connect();
+                let PollState{readable,writeable}=self.poll_connect(handle);
                 if !writeable {
                     // let _ = self.connect(remote_addr);
                     Err(Errno::EAGAIN)
@@ -357,7 +363,7 @@ impl TcpSocket {
             }
             if !self.is_reuse_addr() {
                 let l=from_sockaddr_to_ipendpoint(local_addr);
-                match  SOCKET_SET.bind_check(l.addr, l.port){
+                match  SOCKET_SET.lock().get().unwrap().bind_check(l.addr, l.port){
                     Ok(_) => {},
                     Err(e) => {
                     },
@@ -376,11 +382,11 @@ impl TcpSocket {
 
             //如果刚开始的socket可能没有handle,通过add来alloc一个
             let handle=unsafe { self.handle.get().read()}.unwrap_or_else(||{
-                SOCKET_SET.add(SocketSetWrapper::new_tcp_socket())
+                SOCKET_SET.lock().get().unwrap().add(SocketSetWrapper::new_tcp_socket())
             });
             unsafe { *self.handle.get()=Some(handle) };
             //把local_endpoint写到socketset中的socket中
-            SOCKET_SET.with_socket_mut::<_,smoltcp::socket::tcp::Socket,_>(handle, |socket|{
+            SOCKET_SET.lock().get_mut().unwrap().with_socket_mut::<_,smoltcp::socket::tcp::Socket,_>(handle, |socket|{
                 socket.set_bound_endpoint(self.bound_endpoint());
             });
             
@@ -404,7 +410,7 @@ impl TcpSocket {
             //     //listens
             //     let _ = socket.listen(bound_endpoint);
             // });
-            LISTEN_TABLE.listen(bound_endpoint)
+            LISTEN_TABLE.lock().get().unwrap().listen(bound_endpoint)
         })
     }
     
@@ -440,7 +446,7 @@ impl TcpSocket {
                 return Err(Errno::EINTR)
             }
             times+=1;
-            match LISTEN_TABLE.accept(local_port) {
+            match LISTEN_TABLE.lock().get().unwrap().accept(local_port) {
                 Ok((handle,(local_endpoint,remote_endpoint))) => {
                     // println!("[TcpSocket]:accept local endpoint is {:?}",local_endpoint);
                     // println!("[TcpSocket]:accept remote endpoint is {:?}",remote_endpoint);
@@ -473,12 +479,12 @@ impl TcpSocket {
             // SAFETY: `self.handle` should be initialized in a connected socket, and
             // no other threads can read or write it.
             let handle = unsafe { self.handle.get().read().unwrap() };
-            SOCKET_SET.with_socket_mut::<_,tcp::Socket,_>(handle, |socket| {
+            SOCKET_SET.lock().get_mut().unwrap().with_socket_mut::<_,tcp::Socket,_>(handle, |socket| {
                 // debug!("TCP socket {}: shutting down", handle);
                 socket.close();
             });
             unsafe { self.loacl_addr.get().write(UNSPECIFIED_ENDPOINT) }; // clear bound address
-            SOCKET_SET.poll_interfaces();
+            SOCKET_SET.lock().get().unwrap().poll_interfaces();
             Ok(())
         });
 
@@ -489,8 +495,8 @@ impl TcpSocket {
             // and no other threads can read or write it.
             let local_port = unsafe { self.loacl_addr.get().read().port };
             unsafe { self.loacl_addr.get().write(UNSPECIFIED_ENDPOINT) }; // clear bound address
-            LISTEN_TABLE.unlisten(local_port);
-            SOCKET_SET.poll_interfaces();
+            LISTEN_TABLE.lock().get().unwrap().unlisten(local_port);
+            SOCKET_SET.lock().get().unwrap().poll_interfaces();
             Ok(())
         });
     }
@@ -501,8 +507,8 @@ impl TcpSocket {
             None => return,
         };
         log::error!("[Tcp_close] close socket local_addr is {:?},remote addr is {:?}",self.local_addr().unwrap(),self.remote_addr().unwrap());
-        SOCKET_SET.poll_interfaces();
-        SOCKET_SET.with_socket_mut::<_,tcp::Socket,_>(handle, |socket|{
+        SOCKET_SET.lock().get().unwrap().poll_interfaces();
+        SOCKET_SET.lock().get_mut().unwrap().with_socket_mut::<_,tcp::Socket,_>(handle, |socket|{
             socket.close();
             log::error!("[Tcp_close] state is {:?}",socket.state());
         });
@@ -521,11 +527,11 @@ impl TcpSocket {
         let handle=unsafe { self.handle.get().read().unwrap() };
         let mut times=0;
         self.block_on(||{
-
+            log::trace!("[block_on]");
             // log::error!("[]")
-            SOCKET_SET.with_socket_mut::<_,tcp::Socket,_>(handle,|socket|{
-                log::trace!("[Tcp recv] recv queue len is{:?}",socket.recv_queue());
-                log::trace!("[Tcp recv] socket state is {:?}",socket.state());
+            SOCKET_SET.lock().get_mut().unwrap().with_socket_mut::<_,tcp::Socket,_>(handle,|socket|{
+                log::error!("[Tcp recv] recv queue len is{:?}",socket.recv_queue());
+                log::error!("[Tcp recv] socket state is {:?}",socket.state());
                 if times>10 {
                     // socket.close();
                     return Ok(0);
@@ -559,7 +565,7 @@ impl TcpSocket {
                 //     Ok(0)
                 // }
                 else{
-                    log::trace!("[recv again]");
+                    // log::trace!("[recv again]");
                     Err(Errno::EAGAIN)
                 }
             })
@@ -578,7 +584,7 @@ impl TcpSocket {
         // SAFETY: `self.handle` should be initialized in a connected socket.
         let handle = unsafe { self.handle.get().read().unwrap() };
         self.block_on(|| {
-            SOCKET_SET.with_socket_mut::<_,tcp::Socket, _>(handle, |socket| {
+            SOCKET_SET.lock().get_mut().unwrap().with_socket_mut::<_,tcp::Socket, _>(handle, |socket| {
                 if socket.recv_queue() > 0 {
                     // data available
                     // TODO: use socket.recv(|buf| {...})
@@ -608,7 +614,7 @@ impl TcpSocket {
     }
 
     pub fn send(&self,buf:&[u8])->Result<usize,Errno> {
-        log::error!("[Tcp_socket]:begin send");
+        log::error!("[Tcp_socket]:begin send,send len is {:?}",buf.len());
         if self.is_connecting() {
             return Err(Errno::EAGAIN);
         }
@@ -618,7 +624,7 @@ impl TcpSocket {
         }
         let handle=unsafe { self.handle.get().read().unwrap() };
         self.block_on(||{
-            SOCKET_SET.with_socket_mut::<_,tcp::Socket,_>(handle, |socket|{
+            SOCKET_SET.lock().get_mut().unwrap().with_socket_mut::<_,tcp::Socket,_>(handle, |socket|{
                 if !socket.is_active() || !socket.may_send() {
                     // closed by remote
                     Err(Errno::EPIPE)
@@ -650,7 +656,9 @@ impl TcpSocket {
         // log::error!("[Tcp_socket]:poll socket addr is {:?}",self.local_addr().unwrap());
         match self.get_state() {
             STATE_LISTENING=>self.poll_listening(),
-            STATE_CONNECTING=>self.poll_connect(),
+            STATE_CONNECTING=>{
+                let handle=unsafe { self.handle.get().read().unwrap() };
+                self.poll_connect(handle)},
             STATE_CONNECTED=>self.poll_stream(isread),
             _=>{
                 PollState{
@@ -666,13 +674,13 @@ impl TcpSocket {
 
     pub fn set_nagle_enabled(&self,enable:bool) {
         let handle=unsafe { self.handle.get().read().unwrap() };
-        SOCKET_SET.with_socket_mut::<_,tcp::Socket,_>(handle, |socket|{
+        SOCKET_SET.lock().get_mut().unwrap().with_socket_mut::<_,tcp::Socket,_>(handle, |socket|{
             socket.set_nagle_enabled(enable);
         })
     }
     pub fn nagle_enabled(&self)->bool {
         let handle=unsafe { self.handle.get().read().unwrap() };
-        SOCKET_SET.with_socket_mut::<_,tcp::Socket,_>(handle, |socket|{
+        SOCKET_SET.lock().get_mut().unwrap().with_socket_mut::<_,tcp::Socket,_>(handle, |socket|{
             socket.nagle_enabled()
         })
     }
@@ -681,7 +689,7 @@ impl TcpSocket {
     where F:FnOnce(&tcp::Socket)->T
     {
         let handle=unsafe { self.handle.get().read().unwrap() };
-        SOCKET_SET.with_socket::<_,tcp::Socket,_>(handle, |socket|{
+        SOCKET_SET.lock().get().unwrap().with_socket::<_,tcp::Socket,_>(handle, |socket|{
             f(socket)
         })
     }
@@ -691,14 +699,14 @@ impl TcpSocket {
 
         match handle {
             Some(handle) => {
-                SOCKET_SET.with_socket_mut::<_, tcp::Socket, _>(handle, |socket| f(Some(socket)))
+                SOCKET_SET.lock().get_mut().unwrap().with_socket_mut::<_, tcp::Socket, _>(handle, |socket| f(Some(socket)))
             }
             None => f(None),
         }
     }
     pub fn set_hop_limit(&self,limit:u8) {
         let handle=unsafe { self.handle.get().read().unwrap() };
-        SOCKET_SET.with_socket_mut::<_,tcp::Socket,_>(handle,|socket|{
+        SOCKET_SET.lock().get_mut().unwrap().with_socket_mut::<_,tcp::Socket,_>(handle,|socket|{
             socket.set_hop_limit(Some(limit));
         });
     }
@@ -721,7 +729,7 @@ fn get_ephemeral_port() -> u16 {
         } else {
             *curr += 1;
         }
-        if LISTEN_TABLE.can_listen(port) {
+        if LISTEN_TABLE.lock().get().unwrap().can_listen(port) {
             return port;
         }
         tries += 1;
@@ -734,7 +742,7 @@ impl Drop for TcpSocket {
         self.shutdown();
         // Safe because we have mut reference to `self`.
         if let Some(handle) = unsafe { self.handle.get().read() } {
-            SOCKET_SET.remove(handle);
+            SOCKET_SET.lock().get().unwrap().remove(handle);
         }
     }
 }

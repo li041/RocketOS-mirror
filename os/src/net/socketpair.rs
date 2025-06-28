@@ -156,13 +156,12 @@ impl FileOp for BufferEnd {
             let mut ring = self.write_buf.lock();
             // 对端关闭检查，触发 SIGPIPE
             if ring.all_read_ends_closed() {
+                let siginfo =
                 current_task().receive_siginfo(
                     crate::signal::SigInfo::new(
                         crate::signal::Sig::SIGPIPE.raw(),
                         crate::signal::SigInfo::KERNEL,
-                        crate::signal::SiField::Kill {
-                            tid: current_task().tid(),
-                        },
+                        crate::signal::SiField::NULL,   
                     ),
                     false,
                 );

@@ -23,7 +23,7 @@ use crate::{
     },
     syscall::errno::{Errno, SyscallRet},
     task::{
-        current_task, dump_scheduler, dump_wait_queue, wait, wait_timeout, wakeup,
+        current_task, dump_wait_queue, wait, wait_timeout, wakeup,
         yield_current_task, Task, ITIMER_REAL,
     },
     timer::TimeSpec,

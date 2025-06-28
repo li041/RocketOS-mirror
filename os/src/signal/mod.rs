@@ -128,9 +128,11 @@ pub fn handle_signal() {
             log::info!("[handle_signal] origin user stack {:#x}", user_sp);
             if action.flags.contains(SigActionFlag::SA_ONSTACK) {
                 log::warn!("[handle_signal] handle SA_ONSTACK");
-                let sig_stack = task.sigstack();
-                if let Some(sig_stack) = sig_stack {
-                    user_sp = sig_stack.ss_sp;
+                let mut sig_stack = task.sigstack();
+                if sig_stack.ss_flags == 0 || sig_stack.ss_flags == SS_ONSTACK {
+                    user_sp = (sig_stack.ss_sp + sig_stack.ss_size - 15) & !0x0f; // 向下对齐到16字节
+                    sig_stack.ss_flags = SS_ONSTACK;
+                    task.set_sigstack(sig_stack);
                 }
             }
 
@@ -148,8 +150,7 @@ pub fn handle_signal() {
                 let siginfo_sp = user_sp; // siginfo_sp：塞入siginfo后的用户栈位置
                 trap_cx.set_a1(siginfo_sp);
                 log::info!("[handle_signal] a1 = {:#x}", siginfo_sp);
-                let sender_pid = sig_info.fields.parse_pid().unwrap();
-                let linux_siginfo = LinuxSigInfo::new(sig.raw(), sig_info.code, sender_pid as i32);
+                let linux_siginfo = sig_info.into();
 
                 // 创建ucontext
                 user_sp = user_sp - core::mem::size_of::<UContext>();

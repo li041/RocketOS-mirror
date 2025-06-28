@@ -2,7 +2,7 @@ use alloc::sync::Arc;
 
 use crate::{
     signal::{ActionType, Sig, SigAction, SigInfo, SigSet, SIG_IGN},
-    task::{add_task, dump_scheduler, dump_wait_queue, manager::delete_wait},
+    task::{add_task, dump_wait_queue, manager::delete_wait},
 };
 
 use super::task::Task;

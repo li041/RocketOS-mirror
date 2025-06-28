@@ -20,10 +20,12 @@ pub struct SigPending {
 
 impl SigPending {
     pub fn new() -> Self {
+        #[cfg(feature = "la2000")]
         println!("[SigPending::new] enter");
         let pending = SigSet::default();
         let info = BTreeMap::new();
         let mask = SigSet::default();
+        #[cfg(feature = "la2000")]
         println!("[SigPending::new] mask: {:?}", mask);
         let sig_pending = Self {
             pending: pending,
