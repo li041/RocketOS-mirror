@@ -39,7 +39,8 @@ use crate::{
         proc::{
             cpuinfo::CPUINFO,
             fd::{record_fd, FD_FILE},
-            pid::{record_target_pid, TARGERT_PID},
+            interrupts::INTERRUPTS,
+            pid::{record_target_pid, SELF_STAT, TARGERT_PID},
             pid_max::PIDMAX,
             smaps::SMAPS,
             tainted::TAINTED,
@@ -545,6 +546,11 @@ fn create_file_from_dentry(
             status.seek(0, super::uapi::Whence::SeekSet).unwrap();
             return Ok(status);
         }
+        if dentry.absolute_path == "/proc/self/stat" {
+            let stat: Arc<dyn FileOp> = SELF_STAT.get().unwrap().clone();
+            stat.seek(0, super::uapi::Whence::SeekSet).unwrap();
+            return Ok(stat);
+        }
         if dentry.absolute_path == "/proc/pid/stat" {
             let pid_stat: Arc<dyn FileOp> = PID_STAT.get().unwrap().clone();
             pid_stat.seek(0, super::uapi::Whence::SeekSet).unwrap();
@@ -569,6 +575,13 @@ fn create_file_from_dentry(
             let cpuinfo: Arc<dyn FileOp> = CPUINFO.get().unwrap().clone();
             cpuinfo.seek(0, super::uapi::Whence::SeekSet).unwrap();
             return Ok(cpuinfo);
+        }
+        if dentry.absolute_path == "/proc/interrupts" {
+            let interruptsinfo: Arc<dyn FileOp> = INTERRUPTS.get().unwrap().clone();
+            interruptsinfo
+                .seek(0, super::uapi::Whence::SeekSet)
+                .unwrap();
+            return Ok(interruptsinfo);
         }
     }
 

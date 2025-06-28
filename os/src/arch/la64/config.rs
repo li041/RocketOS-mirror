@@ -95,6 +95,8 @@ pub const SKIP_NUM: usize = 1;
 
 pub const BUFFER_CACHE_NUM: usize = 256 * 1024 * 1024 / 2048 * 4 / 2048;
 
+pub const MAX_HARTS: usize = 4;
+
 pub static mut CLOCK_FREQ: usize = 0;
 
 use core::arch::asm;

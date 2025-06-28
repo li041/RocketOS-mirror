@@ -4,7 +4,6 @@ use core::time;
 use crate::arch::config::USER_MAX;
 use crate::arch::mm::copy_from_user;
 use crate::arch::trap::context::{dump_trap_context, get_trap_context, save_trap_context};
-use crate::dump_system_info;
 use crate::ext4::fs;
 use crate::fs::dentry::X_OK;
 use crate::fs::file::OpenFlags;
@@ -12,11 +11,10 @@ use crate::futex::do_futex;
 use crate::mm::FRAME_ALLOCATOR;
 use crate::signal::Sig;
 use crate::syscall::errno::Errno;
-use crate::syscall::fs::NAME_MAX;
+use crate::syscall::fs::{AT_EMPTY_PATH, NAME_MAX};
 use crate::syscall::util::{CLOCK_MONOTONIC, CLOCK_REALTIME};
 use crate::task::{
-    add_group, dump_scheduler, get_group, get_scheduler_len, get_task, info_allocator, new_group,
-    unregister_task, wait, wait_timeout, CloneFlags, Task, INITPROC,
+    add_group, dump_scheduler, for_each_task, get_all_tasks, get_group, get_task, info_allocator, new_group, nice_to_priority, nice_to_rlimit, priority_to_nice, unregister_task, wait, wait_timeout, CloneFlags, Task, MAX_NICE, MAX_PRIO, MIN_NICE, PRIO_PGRP, PRIO_PROCESS, PRIO_USER
 };
 use crate::timer::{TimeSpec, TimeVal};
 use crate::{
@@ -31,8 +29,9 @@ use crate::{
     },
     utils::{c_str_to_string, extract_cstrings},
 };
-use alloc::string::String;
+use crate::{drivers, dump_system_info};
 use alloc::task;
+use alloc::vec::Vec;
 use alloc::{sync::Arc, vec};
 use bitflags::bitflags;
 
@@ -357,6 +356,69 @@ pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> Sy
             //     log::error!("[sys_execve] file {} is empty", path);
             //     return Err(Errno::ENOEXEC);
             // }
+            let absolute_path = file.get_path().dentry.absolute_path.clone();
+            task.kernel_execve_lazily(absolute_path, file, args_vec, envs_vec)?;
+            Ok(0)
+        }
+        Err(err) if err == Errno::ENOENT && !path.starts_with("/") => {
+            // 从内核中加载的应用程序
+            if let Some(elf_data) = get_app_data_by_name(&path) {
+                args_vec.insert(0, path);
+                task.kernel_execve(elf_data, args_vec, envs_vec);
+                Ok(0)
+            } else {
+                log::error!("[sys_execve] path: {} not found", path);
+                Err(Errno::ENOENT)
+            }
+        }
+        Err(err) => {
+            log::error!("[sys_execve] path: {} err: {:?}", path, err);
+            Err(err)
+        }
+    }
+}
+
+pub fn sys_execveat(
+    dirfd: i32,
+    pathname: *const u8,
+    args: *const usize,
+    envs: *const usize,
+    flags: i32,
+) -> SyscallRet {
+    let task = current_task();
+    let mut args_vec = extract_cstrings(args)?;
+    let envs_vec = extract_cstrings(envs)?;
+    if flags < 0 {
+        log::error!("[sys_statx] invalid flags: {}", flags);
+        return Err(Errno::EINVAL);
+    }
+    if flags & AT_EMPTY_PATH != 0 {
+        if let Some(file) = current_task().fd_table().get_file(dirfd as usize) {
+            let absolute_path = file.get_path().dentry.absolute_path.clone();
+            task.kernel_execve_lazily(absolute_path, file, args_vec, envs_vec)?;
+            return Ok(0);
+        }
+        // 根据fd获取文件失败
+        return Err(Errno::EBADF);
+    }
+
+    let path = c_str_to_string(pathname)?;
+    if path.is_empty() {
+        log::error!("[sys_statx] pathname is empty");
+        return Err(Errno::ENOENT);
+    }
+    log::info!(
+        "[sys_execve] path: {}, args: {:?}, envs: {:?}",
+        path,
+        args,
+        envs
+    );
+    if path.len() >= NAME_MAX {
+        return Err(Errno::ENAMETOOLONG);
+    }
+    // OpenFlags::empty() = RDONLY = 0, 以只读方式打开文件
+    match path_openat(&path, OpenFlags::empty(), AT_FDCWD, X_OK) {
+        Ok(file) => {
             let absolute_path = file.get_path().dentry.absolute_path.clone();
             task.kernel_execve_lazily(absolute_path, file, args_vec, envs_vec)?;
             Ok(0)
@@ -828,6 +890,12 @@ pub fn sys_clock_nanosleep(clock_id: usize, flags: i32, req: usize, remain: usiz
             return Err(Errno::EOPNOTSUPP);
         }
     };
+    log::info!(
+        "[sys_clock_nanosleep] task{} sleep {:?} on clock_id: {}",
+        current_task().tid(),
+        waited_time,
+        clock_id
+    );
     let ret = wait_timeout(waited_time, -1);
     let now = if clock_id == CLOCK_REALTIME {
         TimeSpec::new_wall_time()
@@ -1286,9 +1354,8 @@ pub fn sys_setgroups(size: usize, list: usize) -> SyscallRet {
 pub fn sys_getgroups(size: usize, list: usize) -> SyscallRet {
     log::info!("[sys_getgroups] size: {}, list: {:x}", size, list);
     let task = current_task();
-    const NGROUPS_MAX: usize = 32; // 最大补充组数(为了过ltp，目前已经应是65536)
+    const NGROUPS_MAX: usize = 65536;
     if size > NGROUPS_MAX {
-        // NGROUPS_MAX = 32
         return Err(Errno::EINVAL);
     }
     if size == 0 {
@@ -1378,3 +1445,120 @@ pub fn sys_setfsgid(fsgid: i32) -> SyscallRet {
     }
     Ok(origin_fsgid as usize)
 }
+
+/// getcpu() 系统调用会识别调用线程或进程当前正在运行的处理器和节点，并将它们写入 cpu 和 node 参数指向的整数中。
+/// Todo: 实现 NUMA 支持
+pub fn sys_getcpu(cpu: usize, node: usize) -> SyscallRet {
+    if cpu != 0 {
+        let cpu_id = current_task().cpu_id();
+        copy_to_user(cpu as *mut usize, &cpu_id, 1)?;
+    }
+    if node != 0 {
+        // 在没有 NUMA 支持的情况下，假设节点为 0
+        let node_id: u32 = 0;
+        copy_to_user(node as *mut u32, &node_id, 1)?;
+    }
+    Ok(0)
+}
+
+// //fake
+// pub fn sys_capget(user_cap_header: usize, user_cap_data: usize) -> SyscallRet {
+//     log::warn!("[sys_capget] unimplemented");
+//     log::error!(
+//         "[sys_capget] header: {:x}, data: {:x}",
+//         user_cap_header,
+//         user_cap_data
+//     );
+//     let mut header = user_cap_header::default();
+//     let mut data = user_cap_data::default();
+//     copy_from_user(
+//         user_cap_header as *const user_cap_header,
+//         &mut header as *mut user_cap_header,
+//         1,
+//     )?;
+//     copy_from_user(
+//         user_cap_data as *const user_cap_data,
+//         &mut data as *mut user_cap_data,
+//         1,
+//     )?;
+//     if header.version == 0 {
+//         header.version = 0x20080522; // 这个版本号是Linux内核的一个常量
+//         copy_to_user(
+//             user_cap_header as *mut user_cap_header,
+//             &header as *const user_cap_header,
+//             1,
+//         )?;
+//         return Err(Errno::EINVAL);
+//     }
+//     if header.pid < 0 {
+//         return Err(Errno::EINVAL);
+//     }
+//     if let Some(task) = get_task(header.pid as usize) {
+//         // fake
+//     } else {
+//         return Err(Errno::ESRCH);
+//     }
+//     return Ok(0);
+// }
+
+// // fake
+// pub fn sys_capset(user_cap_header: usize, user_cap_data: usize) -> SyscallRet {
+//     log::warn!("[sys_capset] unimplemented");
+//     log::error!(
+//         "[sys_capset] header: {:x}, data: {:x}",
+//         user_cap_header,
+//         user_cap_data
+//     );
+//     let mut header = user_cap_header::default();
+//     let mut data = user_cap_data::default();
+//     copy_from_user(
+//         user_cap_header as *const user_cap_header,
+//         &mut header as *mut user_cap_header,
+//         1,
+//     )?;
+//     copy_from_user(
+//         user_cap_data as *const user_cap_data,
+//         &mut data as *mut user_cap_data,
+//         1,
+//     )?;
+//     log::error!(
+//         "[sys_capset] header: {:?}, data: {:?}",
+//         header, data
+//     );
+//     if header.version == 0 {
+//         header.version = 0x20080522; // 这个版本号是Linux内核的一个常量
+//         copy_to_user(
+//             user_cap_header as *mut user_cap_header,
+//             &header as *const user_cap_header,
+//             1,
+//         )?;
+//         return Err(Errno::EINVAL);
+//     }
+//     if header.pid < 0 {
+//         return Err(Errno::EINVAL);
+//     }
+//     if data.inheritable == 8224 { // fake
+//         return Err(Errno::EPERM);
+//     }
+//     if let Some(task) = get_task(header.pid as usize) {
+//         if header.pid != 0 && header.pid != current_task().tid() as i32 { //fake
+//             return Err(Errno::EPERM);
+//         }
+//     } else {
+//         return Err(Errno::ESRCH);
+//     }
+//     return Ok(0);
+// }
+
+// #[derive(Default, Debug, Clone, Copy)]
+// pub struct user_cap_header {
+//     pub version: u32,
+//     pub pid: i32,
+// }
+
+// #[derive(Default, Debug, Clone, Copy)]
+// pub struct user_cap_data {
+//     pub effective: u32,
+//     pub permitted: u32,
+//     pub inheritable: u32,
+// }

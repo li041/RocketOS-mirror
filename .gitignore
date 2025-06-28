@@ -18,8 +18,8 @@ kernel-qemu
 sbi-qemu
 sdcard.img
 
-os/vendor/
-user/vendor/
+os/vendor/*
+user/vendor/*
 testsuits-for-oskernel/
 os/.cargo/
 user/.cargo/

@@ -2,10 +2,20 @@
 .global _start
 
 .equ CSR_CRMD, 0x0
+.equ CSR_CPUID, 0x20
 .equ CSR_DMW0, 0x180
 .equ CSR_DMW1, 0x181
 
 _start:
+0:
+    # 获取当前 CPU ID 并放入 a0
+    csrrd $a0, CSR_CPUID
+
+    # 为每个核设置栈
+    li.d $t0, 4096 * 16
+    mul.d $t1, $a0, $t0
+    la.global $sp, boot_stack_top
+    sub.d $sp, $sp, $t1
 
     # 先读CSR.CRMD看看内存映射模式
     # CRMD的csr_num是0x0
@@ -57,6 +67,6 @@ _start:
     .section .bss.stack
     .globl boot_stack
 boot_stack:
-    .space 4096 * 32
+    .space 4096 * 16 * 4
     .globl boot_stack_top
 boot_stack_top:

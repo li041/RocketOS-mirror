@@ -2,6 +2,7 @@ use crate::{
     ext4::inode::{Ext4InodeDisk, S_IFCHR, S_IFDIR, S_IFLNK, S_IFREG},
     fs::proc::{
         cpuinfo::{CPUInfoFile, CPUINFO},
+        interrupts::{InterruptsFile, INTERRUPTS},
         pid_max::{PidMaxFile, PIDMAX},
     },
 };
@@ -26,6 +27,7 @@ use tainted::{TaintedFile, TAINTED};
 pub mod cpuinfo;
 pub mod exe;
 pub mod fd;
+pub mod interrupts;
 pub mod maps;
 pub mod meminfo;
 pub mod mounts;
@@ -463,6 +465,32 @@ pub fn init_procfs(root_path: Arc<Path>) {
             panic!("create {} failed: {:?}", status_path, e);
         }
     }
+    // /proc/self/stat
+    let stat_path = "/proc/self/stat";
+    let stat_mode = S_IFREG as u16 | 0o444;
+    nd = Nameidata {
+        path_segments: parse_path_uncheck(stat_path),
+        dentry: root_path.dentry.clone(),
+        mnt: root_path.mnt.clone(),
+        depth: 0,
+    };
+    match filename_create(&mut nd, 0) {
+        Ok(dentry) => {
+            let parent_inode = nd.dentry.get_inode();
+            parent_inode.create(dentry.clone(), stat_mode);
+            // 现在dentry的inode指向/proc/self/stat
+            let stat_file = pid::SelfStatFile::new(
+                Path::new(root_path.mnt.clone(), dentry.clone()),
+                dentry.get_inode().clone(),
+                OpenFlags::empty(),
+            );
+            pid::SELF_STAT.call_once(|| stat_file.clone());
+            insert_core_dentry(dentry.clone());
+        }
+        Err(e) => {
+            panic!("create {} failed: {:?}", stat_path, e);
+        }
+    }
 
     // /proc/pid
     let pid_path = "/proc/pid";
@@ -530,6 +558,35 @@ pub fn init_procfs(root_path: Arc<Path>) {
                 OpenFlags::empty(),
             );
             CPUINFO.call_once(|| cpuinfo_file.clone());
+            insert_core_dentry(dentry.clone());
+        }
+        Err(e) => {
+            panic!("create {} failed: {:?}", mounts_path, e);
+        }
+    };
+
+    // /proc/interrupts
+    // 只读, 虚拟文件
+    let interrupts_path = "/proc/interrupts";
+    let interrupts_mode = S_IFREG as u16 | 0o444;
+    nd = Nameidata {
+        path_segments: parse_path_uncheck(interrupts_path),
+        dentry: root_path.dentry.clone(),
+        mnt: root_path.mnt.clone(),
+        depth: 0,
+    };
+    match filename_create(&mut nd, 0) {
+        Ok(dentry) => {
+            let parent_inode = nd.dentry.get_inode();
+            parent_inode.create(dentry.clone(), interrupts_mode);
+            // 现在dentry的inode指向/proc/interrupts
+            let interrupts_file = InterruptsFile::new(
+                Path::new(root_path.mnt.clone(), dentry.clone()),
+                dentry.get_inode().clone(),
+                // ReadOnly
+                OpenFlags::empty(),
+            );
+            INTERRUPTS.call_once(|| interrupts_file.clone());
             insert_core_dentry(dentry.clone());
         }
         Err(e) => {

@@ -1,6 +1,11 @@
-use crate::{arch::trap::TrapContext, task::Tid};
+use alloc::vec::Vec;
 
-use super::{Sig, SigSet, SignalStack};
+use crate::{
+    arch::trap::TrapContext,
+    task::{current_task, Tid},
+};
+
+use super::{Sig, SigSet, SigStack};
 
 #[derive(Clone, Copy, Default)]
 #[repr(align(16))]
@@ -77,26 +82,84 @@ impl SigInfo {
         }
     }
 
-    pub fn prepare_kill(tid: Tid, sig: Sig) -> Self {
+    pub fn prepare_kill(sig: Sig) -> Self {
+        let task = current_task();
+        let tid = task.tid() as i32;
+        let uid = task.uid() as u32;
         Self {
             signo: sig.raw(),
             code: SigInfo::USER,
-            fields: SiField::Kill { tid },
+            fields: SiField::Kill { tid, uid },
+        }
+    }
+
+    pub fn prepare_tgkill(sig: Sig) -> Self {
+        let task = current_task();
+        let tid = task.tid() as i32;
+        let uid = task.uid() as u32;
+        Self {
+            signo: sig.raw(),
+            code: SigInfo::TKILL,
+            fields: SiField::Kill { tid, uid },
         }
     }
 }
 
+impl From<LinuxSigInfo> for SigInfo {
+    fn from(lsi: LinuxSigInfo) -> Self {
+        let fields = lsi.field();
+        SigInfo {
+            signo: lsi.si_signo,
+            code: lsi.si_code,
+            fields,
+        }
+    }
+}
+
+// Todo Timer child...
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub enum SiField {
-    Kill { tid: Tid },
+    NULL,
+    Kill {
+        tid: i32,
+        uid: u32,
+    },
+    Rt {
+        tid: i32,
+        uid: u32,
+        sival_int: i32,
+        sival_ptr: usize,
+    },
 }
 
 impl SiField {
-    pub fn parse_pid(&self) -> Option<Tid> {
+    pub fn to_array(&self) -> [i32; 29] {
+        let mut arr = [0i32; 29];
         match self {
-            SiField::Kill { tid } => Some(*tid),
+            SiField::NULL {} => {
+                // 填充为 0
+            }
+            SiField::Kill { tid, uid } => {
+                arr[1] = *tid;
+                arr[2] = *uid as i32;
+            }
+            SiField::Rt {
+                tid,
+                uid,
+                sival_int,
+                sival_ptr,
+            } => {
+                arr[1] = *tid;
+                arr[2] = *uid as i32;
+                arr[3] = *sival_int;
+                // 将 usize 拆成两个 i32 存储（在 64 位平台）
+                let ptr = *sival_ptr as u64;
+                arr[4] = (ptr & 0xFFFFFFFF) as i32;
+                arr[5] = (ptr >> 32) as i32;
+            }
         }
+        arr
     }
 }
 
@@ -139,27 +202,45 @@ impl SigInfo {
     pub const NSIGCHLD: i32 = 6;
 }
 
-#[derive(Default, Copy, Clone)]
+// LinuxSigInfo 是 Linux 内核中用于描述信号信息的结构体（用于符合 Linux ABI 的信号处理）
+#[derive(Default, Copy, Clone, Debug)]
 #[repr(align(16))]
 #[repr(C)]
 pub struct LinuxSigInfo {
     pub si_signo: i32,
     pub si_errno: i32,
     pub si_code: i32,
-    pub si_trapno: i32,
-    pub si_pid: i32,     // 发送信号的进程ID
-    pub _pad: [i32; 27], // 填充以对齐
+    pub field: [i32; 29], // 对应field
 }
 
 impl LinuxSigInfo {
-    pub fn new(signo: i32, code: i32, pid: i32) -> Self {
-        Self {
-            si_signo: signo,
-            si_errno: 0,
-            si_code: code,
-            si_trapno: 0,
-            si_pid: pid,
-            _pad: [0; 27],
+    pub fn field(&self) -> SiField {
+        // field[0] 对应填充内容
+        match self.si_code {
+            SigInfo::QUEUE => SiField::Rt {
+                tid: self.field[1],
+                uid: self.field[2] as u32,
+                sival_int: self.field[3],
+                sival_ptr: (self.field[4] as usize) | ((self.field[5] as usize) << 32),
+            },
+            SigInfo::USER | SigInfo::TKILL => SiField::Kill {
+                tid: self.field[1],
+                uid: self.field[2] as u32,
+            },
+            _ => SiField::NULL,
+        }
+    }
+}
+
+impl From<SigInfo> for LinuxSigInfo {
+    fn from(si: SigInfo) -> Self {
+        // 先创建一个填充数组并把 fields 写进去
+        let field = si.fields.to_array();
+        LinuxSigInfo {
+            si_signo: si.signo,
+            si_errno: 0, // 如果有 errno 可设置
+            si_code: si.code,
+            field,
         }
     }
 }
@@ -173,7 +254,7 @@ pub struct UContext {
     /// 指向上文Ucontext
     pub uc_link: usize,
     // 当前上下文使用的栈信息,包含栈的基址、大小等信息
-    pub uc_stack: SignalStack,
+    pub uc_stack: SigStack,
     // 此上下文中阻塞的信号集
     pub uc_sigmask: SigSet,
     // don't know why, struct need to be exact the same with musl libc
@@ -187,7 +268,7 @@ impl UContext {
         UContext {
             uc_flags: 0,
             uc_link: 0,
-            uc_stack: SignalStack::new(),
+            uc_stack: SigStack::default(),
             uc_sigmask: sig_mask,
             uc_sig: [0; 16],
             uc_mcontext: sig_context,

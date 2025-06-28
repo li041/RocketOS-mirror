@@ -2,14 +2,14 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-30 16:26:05
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-25 11:05:18
+ * @LastEditTime: 2025-07-13 11:11:01
  * @FilePath: /RocketOS_netperfright/os/src/net/mod.rs
  * @Description: net mod for interface wrapper,socketset
  *
  * Copyright (c) 2025 by peterluck2021@163.com, All Rights Reserved.
  */
 use alloc::{boxed::Box, vec};
-use core::{cell::RefCell, ops::DerefMut, panic};
+use core::{cell::{OnceCell, RefCell}, ops::DerefMut, panic};
 use lazyinit::LazyInit;
 use listentable::ListenTable;
 use loopback::LoopbackDev;
@@ -35,9 +35,8 @@ use crate::{
 };
 use smoltcp::time::Instant as SmolInstant;
 use smoltcp::wire::IpAddress;
-use spin::Mutex;
+use spin::{mutex::SpinMutex, Mutex};
 use virtio_drivers::transport::{mmio::MmioTransport, pci::PciTransport, Transport};
-
 pub mod addr;
 pub mod alg;
 mod listentable;
@@ -57,12 +56,13 @@ pub mod socketpair;
 
 //需要定义一个全局socketset控制全局socket
 //使用懒初始化全局变量，无法知道变量大小
-static SOCKET_SET: LazyInit<SocketSetWrapper> = LazyInit::new();
+// static SOCKET_SET: LazyInit<SocketSetWrapper> = LazyInit::new();
+static SOCKET_SET: Mutex<OnceCell<SocketSetWrapper>> = Mutex::new(OnceCell::new());
 static RANDOM_SEED: u64 = 0xA2CE_05A2_CE05_A2CE;
 static ETH0: LazyInit<InterfaceWrapper> = LazyInit::new();
 static LOOPBACK_DEV: LazyInit<Mutex<LoopbackDev>> = LazyInit::new();
 static LOOPBACK: LazyInit<Mutex<Interface>> = LazyInit::new();
-static LISTEN_TABLE: LazyInit<ListenTable> = LazyInit::new();
+static LISTEN_TABLE: Mutex<OnceCell<ListenTable>> =  Mutex::new(OnceCell::new());
 const TCP_RX_BUF_LEN_IPERF: usize = 128 * 1024;
 const TCP_TX_BUF_LEN_IPERF: usize = 128 * 1024;
 const UDP_RX_BUF_LEN: usize = 64 * 1024;
@@ -99,8 +99,16 @@ pub fn init(net_device: Option<VirtioNetDevice<32, HalImpl, MmioTransport>>) {
         eth0.set_ip_addr(ip_ipv4, 24);
         eth0.set_ip_addr(ip_ipv6, PREFIX_V6);
         ETH0.init_once(eth0);
-        SOCKET_SET.init_once(SocketSetWrapper::new());
-        LISTEN_TABLE.init_once(ListenTable::new());
+        let mut socket_set = SOCKET_SET.lock();
+        socket_set.get_or_init(|| {
+            // 初始化代码
+            SocketSetWrapper::new()
+        });
+        let mut listentable = LISTEN_TABLE.lock();
+        listentable.get_or_init(|| {
+            // 初始化代码
+            ListenTable::new()
+        });
         let mut device = LoopbackDev::new(Medium::Ip);
         let config = Config::new(smoltcp::wire::HardwareAddress::Ip);
         let mut iface = Interface::new(
@@ -129,6 +137,7 @@ pub fn init(net_device: Option<VirtioNetDevice<32, HalImpl, MmioTransport>>) {
     //     // LOOPBACK_DEV.init_once(Mutex::new(local_device));
     // }
 }
+#[cfg(target_arch="loongarch64")]
 pub fn init_la<T: Transport + 'static>(net_device: Option<VirtioNetDevice<32, HalImpl, T>>) {
     //初始化网卡
     //需要添加这个trace 否则会panic在uninit lazyinit
@@ -136,7 +145,11 @@ pub fn init_la<T: Transport + 'static>(net_device: Option<VirtioNetDevice<32, Ha
     log::trace!("[init_la]");
     log::trace!("[init_la]");
     log::trace!("[init_la]");
-    SOCKET_SET.init_once(SocketSetWrapper::new());
+    let mut socket_set = SOCKET_SET.lock();
+        socket_set.get_or_init(|| {
+            // 初始化代码
+            SocketSetWrapper::new()
+        });
     log::trace!("[init_la]");
     if let Some(dev) = net_device {
         log::error!("[init_net]:begin init virtionetdevice");
@@ -157,7 +170,12 @@ pub fn init_la<T: Transport + 'static>(net_device: Option<VirtioNetDevice<32, Ha
         eth0.set_ip_addr(ip_ipv6, PREFIX_V6);
         ETH0.init_once(eth0);
         // SOCKET_SET.init_once(SocketSetWrapper::new());
-        LISTEN_TABLE.init_once(ListenTable::new());
+        // LISTEN_TABLE.init_once(ListenTable::new());
+        let mut listentable = LISTEN_TABLE.lock();
+        listentable.get_or_init(|| {
+            // 初始化代码
+            ListenTable::new()
+        });
         let mut device = LoopbackDev::new(Medium::Ip);
         let config = Config::new(smoltcp::wire::HardwareAddress::Ip);
         let mut iface = Interface::new(
@@ -217,6 +235,7 @@ impl<'a> SocketSetWrapper<'a> {
         F: FnOnce(&T) -> R,
     {
         let binding = self.0.lock();
+        // println!("[SOCKETSETWRAPPER_WITHSOCKET]handle is {:?}",handle);
         let socket = binding.get(handle);
         f(socket)
     }
@@ -438,14 +457,14 @@ fn snoop_tcp_packet(buf: &[u8], sockets: &mut SocketSet<'_>) -> Result<(), smolt
         );
         if is_first {
             // create a socket for the first incoming TCP packet, as the later accept() returns.
-            LISTEN_TABLE.push_incoming_packet(dst_addr, src_addr, sockets);
+            LISTEN_TABLE.lock().get().unwrap().push_incoming_packet(dst_addr, src_addr, sockets);
         }
     }
     Ok(())
 }
 pub fn poll_interfaces() {
     log::trace!("[udp_block_on] loop");
-    SOCKET_SET.poll_interfaces();
+    SOCKET_SET.lock().get().unwrap().poll_interfaces();
 }
 
 //connect 时需要1使用网卡抽象

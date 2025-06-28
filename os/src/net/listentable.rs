@@ -1,10 +1,10 @@
-use core::{ops::{Deref, DerefMut}, pin};
+use core::{ops::{Deref, DerefMut}, pin, sync::atomic::fence};
 
 /*
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-31 22:34:08
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-25 00:48:25
+ * @LastEditTime: 2025-07-13 12:04:32
  * @FilePath: /RocketOS_netperfright/os/src/net/listentable.rs
  * @Description: listentable file
  * 
@@ -47,7 +47,7 @@ impl Drop for ListenTableEntry {
     fn drop(&mut self) {
         for &handle in &self.syn_queue {
             //需要注意socketset中socket就是smoltcp中socket,而我们在tcp中的socket是自己设定的，唯一o有关系的是handle
-            SOCKET_SET.remove(handle);
+            SOCKET_SET.lock().get().unwrap().remove(handle);
         }
     }
 }
@@ -161,6 +161,7 @@ impl ListenTable {
         log::trace!("[ListenTable_accept]:accept port is {:?}",port);
         if let Some(entry) = self.table[port as usize].lock().deref_mut() {
             log::error!("[ListenTable_accept]:entry listenendpoint {:?}",entry.listen_endpoint);
+            // yield_current_task();
             let syn_queue: &mut VecDeque<SocketHandle> = &mut entry.syn_queue;
             let idx = syn_queue
                 .iter()
@@ -211,7 +212,8 @@ impl ListenTable {
             // }
             if socket.listen(entry.listen_endpoint).is_ok() {
                 log::error!("[push_incoming_packet]:socket listen_endpoint {:?}",entry.listen_endpoint);
-                let handle = sockets.add(socket);
+                let handle=sockets.add(socket);
+                // fence(core::sync::atomic::Ordering::SeqCst);
                 log::error!("[push_incoming_packet]:socket handle {:?}",handle);
                 // socket.remote_endpoint()
                 // socket.set_bound_endpoint(entry.listen_endpoint);
@@ -227,20 +229,20 @@ impl ListenTable {
     }
 }
 fn is_connected(handle: SocketHandle) -> bool {
-    SOCKET_SET.with_socket::<_, tcp::Socket, _>(handle, |socket| {
+    SOCKET_SET.lock().get().unwrap().with_socket::<_, tcp::Socket, _>(handle, |socket| {
         // log::error!("[is_connected] socket state is {:?}",socket.state());
         !matches!(socket.state(), State::Listen | State::SynReceived)
     })
 }
 fn is_closed(handle: SocketHandle) -> bool {
-    SOCKET_SET
+    SOCKET_SET.lock().get().unwrap()
         .with_socket::<_, tcp::Socket, _>(handle, |socket| {
             // log::error!("[is_closed] socket state is {:?}",socket.state());
             matches!(socket.state(), State::Closed)
         })
 }
 fn get_addr_tuple(handle: SocketHandle) -> (IpEndpoint, IpEndpoint) {
-    SOCKET_SET.with_socket::<_, tcp::Socket, _>(handle, |socket| {
+    SOCKET_SET.lock().get().unwrap().with_socket::<_, tcp::Socket, _>(handle, |socket| {
         (
             socket.local_endpoint().unwrap(),
             socket.remote_endpoint().unwrap(),

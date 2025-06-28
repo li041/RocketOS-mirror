@@ -1994,7 +1994,18 @@ impl MemorySet {
                 va.0,
                 pte
             );
-            // 页表中有对应的页表项, 但不是COW
+            if pte.is_valid() && pte.writable() {
+                println!(
+                    "[handle_recoverable_page_fault] page fault find pte, not COW, but writable"
+                );
+                // 刷新下tlb看看
+                unsafe {
+                    sfence_vma_vaddr(va.0 << PAGE_SIZE_BITS);
+                }
+                // 直接返回, 不处理
+                return Ok(());
+            }
+            // 页表中有对应的页表项, 但不是COW, 同时也没有写权限
             return Err(Sig::SIGSEGV);
         }
         self.handle_lazy_allocation_area(va, cause)

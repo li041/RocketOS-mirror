@@ -318,7 +318,7 @@ fn snoop_tcp_from_ip(buffer: &[u8], sockets: &mut SocketSet) -> Result<(), smolt
                 src_addr,
                 dst_addr
             );
-            LISTEN_TABLE.push_incoming_packet(
+            LISTEN_TABLE.lock().get().unwrap().push_incoming_packet(
                 from_sockaddr_to_ipendpoint(dst_addr),
                 from_sockaddr_to_ipendpoint(src_addr),
                 sockets,

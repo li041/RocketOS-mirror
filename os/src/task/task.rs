@@ -11,12 +11,10 @@ use super::{
 };
 use crate::{
     arch::{
-        config::USER_STACK_SIZE,
-        mm::copy_to_user,
-        trap::{
+        config::USER_STACK_SIZE, mm::copy_to_user, trap::{
             context::{get_trap_context, save_trap_context},
             TrapContext,
-        },
+        }
     },
     ext4::inode::{S_IWGRP, S_IWOTH, S_IWUSR},
     fs::{
@@ -32,16 +30,12 @@ use crate::{
     },
     mm::{MapArea, MapPermission, MapType, MemorySet, VPNRange, VirtAddr, KERNEL_SPACE},
     net::addr::is_unspecified,
-    signal::{SiField, Sig, SigHandler, SigInfo, SigPending, SigSet, SignalStack, UContext},
+    signal::{SiField, Sig, SigHandler, SigInfo, SigPending, SigSet, SigStack, UContext},
     syscall::errno::{self, Errno, SyscallRet},
     task::{
-        self, add_task,
-        context::write_task_cx,
-        current_task, dump_scheduler, dump_wait_queue,
-        manager::{
+        self, add_task, context::write_task_cx, current_task, dump_wait_queue, idle_task, manager::{
             add_group, cancel_wait_alarm, delete_wait, new_group, register_task, remove_group,
-        },
-        wakeup, INITPROC,
+        }, processor::{current_hart_id, current_tp, preempte}, scheduler::{add_task_init, select_cpu, DEFAULT_PRIO}, wakeup, INITPROC, SCHED_IDLE, SCHED_OTHER
     },
     timer::{ITimerVal, TimeVal},
 };
@@ -59,7 +53,7 @@ use core::{
     cell::SyncUnsafeCell,
     fmt::Write,
     mem,
-    sync::atomic::{AtomicI32, AtomicU16, AtomicU32, AtomicUsize},
+    sync::atomic::{AtomicI32, AtomicI8, AtomicU16, AtomicU32, AtomicUsize},
 };
 use spin::{Mutex, RwLock};
 
@@ -76,14 +70,16 @@ extern "C" {
 #[repr(C)]
 pub struct Task {
     // 不变量
-    // kstack在Thread中要保持在第一个field
+    // kstack在Task中要保持在第一个field
+    // cpu_id在Task中要保持在第二个field
     kstack: KernelStack, // 内核栈
+    cpu_id: usize,       // 当前任务绑定的CPU id
 
     // 变量
     // 基本变量
     tid: RwLock<TidHandle>,                         // 线程id
     tgid: AtomicUsize,                              // 线程组id
-    tid_address: Mutex<TidAddress>,                 // 线程id地址
+    pgid: AtomicUsize,                              // 进程组id
     status: Mutex<TaskStatus>,                      // 任务状态
     time_stat: SyncUnsafeCell<TimeStat>,            // 任务时间统计
     parent: Arc<Mutex<Option<Weak<Task>>>>,         // 父任务
@@ -91,9 +87,7 @@ pub struct Task {
     thread_group: Arc<Mutex<ThreadGroup>>,          // 线程组
     exit_code: AtomicI32,                           // 退出码
     exe_path: Arc<RwLock<String>>,                  // 执行路径
-
-    // 内存管理
-    // 包括System V shm管理
+    // 内存管理（包括System V shm管理）
     memory_set: RwLock<Arc<RwLock<MemorySet>>>, // 地址空间
     // futex管理, 线程局部
     robust_list_head: AtomicUsize, //  线程局部的robust futex链表头
@@ -105,23 +99,53 @@ pub struct Task {
     // 信号处理
     sig_pending: Mutex<SigPending>,         // 待处理信号
     sig_handler: Arc<Mutex<SigHandler>>,    // 信号处理函数
-    sig_stack: Mutex<Option<SignalStack>>,  // 额外信号栈
     itimerval: Arc<RwLock<[ITimerVal; 3]>>, // 定时器
-    rlimit: Arc<RwLock<[RLimit; 16]>>,      // 资源限制
-    cpu_mask: Mutex<CpuMask>,               // CPU掩码
+    // 资源限制
+    rlimit: Arc<RwLock<[RLimit; 16]>>,
     // 权限设置
-    pgid: AtomicUsize, // 进程组id
-    uid: AtomicU32,    // 用户id
-    euid: AtomicU32,   // 有效用户id
-    suid: AtomicU32,   // 保存用户id
-    fsuid: AtomicU32,  // 文件系统用户id
-    gid: AtomicU32,    // 组id
-    egid: AtomicU32,   // 有效组id
-    sgid: AtomicU32,   // 保存组id
-    fsgid: AtomicU32,  // 文件系统组id
+    uid: AtomicU32,               // 用户id
+    euid: AtomicU32,              // 有效用户id
+    suid: AtomicU32,              // 保存用户id
+    fsuid: AtomicU32,             // 文件系统用户id
+    gid: AtomicU32,               // 组id
+    egid: AtomicU32,              // 有效组id
+    sgid: AtomicU32,              // 保存组id
+    fsgid: AtomicU32,             // 文件系统组id
     sup_groups: RwLock<Vec<u32>>, // 附加组列表
-                       // ToDo：运行时间(调度相关)
-                       // ToDo: 多核启动
+    // 任务内部结构
+    task_inner: Mutex<TaskInner>, // 内部结构
+}
+
+// 任务结构中修改频率较低字段（不会发生共享）
+// 由于内部字段读写次数均较少，因此在外层统一用一把大锁来管理
+pub struct TaskInner {
+    priority: u32,           // 任务的优先级 [1-99]为实时优先级，[100-139]为普通优先级 0为空闲任务
+    policy: u32,             // 任务的调度策略
+    tid_address: TidAddress, // 线程id地址
+    sig_stack: SigStack,     // 额外信号栈
+    cpu_mask: CpuMask,       // CPU掩码
+}
+
+impl TaskInner {
+    pub fn new() -> Self {
+        Self {
+            priority: DEFAULT_PRIO, // 默认优先级
+            policy: SCHED_OTHER,
+            tid_address: TidAddress::new(),
+            sig_stack: SigStack::default(),
+            cpu_mask: CpuMask::ALL,
+        }
+    }
+
+    pub fn idle_init() -> Self {
+        Self {
+            priority: 0, // 空闲任务优先级
+            policy: SCHED_IDLE,
+            tid_address: TidAddress::new(),
+            sig_stack: SigStack::default(),
+            cpu_mask: CpuMask::ALL,
+        }
+    }
 }
 
 impl core::fmt::Debug for Task {
@@ -145,11 +169,11 @@ impl Task {
         println!("[Task::zero_init] create idle task");
         let sig_handler = Arc::new(Mutex::new(SigHandler::new()));
         println!("after sig_handler init");
-        let task = Arc::new(Self {
+        Arc::new(Self {
             kstack: KernelStack(0),
+            cpu_id: 0,
             tid: RwLock::new(TidHandle(0)),
             tgid: AtomicUsize::new(0),
-            tid_address: Mutex::new(TidAddress::new()),
             status: Mutex::new(TaskStatus::Ready),
             time_stat: SyncUnsafeCell::new(TimeStat::default()),
             parent: Arc::new(Mutex::new(None)),
@@ -164,11 +188,9 @@ impl Task {
             pwd: Arc::new(Mutex::new(Path::zero_init())),
             umask: AtomicU16::new(0),
             sig_pending: Mutex::new(SigPending::new()),
-            sig_handler,
-            sig_stack: Mutex::new(None),
+            sig_handler: Arc::new(Mutex::new(SigHandler::new())),
             itimerval: Arc::new(RwLock::new([ITimerVal::default(); 3])),
             rlimit: Arc::new(RwLock::new([RLimit::default(); RLIM_NLIMITS])),
-            cpu_mask: Mutex::new(CpuMask::ALL),
             pgid: AtomicUsize::new(0),
             uid: AtomicU32::new(0),
             euid: AtomicU32::new(0),
@@ -179,9 +201,8 @@ impl Task {
             sgid: AtomicU32::new(0),
             fsgid: AtomicU32::new(0),
             sup_groups: RwLock::new(Vec::new()),
-        });
-        println!("Task::zero_init complete");
-        task
+            task_inner: Mutex::new(TaskInner::idle_init()),
+        })
     }
 
     /// 初始化地址空间, 将 `TrapContext` 与 `TaskContext` 压入内核栈中
@@ -189,18 +210,7 @@ impl Task {
         let (memory_set, pgdl_ppn, user_sp, entry_point, _aux_vec, _tls_ptr) =
             MemorySet::from_elf(elf_data.to_vec(), &mut Vec::<String>::new());
         let tid = tid_alloc();
-        let tgid = AtomicUsize::new(tid.0);
-        let pgid = AtomicUsize::new(1);
-        let uid = AtomicU32::new(0); // 默认为root(0)用户
-        let euid = AtomicU32::new(0);
-        let suid = AtomicU32::new(0);
-        let fsuid = AtomicU32::new(0);
-        let gid = AtomicU32::new(0); // 默认为root(0)组
-        let egid = AtomicU32::new(0);
-        let sgid = AtomicU32::new(0);
-        let fsgid = AtomicU32::new(0);
-        let sup_groups = RwLock::new(Vec::new());
-        // 申请内核栈
+        let tgid = tid.0;
         let mut kstack = kstack_alloc();
         // Trap_context
         let mut trap_context = TrapContext::app_init_trap_context(entry_point, user_sp, 0, 0, 0, 0);
@@ -217,9 +227,10 @@ impl Task {
 
         let task = Arc::new(Task {
             kstack: KernelStack(kstack),
+            cpu_id: current_hart_id(),
             tid: RwLock::new(tid),
-            tgid,
-            tid_address: Mutex::new(TidAddress::new()),
+            tgid: AtomicUsize::new(tgid),
+            pgid: AtomicUsize::new(1),
             status: Mutex::new(TaskStatus::Ready),
             time_stat: SyncUnsafeCell::new(TimeStat::default()),
             parent: Arc::new(Mutex::new(None)),
@@ -236,27 +247,24 @@ impl Task {
             umask: AtomicU16::new(S_IWGRP | S_IWOTH), // 默认umask为022
             sig_pending: Mutex::new(SigPending::new()),
             sig_handler: Arc::new(Mutex::new(SigHandler::new())),
-            sig_stack: Mutex::new(None),
             itimerval: Arc::new(RwLock::new([ITimerVal::default(); 3])),
             rlimit: Arc::new(RwLock::new([RLimit::default(); RLIM_NLIMITS])),
-            cpu_mask: Mutex::new(CpuMask::ALL),
-            pgid,
-            uid,
-            euid,
-            suid,
-            fsuid,
-            gid,
-            egid,
-            sgid,
-            fsgid,
-            sup_groups,
-            //memory_set: RwLock::new(Arc::new(RwLock::new(memory_set))),
+            uid: AtomicU32::new(0), // 默认为root(0)用户
+            euid: AtomicU32::new(0),
+            suid: AtomicU32::new(0),
+            fsuid: AtomicU32::new(0),
+            gid: AtomicU32::new(0),
+            egid: AtomicU32::new(0),
+            sgid: AtomicU32::new(0),
+            fsgid: AtomicU32::new(0),
+            sup_groups: RwLock::new(Vec::new()),
+            task_inner: Mutex::new(TaskInner::new()),
         });
         // 向线程组中添加该进程
         task.thread_group
             .lock()
             .add(task.tid(), Arc::downgrade(&task));
-        add_task(task.clone());
+        add_task_init(task.clone());
         register_task(&task);
         // 新建进程组
         new_group(&task);
@@ -275,6 +283,61 @@ impl Task {
         task
     }
 
+    /// 初始化空闲任务
+    /// 用于防止内核无任务，只在内核态空转
+    pub fn init_idle_task(hart_id: usize) -> Arc<Self> {
+        let tid = tid_alloc();
+        let mut kstack = kstack_alloc();
+        // Task_context
+        kstack -= core::mem::size_of::<TaskContext>();
+        let memory_set = MemorySet::new_bare();
+        let task_cx_ptr = kstack as *mut TaskContext;
+        // 创建进程实体
+        let task = Arc::new(Task {
+            kstack: KernelStack(kstack),
+            cpu_id: hart_id,
+            tid: RwLock::new(tid),
+            tgid: AtomicUsize::new(0),
+            status: Mutex::new(TaskStatus::Ready),
+            time_stat: SyncUnsafeCell::new(TimeStat::default()),
+            parent: Arc::new(Mutex::new(None)),
+            children: Arc::new(Mutex::new(BTreeMap::new())),
+            thread_group: Arc::new(Mutex::new(ThreadGroup::new())),
+            exit_code: AtomicI32::new(0),
+            exe_path: Arc::new(RwLock::new(String::new())),
+            memory_set: RwLock::new(Arc::new(RwLock::new(memory_set))),
+            robust_list_head: AtomicUsize::new(0),
+            fd_table: Mutex::new(FdTable::new_bare()),
+            root: Arc::new(Mutex::new(Path::zero_init())),
+            pwd: Arc::new(Mutex::new(Path::zero_init())),
+            umask: AtomicU16::new(0),
+            sig_pending: Mutex::new(SigPending::new()),
+            sig_handler: Arc::new(Mutex::new(SigHandler::new())),
+            itimerval: Arc::new(RwLock::new([ITimerVal::default(); 3])),
+            rlimit: Arc::new(RwLock::new([RLimit::default(); RLIM_NLIMITS])),
+            pgid: AtomicUsize::new(0),
+            uid: AtomicU32::new(0),
+            euid: AtomicU32::new(0),
+            suid: AtomicU32::new(0),
+            fsuid: AtomicU32::new(0),
+            gid: AtomicU32::new(0),
+            egid: AtomicU32::new(0),
+            sgid: AtomicU32::new(0),
+            fsgid: AtomicU32::new(0),
+            sup_groups: RwLock::new(Vec::new()),
+            task_inner: Mutex::new(TaskInner::idle_init()),
+        });
+        add_task_init(task.clone());
+        // 令tp与kernel_tp指向主线程内核栈顶
+        let task_ptr = Arc::as_ptr(&task) as usize;
+        let task_context = TaskContext::idle_init_task_context(task_ptr);
+        // 将TaskContext压入内核栈
+        unsafe {
+            task_cx_ptr.write(task_context);
+        }
+        task
+    }
+
     // 从父进程复制子进程的核心逻辑实现
     pub fn kernel_clone(
         self: &Arc<Self>,
@@ -283,7 +346,6 @@ impl Task {
         children_tid_ptr: usize,
     ) -> Result<Arc<Self>, Errno> {
         let tid = tid_alloc();
-        let tid_address = Mutex::new(TidAddress::new());
         let exit_code = AtomicI32::new(0);
         let status = Mutex::new(TaskStatus::Ready);
         let tgid;
@@ -298,9 +360,7 @@ impl Task {
         let pwd;
         let sig_handler;
         let sig_pending;
-        let sig_stack;
         let rlimit;
-        let cpu_mask;
         let pgid;
         let uid;
         let euid;
@@ -311,6 +371,7 @@ impl Task {
         let sgid;
         let fsgid;
         let sup_groups;
+        let cpu_id;
         log::info!("[kernel_clone] task{} ready to clone ...", self.tid());
 
         // 是否与父进程共享信号处理器
@@ -341,6 +402,8 @@ impl Task {
         sgid = AtomicU32::new(self.sgid());
         fsgid = AtomicU32::new(self.fsgid());
         sup_groups = RwLock::new(self.op_sup_groups_mut(|groups| groups.clone()));
+        // cpu_id = select_cpu();
+        cpu_id = self.cpu_id; // 继承父进程的cpu_id
 
         // 创建线程
         if flags.contains(CloneFlags::CLONE_THREAD) {
@@ -413,19 +476,25 @@ impl Task {
 
         // 初始化其他未初始化属性
         sig_pending = Mutex::new(SigPending::new());
-        sig_stack = Mutex::new(None);
         let tid = RwLock::new(tid);
         let robust_list_head = AtomicUsize::new(0);
         let time_stat = SyncUnsafeCell::new(TimeStat::default());
-        cpu_mask = Mutex::new(CpuMask::ALL);
         let umask = AtomicU16::new(self.umask.load(core::sync::atomic::Ordering::Relaxed));
         let exe_path = self.exe_path.clone();
+        let task_inner = Mutex::new(TaskInner {
+            priority: self.priority(),
+            policy: self.policy(),
+            tid_address: TidAddress::new(),
+            sig_stack: self.sigstack().clone(),
+            cpu_mask: CpuMask::ALL,
+        });
         // 创建新任务
         let task = Arc::new(Self {
             kstack,
+            cpu_id,
             tid,
             tgid,
-            tid_address,
+            pgid,
             status,
             time_stat,
             parent,
@@ -441,11 +510,8 @@ impl Task {
             umask,
             sig_handler,
             sig_pending,
-            sig_stack,
             itimerval,
             rlimit,
-            cpu_mask,
-            pgid,
             uid,
             euid,
             suid,
@@ -455,6 +521,7 @@ impl Task {
             sgid,
             fsgid,
             sup_groups,
+            task_inner,
         });
         log::trace!("[kernel_clone] child task{} created", task.tid());
 
@@ -510,6 +577,8 @@ impl Task {
         log::info!("[kernel_clone] task{}-sp:\t{:x}", task.tid(), task.kstack());
         log::info!("[kernel_clone] task{}-tgid:\t{:x}", task.tid(), task.tgid());
         log::info!("[kernel_clone] task{}-pgid:\t{:x}", task.tid(), task.pgid());
+        log::info!("[kernel_clone] task{}-cpu_id:\t{}", task.tid(), task.cpu_id());
+        log::info!("[kernel_clone] task{}-priority:\t{}", task.tid(), task.priority());
         log::info!("[kernel_clone] task{} clone complete!", self.tid());
 
         Ok(task)
@@ -935,19 +1004,18 @@ impl Task {
     pub fn mask(&self) -> SigSet {
         self.sig_pending.lock().mask
     }
-    // 注意：这里将sigstack取出
-    pub fn sigstack(&self) -> Option<SignalStack> {
-        self.sig_stack.lock().take()
+    pub fn sigstack(&self) -> SigStack {
+        self.task_inner.lock().sig_stack
     }
     pub fn tac(&self) -> Option<usize> {
-        self.tid_address.lock().clear_child_tid
+        self.task_inner.lock().tid_address.clear_child_tid
     }
     pub fn robust_list_head(&self) -> usize {
         self.robust_list_head
             .load(core::sync::atomic::Ordering::SeqCst)
     }
     pub fn cpu_mask(&self) -> CpuMask {
-        *self.cpu_mask.lock()
+        self.task_inner.lock().cpu_mask
     }
 
     pub fn pgid(&self) -> usize {
@@ -986,6 +1054,17 @@ impl Task {
         self.fsgid.load(core::sync::atomic::Ordering::SeqCst)
     }
 
+    pub fn cpu_id(&self) -> usize {
+        self.cpu_id
+    }
+
+    pub fn priority(&self) -> u32 {
+        self.task_inner.lock().priority
+    }
+
+    pub fn policy(&self) -> u32 {
+        self.task_inner.lock().policy
+    }
     /*********************************** setter *************************************/
     pub fn set_root(&self, root: Arc<Path>) {
         *self.root.lock() = root;
@@ -1004,16 +1083,16 @@ impl Task {
     pub fn set_parent(&self, parent: Arc<Task>) {
         *self.parent.lock() = Some(Arc::downgrade(&parent));
     }
-    pub fn set_sigstack(&self, sigstack: SignalStack) {
-        *self.sig_stack.lock() = Some(sigstack)
+    pub fn set_sigstack(&self, sigstack: SigStack) {
+        self.task_inner.lock().sig_stack = sigstack
     }
     // tid_address 中的 set_child_tid
     pub fn set_tas(&self, tas: usize) {
-        self.tid_address.lock().set_child_tid = Some(tas);
+        self.task_inner.lock().tid_address.set_child_tid = Some(tas);
     }
     // tid_address 中的 clear_child_tid
     pub fn set_tac(&self, tac: usize) {
-        self.tid_address.lock().clear_child_tid = Some(tac);
+        self.task_inner.lock().tid_address.clear_child_tid = Some(tac);
     }
     pub fn set_robust_list_head(&self, head: usize) {
         self.robust_list_head
@@ -1047,6 +1126,15 @@ impl Task {
     pub fn set_fsgid(&self, fsgid: u32) {
         self.fsgid
             .store(fsgid, core::sync::atomic::Ordering::SeqCst);
+    }
+    pub fn set_priority(&self, priority: u32) {
+        self.task_inner.lock().priority = priority;
+    }
+    pub fn set_cpu_mask(&self, cpu_mask: CpuMask) {
+        self.task_inner.lock().cpu_mask = cpu_mask;
+    }
+    pub fn set_policy(&self, policy: u32) {
+        self.task_inner.lock().policy = policy;
     }
     /*********************************** operator *************************************/
     pub fn op_parent<T>(&self, f: impl FnOnce(&Option<Weak<Task>>) -> T) -> T {
@@ -1554,7 +1642,8 @@ pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
                         signo: Sig::SIGCHLD.raw(),
                         code: SigInfo::CLD_EXITED,
                         fields: SiField::Kill {
-                            tid: current_task().tid(),
+                            tid: current_task().tid() as i32,
+                            uid: current_task().uid(),
                         },
                     },
                     false,
@@ -1575,6 +1664,45 @@ pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
         task.tid(),
         Arc::strong_count(&task)
     );
+}
+
+/// 比较两个任务的优先级
+/// 如果a > b, 返回true, 反之返回false
+pub fn compare_task_priority(a: &Arc<Task>, b: &Arc<Task>) -> bool {
+    // 先比较优先级
+    let a_priority = a.priority();
+    let b_priority = b.priority();
+    
+    // Linux调度系统优先级规则：
+    // 0: 特殊情况，无论什么情况都是最低优先级
+    // 1-99: 实时优先级（RT priority），数值越大优先级越高
+    // 100-139: 静态优先级（nice值），数值越小优先级越高
+    // 实时优先级永远比静态优先级高
+    
+    // 特殊处理优先级为0的情况
+    match (a_priority, b_priority) {
+        // 如果a是0，无论b是什么，a都是最低优先级
+        (0, _) => false,
+        // 如果b是0，a不是0，则a优先级更高
+        (_, 0) => true,
+        // 如果都不是0，按正常规则比较
+        _ => {
+            // 判断a和b是否为实时优先级
+            let a_is_rt = a_priority <= 99;
+            let b_is_rt = b_priority <= 99;
+            
+            match (a_is_rt, b_is_rt) {
+                // 如果a是实时优先级，b是静态优先级，则a优先级更高
+                (true, false) => true,
+                // 如果a是静态优先级，b是实时优先级，则a优先级更低
+                (false, true) => false,
+                // 如果都是实时优先级，数值越大优先级越高
+                (true, true) => a_priority > b_priority,
+                // 如果都是静态优先级，数值越小优先级越高
+                (false, false) => a_priority < b_priority,
+            }
+        }
+    }
 }
 
 // 在clone时没有设置`CLONE_THREAD`标志, 为新任务创建新的`Path`结构
@@ -1836,14 +1964,10 @@ bitflags! {
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct CpuMask: usize {
-        const CPU0 = 0b00000001;
-        // const CPU1 = 0b00000010;
-        // const CPU2 = 0b00000100;
-        // const CPU3 = 0b00001000;
-        // const CPU4 = 0b00010000;
-        // const CPU5 = 0b00100000;
-        // const CPU6 = 0b01000000;
-        // const CPU7 = 0b10000000;
-        const ALL = 0b00000001;
+        const CPU0 = 0b0001;
+        const CPU1 = 0b0010;
+        const CPU2 = 0b0100;
+        const CPU3 = 0b1000;
+        const ALL = 0b1111;
     }
 }

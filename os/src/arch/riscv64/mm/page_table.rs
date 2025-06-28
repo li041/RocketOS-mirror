@@ -319,9 +319,9 @@ impl PageTable {
         // debug_assert!(!pte.is_valid(), "vpn {:?} is mapped before mapping", vpn);
         *pte = PageTableEntry::new(ppn, flags | PTEFlags::V | PTEFlags::A | PTEFlags::D);
         // Todo: 不用刷新页表? tlb中本身没有该页表项
-        // unsafe {
-        //     sfence_vma_vaddr(vpn.0 << PAGE_SIZE_BITS);
-        // }
+        unsafe {
+            sfence_vma_vaddr(vpn.0 << PAGE_SIZE_BITS);
+        }
     }
     /// Remap a mapping from `vpn` to `ppn`.
     /// 由上层调用者保证vpn已经被映射
@@ -542,19 +542,21 @@ impl PageTable {
             log::error!("level1: --- va: {:#x}, pte: None", va);
             return;
         }
+        log::info!("level1: ---pte: {:?}", pte);
         let pagetable = pte.ppn().get_pte_array();
         let pte = pagetable[indexes[1]];
         if !pte.is_valid() {
             log::error!("level2: --- va: {:#x}, pte: None", va);
             return;
         }
+        log::info!("level2: pte: {:?}", pte);
         let pagetable = pte.ppn().get_pte_array();
         let pte = pagetable[indexes[2]];
         if !pte.is_valid() {
             log::error!("level3: --- va: {:#x}, pte: None", va);
             return;
         }
-        log::error!("--- va: {:#x}, pte: {:?}", va, pte);
+        log::info!("level3: pte: {:?}", pte);
     }
 }
 

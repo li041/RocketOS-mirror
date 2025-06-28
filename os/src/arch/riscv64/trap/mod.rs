@@ -12,7 +12,7 @@ use riscv::register::{
 
 use crate::{
     arch::mm::PageTable,
-    fs::dentry::clean_dentry_cache,
+    fs::{dentry::clean_dentry_cache, proc::interrupts::record_interrupt},
     mm::VirtAddr,
     signal::{handle_signal, SiField, SigInfo},
     syscall::syscall,
@@ -132,7 +132,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
                         sepc::read()
                     );
                     task.receive_siginfo(
-                        SigInfo::new(sig.raw(), SigInfo::KERNEL, SiField::Kill { tid: current_task().tid() }),
+                        SigInfo::new(sig.raw(), SigInfo::KERNEL, SiField::NULL),
                         false,
                     );
                 }
@@ -152,6 +152,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
             cx.sepc += 4; // 跳过断点
         }
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
+            record_interrupt(Interrupt::SupervisorTimer as usize);
             set_next_trigger();
             handle_timeout();
             clean_dentry_cache();
@@ -160,6 +161,9 @@ pub fn trap_handler(cx: &mut TrapContext) {
         _ => {
             let current_task = crate::task::current_task();
             log::error!("task {} trap", current_task.tid());
+            if scause.is_interrupt(){
+                record_interrupt(Interrupt::from(scause.code()) as usize);
+            }
             panic!(
                 "Unsupported trap {:?}, stval = {:#x}, sepc = {:#x}!",
                 scause.cause(),

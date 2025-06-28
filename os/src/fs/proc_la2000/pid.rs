@@ -37,6 +37,7 @@ lazy_static! {
     pub static ref TARGERT_PID: Arc<Mutex<TargetPid>> = Arc::new(Mutex::new(TargetPid::new(0)));
 }
 pub static PID_STAT: Once<Arc<dyn FileOp>> = Once::new();
+pub static SELF_STAT: Once<Arc<dyn FileOp>> = Once::new();
 
 /// 记录当前查询的目标PID，仅用于替换/proc/pid/...中的pid
 pub fn record_target_pid(pid: usize) {
@@ -169,6 +170,81 @@ impl FileOp for PidStatFile {
         } else {
             return Err(Errno::ENOENT);
         }
+    }
+    fn seek(&self, offset: isize, whence: Whence) -> SyscallRet {
+        let mut inner_guard = self.inner.write();
+        match whence {
+            crate::fs::uapi::Whence::SeekSet => {
+                if offset < 0 {
+                    panic!("SeekSet offset < 0");
+                }
+                inner_guard.offset = offset as usize;
+            }
+            crate::fs::uapi::Whence::SeekCur => {
+                inner_guard.offset = inner_guard.offset.checked_add_signed(offset).unwrap();
+            }
+            crate::fs::uapi::Whence::SeekEnd => {
+                let tid = TARGERT_PID.lock().pid;
+                if let Some(task) = get_task(tid) {
+                    inner_guard.offset = task.stat().len().checked_add_signed(offset).unwrap();
+                } else {
+                    return Err(Errno::ENOENT);
+                }
+            }
+            _ => {
+                log::warn!("Unsupported whence: {:?}", whence);
+                return Err(Errno::EINVAL); // Invalid argument
+            }
+        }
+        Ok(inner_guard.offset)
+    }
+    fn readable(&self) -> bool {
+        true
+    }
+    fn get_flags(&self) -> OpenFlags {
+        self.flags
+    }
+}
+
+pub struct SelfStatFile {
+    pub path: Arc<Path>,
+    pub inode: Arc<dyn InodeOp>,
+    pub flags: OpenFlags,
+    pub inner: RwLock<SelfStatFileInner>,
+}
+
+pub struct SelfStatFileInner {
+    pub offset: usize,
+}
+
+impl SelfStatFile {
+    pub fn new(path: Arc<Path>, inode: Arc<dyn InodeOp>, flags: OpenFlags) -> Arc<Self> {
+        Arc::new(SelfStatFile {
+            path,
+            inode,
+            flags,
+            inner: RwLock::new(SelfStatFileInner { offset: 0 }),
+        })
+    }
+    pub fn add_offset(&self, offset: usize) {
+        self.inner.write().offset += offset;
+    }
+}
+
+impl FileOp for SelfStatFile {
+    fn get_inode(&self) -> Arc<dyn InodeOp> {
+        self.inode.clone()
+    }
+    fn read(&self, buf: &mut [u8]) -> SyscallRet {
+        let task = current_task();
+        let task_stat = task.stat();
+        let len = task_stat.len();
+        if self.inner.read().offset >= len {
+            return Ok(0);
+        }
+        buf[..len].copy_from_slice(task_stat.as_bytes());
+        self.add_offset(len);
+        Ok(len)
     }
     fn seek(&self, offset: isize, whence: Whence) -> SyscallRet {
         let mut inner_guard = self.inner.write();

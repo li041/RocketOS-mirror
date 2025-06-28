@@ -18,6 +18,7 @@ submit = []
 la2000 = []
 virt = []
 board = []
+smp =[]
 
 [profile.release]
 panic = "abort"

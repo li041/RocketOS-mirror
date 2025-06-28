@@ -311,16 +311,19 @@ pub fn sys_clock_settime(clock_id: usize, timespec: *const TimeSpec) -> SyscallR
     log::error!("[sys_clock_settime] clock_id is {:?}", clock_id);
     let mut time = TimeSpec::default();
     copy_from_user(timespec, &mut time as *mut TimeSpec, 1)?;
+    if !time.timespec_valid_settod() {
+        log::error!("[sys_clock_settime] timespec is invalid: {:?}", time);
+        return Err(Errno::EINVAL);
+    }
     match clock_id {
-        CLOCK_REALTIME | CLOCK_REALTIME_COARSE => {
+        CLOCK_MONOTONIC | CLOCK_MONOTONIC_RAW | CLOCK_REALTIME_COARSE | CLOCK_PROCESS_CPUTIME_ID=> {
+            return Err(Errno::EINVAL);
+        }
+
+        CLOCK_REALTIME => {
             return Ok(0);
         }
-        CLOCK_MONOTONIC | CLOCK_MONOTONIC_RAW => {
-            return Ok(0);
-        }
-        CLOCK_PROCESS_CPUTIME_ID => {
-            return Ok(0);
-        }
+        
         _ => {
             // panic!("[sys_clock_gettime] invalid clock_id: {}", clock_id);
             return Err(Errno::EINVAL);

@@ -10,8 +10,8 @@
 # Building
 # ARCH ?= loongarch64
 ARCH ?= riscv64
-MODE := debug
-FEATURES ?= board
+MODE := release
+FEATURES := virt 
 #ip option not unspecified
 IP ?= 10.0.2.15
 GW ?= 10.0.2.2
@@ -65,8 +65,8 @@ ifeq ($(ARCH), riscv64)
                     -m $(MEM_SIZE) \
                     -kernel $(KERNEL_BIN) \
                     -nographic \
-                    -smp 2\
-                    -device VGA \
+                    -smp 4\
+                    -rtc base=utc \
                     -bios default\
                     -drive file=$(FS),if=none,format=raw,id=x0 \
                     -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0\
@@ -76,7 +76,7 @@ ifeq ($(ARCH), riscv64)
 else ifeq ($(ARCH), loongarch64)
     QEMU_CMD := qemu-system-loongarch64
     QEMU_ARGS = 	-kernel $(KERNEL_ELF) -m $(MEM_SIZE) -nographic \
-                    -smp 1\
+                    -smp 4\
                     -machine virt \
                     -rtc base=utc \
                     -no-reboot \
