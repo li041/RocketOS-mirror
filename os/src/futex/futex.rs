@@ -13,7 +13,10 @@ use core::cmp;
 
 use super::{flags::*, queue::FUTEXQUEUES};
 use crate::{
-    arch::{config::{PAGE_SIZE_BITS, USER_MAX}, mm::copy_from_user},
+    arch::{
+        config::{PAGE_SIZE_BITS, USER_MAX},
+        mm::copy_from_user,
+    },
     futex::{
         self,
         queue::{display_futexqueues, futex_hash},
@@ -201,13 +204,16 @@ pub fn futex_wait(
         drop(hash_bucket);
     }
     loop {
+        log::trace!("futex_wait loop");
         if let Some(mut wait_time) = wait_time {
             let clock_id = if flags & FLAGS_CLOCKRT != 0 {
                 let now = TimeSpec::new_wall_time();
                 if wait_time < now {
                     log::error!("[futex_wait] wait_time is in the past, returning ETIMEDOUT");
                     let mut hash_bucket = FUTEXQUEUES.buckets[futex_hash(&key)].lock();
-                    hash_bucket.retain(|futex_q| futex_q.task.upgrade().unwrap().tid() != current_task().tid());
+                    hash_bucket.retain(|futex_q| {
+                        futex_q.task.upgrade().unwrap().tid() != current_task().tid()
+                    });
                     return Err(Errno::ETIMEDOUT);
                 }
                 wait_time = wait_time - now;
@@ -265,7 +271,10 @@ pub fn futex_wake(uaddr: usize, flags: i32, nr_waken: u32) -> SyscallRet {
             log::info!("[futex_wake] hash_bucket is empty");
             return Ok(0);
         } else {
-            log::error!("[futex_wake] hash_bucket is not empty, len: {}", hash_bucket.len());
+            log::error!(
+                "[futex_wake] hash_bucket is not empty, len: {}",
+                hash_bucket.len()
+            );
             hash_bucket.retain(|futex_q| {
                 if futex_q.task.upgrade().is_none() {
                     return false;
@@ -378,11 +387,16 @@ pub fn futex_requeue(
 
             if hash_src == hash_req {
                 // 如果源桶和请求桶是同一个桶，直接返回
-                log::error!("[futex_requeue] source bucket and request bucket are the same, returning");
+                log::error!(
+                    "[futex_requeue] source bucket and request bucket are the same, returning"
+                );
                 while let Some(mut futex_q) = hash_bucket.pop_front() {
                     futex_q.key = req_key; // update the key to the new one
-                    log::error!("[futex_requeue] requeue task {:?} to key {:?}",
-                                futex_q.task.upgrade().unwrap().tid(), req_key);
+                    log::error!(
+                        "[futex_requeue] requeue task {:?} to key {:?}",
+                        futex_q.task.upgrade().unwrap().tid(),
+                        req_key
+                    );
                     hash_bucket.push_back(futex_q);
                     requeued += 1;
                     ret += 1;
@@ -395,8 +409,11 @@ pub fn futex_requeue(
                 let mut req_bucket = FUTEXQUEUES.buckets[futex_hash(&req_key)].lock();
                 while let Some(mut futex_q) = hash_bucket.pop_front() {
                     futex_q.key = req_key; // update the key to the new one
-                    log::error!("[futex_requeue] requeue task {:?} to key {:?}",
-                                futex_q.task.upgrade().unwrap().tid(), req_key);
+                    log::error!(
+                        "[futex_requeue] requeue task {:?} to key {:?}",
+                        futex_q.task.upgrade().unwrap().tid(),
+                        req_key
+                    );
                     req_bucket.push_back(futex_q);
                     requeued += 1;
                     ret += 1;
@@ -441,8 +458,13 @@ pub fn futex_cmp_requeue(
     }
 
     {
-        log::trace!("[futex_requeue] key: {:?}, req_key: {:?}, hash_src: {}, hash_req: {}",
-                    key, req_key, hash_src, hash_req);
+        log::trace!(
+            "[futex_requeue] key: {:?}, req_key: {:?}, hash_src: {}, hash_req: {}",
+            key,
+            req_key,
+            hash_src,
+            hash_req
+        );
         let mut hash_bucket = FUTEXQUEUES.buckets[futex_hash(&key)].lock();
         if hash_bucket.is_empty() {
             return Ok(0);
@@ -468,11 +490,16 @@ pub fn futex_cmp_requeue(
 
             if hash_src == hash_req {
                 // 如果源桶和请求桶是同一个桶，直接返回
-                log::error!("[futex_requeue] source bucket and request bucket are the same, returning");
+                log::error!(
+                    "[futex_requeue] source bucket and request bucket are the same, returning"
+                );
                 while let Some(mut futex_q) = hash_bucket.pop_front() {
                     futex_q.key = req_key; // update the key to the new one
-                    log::error!("[futex_requeue] requeue task {:?} to key {:?}",
-                                futex_q.task.upgrade().unwrap().tid(), req_key);
+                    log::error!(
+                        "[futex_requeue] requeue task {:?} to key {:?}",
+                        futex_q.task.upgrade().unwrap().tid(),
+                        req_key
+                    );
                     hash_bucket.push_back(futex_q);
                     requeued += 1;
                     ret += 1;
@@ -485,8 +512,11 @@ pub fn futex_cmp_requeue(
                 let mut req_bucket = FUTEXQUEUES.buckets[futex_hash(&req_key)].lock();
                 while let Some(mut futex_q) = hash_bucket.pop_front() {
                     futex_q.key = req_key; // update the key to the new one
-                    log::error!("[futex_requeue] requeue task {:?} to key {:?}",
-                                futex_q.task.upgrade().unwrap().tid(), req_key);
+                    log::error!(
+                        "[futex_requeue] requeue task {:?} to key {:?}",
+                        futex_q.task.upgrade().unwrap().tid(),
+                        req_key
+                    );
                     req_bucket.push_back(futex_q);
                     requeued += 1;
                     ret += 1;

@@ -108,18 +108,21 @@ impl InodeOp for FdDirInode {
         let mut buf_offset = 0;
         let mut file_offset = 0;
         let buf_len = buf.len();
-        let fds: Vec<String> = current_task()
+        let mut fds: Vec<String> = current_task()
             .fd_table()
             .get_fds()
             .iter()
             .map(usize::to_string)
             .collect();
+        fds.insert(0, ".".to_string()); // 添加当前目录
+        fds.insert(1, "..".to_string()); // 添加父目录
         for fd in fds {
             let name_bytes = fd.as_bytes();
             let name_len = name_bytes.len();
             let null_term_name_len = name_len + 1; // +1 for null terminator
             let d_reclen = (NAME_OFFSET + null_term_name_len + 7) & !0x7;
             if file_offset + d_reclen <= offset {
+                file_offset += d_reclen;
                 continue; // 跳过已经偏移的条目
             }
 
@@ -127,9 +130,11 @@ impl InodeOp for FdDirInode {
             if buf_offset + d_reclen > buf_len {
                 break;
             }
+            const FAKE_INODE_NUM: u64 = 666; // 不能为0, 0表示目录项不存在
+
             // 创建dirent结构
             let mut dirent = LinuxDirent64 {
-                d_ino: 0,                               // fake inode number
+                d_ino: FAKE_INODE_NUM,
                 d_off: (file_offset + d_reclen) as u64, // 下一个条目的偏移
                 d_reclen: d_reclen as u16,
                 d_type: EXT4_DT_LNK, // /proc/self/fd下的都是符号链接
@@ -151,7 +156,7 @@ impl InodeOp for FdDirInode {
         kstat.uid = inode_on_disk.get_uid() as u32;
         kstat.gid = inode_on_disk.get_gid() as u32;
         kstat.nlink = inode_on_disk.get_nlinks() as u32;
-        kstat.size = inode_on_disk.get_size();
+        kstat.size = 0;
 
         // Todo: 目前没有更新时间戳
         kstat.atime = inode_on_disk.get_atime();

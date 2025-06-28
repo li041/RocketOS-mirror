@@ -14,7 +14,7 @@ pub const EXT4_DT_BLK: u8 = 0x4;
 pub const EXT4_DT_FIFO: u8 = 0x5;
 #[allow(unused)]
 pub const EXT4_DT_SOCK: u8 = 0x6;
-pub const EXT4_DT_LNK: u8 = 0x7;
+pub const EXT4_DT_LNK: u8 = 0xa;
 
 /// 注意不能直接用这个结构体从block_cache中读取, 一是因为对齐问题, 二是因为name是变长的
 /// 注意目录项的长度需要是4的整数倍
