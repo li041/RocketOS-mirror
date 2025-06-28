@@ -2,7 +2,7 @@ use alloc::{format, string::{String, ToString}, vec::Vec};
 use num_enum::TryFromPrimitive;
 use spin::Mutex;
 
-use crate::{fs::{file::{File, FileOp, OpenFlags}, namei::{filename_lookup, path_openat, Nameidata}, path::Path}, syscall::errno::Errno, task::current_task};
+use crate::{fs::{file::{File, FileOp, OpenFlags}, namei::{filename_lookup, path_openat, Nameidata}, path::Path, AT_FDCWD}, syscall::errno::Errno, task::current_task};
 use alloc::vec;
 use super::socket::Socket;
 static LAST_DB: Mutex<Option<Database>> = Mutex::new(None);
@@ -10,7 +10,7 @@ static LAST_DB: Mutex<Option<Database>> = Mutex::new(None);
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-06-01 12:06:27
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-04 17:53:26
+ * @LastEditTime: 2025-06-28 20:51:17
  * @FilePath: /RocketOS_netperfright/os/src/net/unix.rs
  * @Description: 
  * 
@@ -124,15 +124,21 @@ impl PasswdEntry {
             *last_db_lock = Some(d);
             d
         } else {
+            if nscdrequest.req_type==RequestType::GetpwNam {
+                Database::Passwd
+            }
+            else {
             // 本次请求为 None，则尝试用上一次存的
-            last_db_lock
+                last_db_lock
                 .clone()
                 .ok_or(Errno::EINVAL)?  // 如果上一次也没有，就返回 EINVAL
+            }
+            
         }
     };
     log::error!("[passwd_lookup] database is {:?}",db);
     if db == Database::Passwd {
-        let file = path_openat("/etc/passwd", OpenFlags::O_CLOEXEC, -100, 0)?;
+        let file = path_openat("/etc/passwd", OpenFlags::O_CLOEXEC, AT_FDCWD, 0)?;
         let mut small_buf = [0u8; 128];
         let mut accu: Vec<u8> = Vec::new();
 
@@ -186,7 +192,7 @@ impl PasswdEntry {
         Err(Errno::ENOENT) // 没找到匹配的行
     }
     else if db== Database::Group {
-        let file = path_openat("/etc/group", OpenFlags::O_CLOEXEC, -100, 0)?;
+        let file = path_openat("/etc/group", OpenFlags::O_CLOEXEC, AT_FDCWD, 0)?;
         let mut small_buf = [0u8; 128];
         let mut accu: Vec<u8> = Vec::new();
 
