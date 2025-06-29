@@ -44,7 +44,6 @@ use crate::{
     arch::boards::qemu::{MEMORY_END, MMIO},
     arch::config::{DL_INTERP_OFFSET, KERNEL_BASE, PAGE_SIZE},
     fs::AT_FDCWD,
-    index_list::IndexList,
     task::aux::AuxHeader,
 };
 use alloc::sync::Arc;

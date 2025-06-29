@@ -1,2 +1,2 @@
-python3 catch.py ../os/qemu_output-riscv64.log  out.log
-python3 clean_ltp.py out.log ../img/ltp/musl/ltp/testcases/bin/ z
+python3 process_ltp.py ../os/qemu_output-riscv64.log  riscv-musl.log
+python3 clean_ltp.py riscv-musl.log ../img/ltp/musl/ltp/testcases/bin/ z

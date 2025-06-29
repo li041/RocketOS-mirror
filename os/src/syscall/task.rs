@@ -193,7 +193,6 @@ pub fn sys_clone(
 //     "ltp/testcases/bin/creat05",
 //     "ltp/testcases/bin/dup05",
 //     "ltp/testcases/bin/data_space",
-//     "ltp/testcases/bin/execve03",
 //     "ltp/testcases/bin/fork09",
 //     "ltp/testcases/bin/fork14",
 //     "ltp/testcases/bin/fsx-linux",
@@ -201,7 +200,6 @@ pub fn sys_clone(
 //     "ltp/testcases/bin/kill11",
 //     "ltp/testcases/bin/listen01",
 //     "ltp/testcases/bin/leapsec01",
-//     "ltp/testcases/bin/mmap3",
 //     "ltp/testcases/bin/pause01",
 //     "ltp/testcases/bin/pec_listener",
 //     "ltp/testcases/bin/sched_datafile",
@@ -212,10 +210,12 @@ pub fn sys_clone(
 //     "ltp/testcases/bin/setrlimit06",
 //     "ltp/testcases/bin/setpgid03",
 //     "ltp/testcases/bin/shm_test",
-//     "ltp/testcases/bin/shmat04",
 //     "ltp/testcases/bin/starvation",
 //     "ltp/testcases/bin/statx01",
+//     "ltp/testcases/bin/statx11",
 //     "ltp/testcases/bin/timed_forkbomb",
+//     "ltp/testcases/bin/dma_thread_diotest",
+//     "ltp/testcases/bin/fgetxattr02",
 //     // 需要check_envvak
 //     "ltp/testcases/bin/check_netem",
 //     "ltp/testcases/bin/check_setkey",
@@ -245,26 +245,34 @@ pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> Sy
     //         log::warn!("[sys_execve] ignore setsockopt test: {}", path);
     //         sys_exit(666);
     //     }
-    //     if path.starts_with("ltp/testcases/bin/fcntl") {
-    //         log::warn!("[sys_execve] ignore fcntl test: {}", path);
+    //     if path.starts_with("ltp/testcases/bin/shmat") {
+    //         log::warn!("[sys_execve] ignore shmat test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     // if path.starts_with("ltp/testcases/bin/fcntl") {
+    //     //     log::warn!("[sys_execve] ignore fcntl test: {}", path);
+    //     //     sys_exit(666);
+    //     // }
+    //     if path.starts_with("ltp/testcases/bin/mount") {
+    //         log::warn!("[sys_execve] ignore mount test: {}", path);
     //         sys_exit(666);
     //     }
     //     if path.starts_with("ltp/testcases/bin/crypto_user") {
     //         log::warn!("[sys_execve] ignore crypto_user test: {}", path);
     //         sys_exit(666);
     //     }
-    //     if path.starts_with("ltp/testcases/bin/fstatfs") {
-    //         log::warn!("[sys_execve] ignore crypto_user test: {}", path);
-    //         sys_exit(666);
-    //     }
+    //     // if path.starts_with("ltp/testcases/bin/fstatfs") {
+    //     //     log::warn!("[sys_execve] ignore crypto_user test: {}", path);
+    //     //     sys_exit(666);
+    //     // }
     //     if path.starts_with("ltp/testcases/bin/ftest") {
     //         log::warn!("[sys_execve] ignore crypto_user test: {}", path);
     //         sys_exit(666);
     //     }
-    //     if path.starts_with("ltp/testcases/bin/ftruncate") {
-    //         log::warn!("[sys_execve] ignore ftruncate test: {}", path);
-    //         sys_exit(666);
-    //     }
+    //     // if path.starts_with("ltp/testcases/bin/ftruncate") {
+    //     //     log::warn!("[sys_execve] ignore ftruncate test: {}", path);
+    //     //     sys_exit(666);
+    //     // }
     //     if path.starts_with("ltp/testcases/bin/memcg") {
     //         log::warn!("[sys_execve] ignore memcg_subgroup test: {}", path);
     //         sys_exit(666);
@@ -277,10 +285,10 @@ pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> Sy
     //         log::warn!("[sys_execve] ignore mmstress test: {}", path);
     //         sys_exit(666);
     //     }
-    //     if path.starts_with("ltp/testcases/bin/mtest") {
-    //         log::warn!("[sys_execve] ignore mount test: {}", path);
-    //         sys_exit(666);
-    //     }
+    //     // if path.starts_with("ltp/testcases/bin/mtest") {
+    //     //     log::warn!("[sys_execve] ignore mtest test: {}", path);
+    //     //     sys_exit(666);
+    //     // }
     //     if path.starts_with("ltp/testcases/bin/pcrypt") {
     //         log::warn!("[sys_execve] ignore pcrypt test: {}", path);
     //         sys_exit(666);
@@ -293,10 +301,10 @@ pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> Sy
     //         log::warn!("[sys_execve] ignore pids test: {}", path);
     //         sys_exit(666);
     //     }
-    //     if path.starts_with("ltp/testcases/bin/ppoll") {
-    //         log::warn!("[sys_execve] ignore ppoll test: {}", path);
-    //         sys_exit(666);
-    //     }
+    //     // if path.starts_with("ltp/testcases/bin/ppoll") {
+    //     //     log::warn!("[sys_execve] ignore ppoll test: {}", path);
+    //     //     sys_exit(666);
+    //     // }
     //     if path.starts_with("ltp/testcases/bin/proc") {
     //         log::warn!("[sys_execve] ignore proc test: {}", path);
     //         sys_exit(666);
