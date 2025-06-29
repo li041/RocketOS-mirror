@@ -233,7 +233,13 @@ pub fn futex_wait(
                 // 超时
                 log::error!("[futex_wait] task{} wakeup by timeout", task.tid());
                 let mut hash_bucket = FUTEXQUEUES.buckets[futex_hash(&key)].lock();
-                hash_bucket.retain(|futex_q| futex_q.task.upgrade().unwrap().tid() != task.tid());
+                hash_bucket.retain(|futex_q| {
+                    if let Some(futex_q) = futex_q.task.upgrade() {
+                        futex_q.tid() != current_task().tid()
+                    } else {
+                        false
+                    }
+                });
                 return Err(Errno::ETIMEDOUT);
             }
             return Ok(0);

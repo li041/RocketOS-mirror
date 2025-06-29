@@ -78,7 +78,7 @@ pub fn copy_to_user<T: Copy>(to: *mut T, from: *const T, n: usize) -> SyscallRet
 /// 由调用者保证n不为0
 pub fn copy_from_user<'a, T: Copy>(from: *const T, to: *mut T, n: usize) -> SyscallRet {
     log::trace!("[copy from user]");
-    if from.is_null() {
+    if from.is_null() || from as usize > USER_MAX_VA {
         return Err(Errno::EFAULT);
     }
     // 没有数据复制

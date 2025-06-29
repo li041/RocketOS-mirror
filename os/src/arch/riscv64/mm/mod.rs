@@ -75,7 +75,7 @@ pub fn copy_to_user<T: Copy>(to: *mut T, from: *const T, n: usize) -> SyscallRet
 
 /// 逐字节复制数据到内核空间, n为元素个数, 注意不是字节数
 pub fn copy_from_user<'a, T: Copy>(from: *const T, to: *mut T, n: usize) -> SyscallRet {
-    if from.is_null() {
+    if from.is_null() || from as usize > USER_MAX_VA {
         return Err(Errno::EFAULT);
     }
     if n == 0 {

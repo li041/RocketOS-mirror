@@ -1522,6 +1522,10 @@ pub fn sys_ppoll(
         timeout,
         sigmask
     );
+    if nfds > i32::MAX as usize {
+        log::error!("[sys_ppoll] nfds is too large: {}", nfds);
+        return Err(Errno::EINVAL);
+    }
     let task = current_task();
     // 处理参数
     let has_deadline = !timeout.is_null();
@@ -2565,7 +2569,8 @@ pub fn sys_faccessat(fd: usize, pathname: *const u8, mode: i32, flags: i32) -> S
         return Err(Errno::EINVAL);
     }
     // 检查 flags 是否只包含支持的标志
-    let supported_flags = AT_EACCESS | AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH | 0x60 | 0x2 | 0xfffe|0x1;
+    let supported_flags =
+        AT_EACCESS | AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH | 0x60 | 0x2 | 0xfffe | 0x1;
     if flags & !supported_flags != 0 {
         log::error!("[sys_faccessat] Unsupported flags: {:#x}", flags);
         return Err(Errno::EINVAL);

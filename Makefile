@@ -15,7 +15,28 @@ MODE ?= release
 
 # all: clean run
 all : 
-	@cd ./img && make unpack
+	cd ./img && make unpack
+	mkdir ./increment -p && mkdir ./oscamp -p 
+	cp /coursegrader/testdata/sdcard-rv.img.gz . && gunzip sdcard-rv.img.gz
+	cp /coursegrader/testdata/sdcard-la.img.gz . && gunzip sdcard-la.img.gz
+	mount ./sdcard-rv.img ./oscamp && mount ./disk.img ./increment 
+	./copy_tests.sh ./ltp_test.txt ./oscamp/musl/ltp/testcases/bin ./increment/musl/ltp/testcases/bin
+	./copy_tests.sh ./ltp_test.txt ./oscamp/glibc/ltp/testcases/bin ./increment/glibc/ltp/testcases/bin
+	umount ./oscamp && umount ./increment
+	mount ./sdcard-la.img ./oscamp && mount ./disk-la.img ./increment 
+	./copy_tests.sh ./ltp_test.txt ./oscamp/musl/ltp/testcases/bin ./increment/musl/ltp/testcases/bin
+	./copy_tests.sh ./ltp_test.txt ./oscamp/glibc/ltp/testcases/bin ./increment/glibc/ltp/testcases/bin
+	umount ./oscamp && umount ./increment
+	rm -rf sdcard-rv.img sdcard-rv.img.gz    
+	rm -rf sdcard-la.img sdcard-la.img.gz
+	cd ./user && make build ARCH=riscv64 MODE=release
+	cd ./os && make build ARCH=riscv64 MODE=release 
+	cd ./user && make build ARCH=loongarch64 MODE=release
+	cd ./os && make build ARCH=loongarch64 MODE=release
+	cp ./os/target/riscv64gc-unknown-none-elf/release/os.bin ./kernel-rv && cp ./os/target/loongarch64-unknown-none/release/os ./kernel-la
+
+kernel:
+	@cd ./img && make pack
 	@cd ./user && make build ARCH=riscv64 MODE=release
 	@cd ./os && make build ARCH=riscv64 MODE=release 
 	@cd ./user && make build ARCH=loongarch64 MODE=release
@@ -30,10 +51,10 @@ run-riscv:
 		-nographic \
 		-smp 2 \
 		-bios default \
-		-drive file=./img/sdcard.img,if=none,format=raw,id=x0 \
+		-drive file=./disk-la.img,if=none,format=raw,id=x0 \
 		-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
 		-device virtio-net-device,netdev=net -netdev user,id=net,hostfwd=tcp::5555-:5555,hostfwd=udp::5555-:5555 \
-		-drive file=disk-rv.img,if=none,format=raw,id=x1 \
+		-drive file=disk.img,if=none,format=raw,id=x1 \
 		-device virtio-blk-device,drive=x1,bus=virtio-mmio-bus.1
 
 run-loongarch:
@@ -44,7 +65,7 @@ run-loongarch:
 		-smp 1 \
 		-machine virt \
 		-no-reboot \
-		-drive file=./img/sdcard-la.img,if=none,format=raw,id=x0 \
+		-drive file=disk.img,if=none,format=raw,id=x0 \
 		-device virtio-blk-pci,drive=x0 \
 		-drive file=disk-la.img,if=none,format=raw,id=x1 \
 		-device virtio-blk-pci,drive=x1 \
