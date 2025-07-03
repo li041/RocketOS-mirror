@@ -63,7 +63,7 @@ impl TimeVal {
             usec: 0,
         };
         let current_time = get_time_ms();
-        base_time.sec = current_time / 1000;
+        base_time.sec += current_time / 1000;
         base_time.usec = (current_time % 1000) * 1000;
         base_time
     }

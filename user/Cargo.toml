@@ -16,3 +16,8 @@ bitflags = "1.2.1"
 [features]
 submit = []
 la2000 = []
+virt = []
+board = []
+
+[profile.release]
+panic = "abort"

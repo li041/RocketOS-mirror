@@ -20,99 +20,99 @@ const QUEUE_SIZE: usize = 16;
 pub mod netdevice;
 
 static NET_DEVICE_ADDR: Mutex<Option<VirtAddr>> = Mutex::new(None);
-#[cfg(target_arch = "riscv64")]
-pub fn init_net_device(dtb_addr: usize) {
-    // let data=unsafe{core::slice::from_raw_parts((KERNEL_BASE+0xbfe00000) as *const u8, 0x20)};
-    // log::error!("{:?}",data);
-    // println!("11111");
-    // log::error!("{:?}",KERNEL_SPACE.lock().page_table.translate_va_to_pa((0xbfe00000+KERNEL_BASE).into()));
+// #[cfg(target_arch = "riscv64")]
+// pub fn init_net_device(dtb_addr: usize) {
+//     // let data=unsafe{core::slice::from_raw_parts((KERNEL_BASE+0xbfe00000) as *const u8, 0x20)};
+//     // log::error!("{:?}",data);
+//     // println!("11111");
+//     // log::error!("{:?}",KERNEL_SPACE.lock().page_table.translate_va_to_pa((0xbfe00000+KERNEL_BASE).into()));
 
-    use core::arch::asm;
+//     use core::arch::asm;
 
-    use virtio_drivers::transport::mmio::{MmioTransport, VirtIOHeader};
+//     use virtio_drivers::transport::mmio::{MmioTransport, VirtIOHeader};
 
-    use crate::{
-        arch::config::KERNEL_BASE,
-        mm::{MapArea, MapPermission, MapType, VPNRange, KERNEL_SPACE},
-    };
-    let dev_tree = unsafe { fdt::Fdt::from_ptr((dtb_addr + KERNEL_BASE) as *const u8).unwrap() };
+//     use crate::{
+//         arch::config::KERNEL_BASE,
+//         mm::{MapArea, MapPermission, MapType, VPNRange, KERNEL_SPACE},
+//     };
+//     let dev_tree = unsafe { fdt::Fdt::from_ptr((dtb_addr + KERNEL_BASE) as *const u8).unwrap() };
 
-    //获取节点存储设备reg的地址
-    //表示设备地址和长度占用32字长个数
-    // println!("fjisof");
-    let address_cells = dev_tree
-        .root()
-        .properties()
-        .find(|prop| prop.name == "#address-cells")
-        .unwrap()
-        .value[3];
-    let size_cells = dev_tree
-        .root()
-        .properties()
-        .find(|prop| prop.name == "#size-cells")
-        .unwrap()
-        .value[3];
-    println!("{:?}", address_cells);
-    // println!("{:?}",size_cells);
-    for node in dev_tree.all_nodes() {
-        for prop in node.properties() {
-            log::error!("{},{}", node.name, prop.name);
-        }
-    }
+//     //获取节点存储设备reg的地址
+//     //表示设备地址和长度占用32字长个数
+//     // println!("fjisof");
+//     let address_cells = dev_tree
+//         .root()
+//         .properties()
+//         .find(|prop| prop.name == "#address-cells")
+//         .unwrap()
+//         .value[3];
+//     let size_cells = dev_tree
+//         .root()
+//         .properties()
+//         .find(|prop| prop.name == "#size-cells")
+//         .unwrap()
+//         .value[3];
+//     println!("{:?}", address_cells);
+//     // println!("{:?}",size_cells);
+//     for node in dev_tree.all_nodes() {
+//         for prop in node.properties() {
+//             log::error!("{},{}", node.name, prop.name);
+//         }
+//     }
 
-    for node in dev_tree.all_nodes() {
-        if node.name == "soc" {
-            for node_t in node.children() {
-                if node_t.name == "virtio_mmio@10008000" {
-                    //414BE00 4K reg
-                    let reg = parse_reg(&node_t, address_cells as usize, size_cells as usize);
-                    let mmio_base = reg.get(0).unwrap().0;
-                    let mmio_size = reg.get(0).unwrap().1;
-                    println!("[init_net_device]:net device reg is {:?}", reg);
-                    //map device to kernel
-                    KERNEL_SPACE.lock().push_with_offset(
-                        MapArea::new(
-                            VPNRange::new(
-                                VirtAddr::from(KERNEL_BASE + mmio_base).floor(),
-                                VirtAddr::from(KERNEL_BASE + mmio_base + mmio_size).ceil(),
-                            ),
-                            MapType::Linear,
-                            MapPermission::R | MapPermission::W,
-                            None,
-                            0,
-                            false,
-                        ),
-                        None,
-                        0,
-                    );
-                    unsafe {
-                        asm!("sfence.vma");
-                    }
-                    NET_DEVICE_ADDR
-                        .lock()
-                        .replace((KERNEL_BASE + mmio_base).into());
-                    // todo!("need to create a virtio net device control");
-                    // todo use virtioNetdevice mmiotransport to initilize a device
-                    // 下面需要获得一个可以使用的设备，由于得到了mmio,故而可以使用mmiotransport来建立一个transport用于建立VirioNetDevice
-                    let header =
-                        NonNull::new((KERNEL_BASE + mmio_base) as *mut VirtIOHeader).unwrap();
-                    // log::error!("[init_net_device]:addr:{:?}",unsafe{core::slice::from_raw_parts((KERNEL_BASE+mmio_base) as *const usize, 0x20)});
-                    let transport = unsafe { MmioTransport::new(header).unwrap() };
-                    log::error!("[init_net_device]:the transport vendor_id is {:#x},version is {:?},device_type:{:?}",transport.vendor_id(),transport.version(),transport.device_type());
-                    let dev = VirtioNetDevice::<32, HalImpl, MmioTransport>::new(transport);
-                    log::error!("[init_net_device]:the dev has built");
-                    crate::net::init(Some(dev));
-                    return;
-                    // todo init net
-                }
-            }
-        }
-    }
-    log::error!("not find a net device");
-    // crate::net::init(None);
-    // ///能到这里必然不是virtionetdevice
-    // return None;
-}
+//     for node in dev_tree.all_nodes() {
+//         if node.name == "soc" {
+//             for node_t in node.children() {
+//                 if node_t.name == "virtio_mmio@10008000" {
+//                     //414BE00 4K reg
+//                     let reg = parse_reg(&node_t, address_cells as usize, size_cells as usize);
+//                     let mmio_base = reg.get(0).unwrap().0;
+//                     let mmio_size = reg.get(0).unwrap().1;
+//                     println!("[init_net_device]:net device reg is {:?}", reg);
+//                     //map device to kernel
+//                     KERNEL_SPACE.lock().push_with_offset(
+//                         MapArea::new(
+//                             VPNRange::new(
+//                                 VirtAddr::from(KERNEL_BASE + mmio_base).floor(),
+//                                 VirtAddr::from(KERNEL_BASE + mmio_base + mmio_size).ceil(),
+//                             ),
+//                             MapType::Linear,
+//                             MapPermission::R | MapPermission::W,
+//                             None,
+//                             0,
+//                             false,
+//                         ),
+//                         None,
+//                         0,
+//                     );
+//                     unsafe {
+//                         asm!("sfence.vma");
+//                     }
+//                     NET_DEVICE_ADDR
+//                         .lock()
+//                         .replace((KERNEL_BASE + mmio_base).into());
+//                     // todo!("need to create a virtio net device control");
+//                     // todo use virtioNetdevice mmiotransport to initilize a device
+//                     // 下面需要获得一个可以使用的设备，由于得到了mmio,故而可以使用mmiotransport来建立一个transport用于建立VirioNetDevice
+//                     let header =
+//                         NonNull::new((KERNEL_BASE + mmio_base) as *mut VirtIOHeader).unwrap();
+//                     // log::error!("[init_net_device]:addr:{:?}",unsafe{core::slice::from_raw_parts((KERNEL_BASE+mmio_base) as *const usize, 0x20)});
+//                     let transport = unsafe { MmioTransport::new(header).unwrap() };
+//                     log::error!("[init_net_device]:the transport vendor_id is {:#x},version is {:?},device_type:{:?}",transport.vendor_id(),transport.version(),transport.device_type());
+//                     let dev = VirtioNetDevice::<32, HalImpl, MmioTransport>::new(transport);
+//                     log::error!("[init_net_device]:the dev has built");
+//                     crate::net::init(Some(dev));
+//                     return;
+//                     // todo init net
+//                 }
+//             }
+//         }
+//     }
+//     log::error!("not find a net device");
+//     // crate::net::init(None);
+//     // ///能到这里必然不是virtionetdevice
+//     // return None;
+// }
 #[cfg(target_arch = "loongarch64")]
 pub fn init_net_dev_la<T: Transport + 'static>(transport: T) {
     log::error!(
@@ -125,25 +125,25 @@ pub fn init_net_dev_la<T: Transport + 'static>(transport: T) {
 }
 
 //解析设备 compatibel中的reg中的mmio_base mmio_size，基本返回的就是2各元素
-fn parse_reg(node: &FdtNode, addr_cells: usize, size_cells: usize) -> Vec<(usize, usize)> {
-    let reg = node
-        .properties()
-        .find(|prop| prop.name == "reg")
-        .unwrap()
-        .value;
-    let reg: &[u32] = bytemuck::cast_slice(reg); // Big endian
-    let mut res = Vec::new();
-    for pos in (0..reg.len()).step_by(addr_cells + size_cells) {
-        let phys_start = reg[pos..pos + addr_cells]
-            .iter()
-            .fold(0, |acc, &x| acc << 32 | x.swap_bytes() as usize);
-        let size = reg[pos + addr_cells..pos + addr_cells + size_cells]
-            .iter()
-            .fold(0, |acc, &x| acc << 32 | x.swap_bytes() as usize);
-        res.push((phys_start, size));
-    }
-    res
-}
+// fn parse_reg(node: &FdtNode, addr_cells: usize, size_cells: usize) -> Vec<(usize, usize)> {
+//     let reg = node
+//         .properties()
+//         .find(|prop| prop.name == "reg")
+//         .unwrap()
+//         .value;
+//     let reg: &[u32] = bytemuck::cast_slice(reg); // Big endian
+//     let mut res = Vec::new();
+//     for pos in (0..reg.len()).step_by(addr_cells + size_cells) {
+//         let phys_start = reg[pos..pos + addr_cells]
+//             .iter()
+//             .fold(0, |acc, &x| acc << 32 | x.swap_bytes() as usize);
+//         let size = reg[pos + addr_cells..pos + addr_cells + size_cells]
+//             .iter()
+//             .fold(0, |acc, &x| acc << 32 | x.swap_bytes() as usize);
+//         res.push((phys_start, size));
+//     }
+//     res
+// }
 
 //需要将硬件可以虚拟化介入内核中控制
 //transport trait可以提供一个统一的接口控制MMIO,PCI设备

@@ -44,7 +44,13 @@ pub mod block_op;
 pub mod dentry;
 pub mod extent_tree;
 pub mod fs;
+#[cfg(not(feature = "la2000"))]
 pub mod inode;
+#[cfg(feature = "la2000")]
+pub mod inode_la2000;
+#[cfg(feature = "la2000")]
+pub use inode_la2000 as inode;
+
 pub mod super_block;
 
 pub const MAX_FS_BLOCK_ID: usize = 0x100000000; // 文件系统块号的最大值, 用于表示稀疏文件中的空洞
@@ -65,6 +71,19 @@ impl InodeOp for Ext4Inode {
         self.get_page_caches(page_index, page_count)
     }
     // 返回对应的文件系统中的物理块号和长度
+    // extent.len为0表示无效的extent, 即没有对应的物理块
+    #[cfg(feature = "la2000")]
+    fn lookup_extent<'a>(&'a self, page_index: usize) -> Option<(usize, usize)> {
+        let extent = self.lookup_extent(page_index);
+        if extent.len > 0 {
+            // log::info!("[Ext4Inode::lookup_extent] page_index: {}, block_num: {}, block_count: {}", page_index, block_num, block_count);
+            Some((extent.physical_start_block(), extent.len as usize))
+        } else {
+            None
+        }
+    }
+    // 返回对应的文件系统中的物理块号和长度
+    #[cfg(not(feature = "la2000"))]
     fn lookup_extent<'a>(&'a self, page_index: usize) -> Option<(usize, usize)> {
         let extent = self.lookup_extent(page_index);
         if let Some(extent) = extent {

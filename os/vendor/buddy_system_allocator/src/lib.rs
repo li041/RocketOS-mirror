@@ -1,3 +1,4 @@
+#![cfg_attr(feature = "const_fn", feature(const_mut_refs, const_fn_fn_ptr_basics))]
 #![no_std]
 
 #[cfg(test)]
@@ -7,12 +8,9 @@ extern crate std;
 #[cfg(feature = "use_spin")]
 extern crate spin;
 
-#[cfg(feature = "alloc")]
 extern crate alloc;
 
-#[cfg(feature = "use_spin")]
-use core::alloc::GlobalAlloc;
-use core::alloc::Layout;
+use core::alloc::{GlobalAlloc, Layout};
 use core::cmp::{max, min};
 use core::fmt;
 use core::mem::size_of;
@@ -22,13 +20,11 @@ use core::ptr::NonNull;
 #[cfg(feature = "use_spin")]
 use spin::Mutex;
 
-#[cfg(feature = "alloc")]
 mod frame;
 pub mod linked_list;
 #[cfg(test)]
 mod test;
 
-#[cfg(feature = "alloc")]
 pub use frame::*;
 
 /// A heap that uses buddy system with configurable order.
@@ -80,7 +76,7 @@ impl<const ORDER: usize> Heap<ORDER> {
     pub unsafe fn add_to_heap(&mut self, mut start: usize, mut end: usize) {
         // avoid unaligned access on some platforms
         start = (start + size_of::<usize>() - 1) & (!size_of::<usize>() + 1);
-        end &= !size_of::<usize>() + 1;
+        end = end & (!size_of::<usize>() + 1);
         assert!(start <= end);
 
         let mut total = 0;
@@ -88,25 +84,17 @@ impl<const ORDER: usize> Heap<ORDER> {
 
         while current_start + size_of::<usize>() <= end {
             let lowbit = current_start & (!current_start + 1);
-            let mut size = min(lowbit, prev_power_of_two(end - current_start));
-            
-            // If the order of size is larger than the max order,
-            // split it into smaller blocks.
-            let mut order = size.trailing_zeros() as usize;
-            if order > ORDER - 1 {
-                order = ORDER - 1;
-                size = 1 << order;
-            }
+            let size = min(lowbit, prev_power_of_two(end - current_start));
             total += size;
 
-            self.free_list[order].push(current_start as *mut usize);
+            self.free_list[size.trailing_zeros() as usize].push(current_start as *mut usize);
             current_start += size;
         }
 
         self.total += total;
     }
 
-    /// Add a range of memory [start, start+size) to the heap
+    /// Add a range of memory [start, end) to the heap
     pub unsafe fn init(&mut self, start: usize, size: usize) {
         self.add_to_heap(start, start + size);
     }
@@ -167,8 +155,7 @@ impl<const ORDER: usize> Heap<ORDER> {
             // Merge free buddy lists
             let mut current_ptr = ptr.as_ptr() as usize;
             let mut current_class = class;
-
-            while current_class < self.free_list.len() - 1 {
+            while current_class < self.free_list.len() {
                 let buddy = current_ptr ^ (1 << current_class);
                 let mut flag = false;
                 for block in self.free_list[current_class].iter_mut() {
@@ -272,7 +259,7 @@ unsafe impl<const ORDER: usize> GlobalAlloc for LockedHeap<ORDER> {
             .lock()
             .alloc(layout)
             .ok()
-            .map_or(core::ptr::null_mut(), |allocation| allocation.as_ptr())
+            .map_or(0 as *mut u8, |allocation| allocation.as_ptr())
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
@@ -300,7 +287,17 @@ pub struct LockedHeapWithRescue<const ORDER: usize> {
 #[cfg(feature = "use_spin")]
 impl<const ORDER: usize> LockedHeapWithRescue<ORDER> {
     /// Creates an empty heap
+    #[cfg(feature = "const_fn")]
     pub const fn new(rescue: fn(&mut Heap<ORDER>, &Layout)) -> Self {
+        LockedHeapWithRescue {
+            inner: Mutex::new(Heap::<ORDER>::new()),
+            rescue,
+        }
+    }
+
+    /// Creates an empty heap
+    #[cfg(not(feature = "const_fn"))]
+    pub fn new(rescue: fn(&mut Heap<ORDER>, &Layout)) -> Self {
         LockedHeapWithRescue {
             inner: Mutex::new(Heap::<ORDER>::new()),
             rescue,
@@ -328,7 +325,7 @@ unsafe impl<const ORDER: usize> GlobalAlloc for LockedHeapWithRescue<ORDER> {
                 inner
                     .alloc(layout)
                     .ok()
-                    .map_or(core::ptr::null_mut(), |allocation| allocation.as_ptr())
+                    .map_or(0 as *mut u8, |allocation| allocation.as_ptr())
             }
         }
     }
@@ -341,5 +338,5 @@ unsafe impl<const ORDER: usize> GlobalAlloc for LockedHeapWithRescue<ORDER> {
 }
 
 pub(crate) fn prev_power_of_two(num: usize) -> usize {
-    1 << (usize::BITS as usize - num.leading_zeros() as usize - 1)
+    1 << (8 * (size_of::<usize>()) - num.leading_zeros() as usize - 1)
 }

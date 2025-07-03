@@ -1,6 +1,6 @@
 use core::fmt::Debug;
 
-use alloc::collections::btree_map::BTreeMap;
+use alloc::{collections::btree_map::BTreeMap, vec::Vec};
 use bitflags::bitflags;
 use log::error;
 
@@ -20,14 +20,20 @@ pub struct SigPending {
 
 impl SigPending {
     pub fn new() -> Self {
-        Self {
-            pending: SigSet::empty(),
-            mask: SigSet::empty(),
-            info: BTreeMap::new(),
+        println!("[SigPending::new] enter");
+        let pending = SigSet::default();
+        let info = BTreeMap::new();
+        let mask = SigSet::default();
+        println!("[SigPending::new] mask: {:?}", mask);
+        let sig_pending = Self {
+            pending: pending,
+            mask: mask,
+            info: info,
             interrupted: false,
-            re_start: true,         // 默认需要重启
-            restore_mask: true,     // 默认需要恢复信号掩码
-        }
+            re_start: true,     // 默认需要重启
+            restore_mask: true, // 默认需要恢复信号掩码
+        };
+        sig_pending
     }
 
     pub fn clear(&mut self) {
@@ -294,7 +300,6 @@ impl From<usize> for Sig {
 
 bitflags! {
     #[derive(Copy, Clone, Default, Debug)]
-    #[repr(C)]
     pub struct SigSet: u64 {
         const SIGHUP    = 1 << 0 ;
         const SIGINT    = 1 << 1 ;

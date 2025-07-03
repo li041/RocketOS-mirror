@@ -85,6 +85,7 @@ pub struct PageTableEntry {
     bits: usize,
 }
 
+#[cfg(not(feature = "la2000"))]
 impl Debug for PageTableEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let ppn = self.ppn().0;
@@ -92,10 +93,19 @@ impl Debug for PageTableEntry {
         write!(f, "PTE {{ ppn: {:#x}, flags: {} }}", ppn, flags)
     }
 }
+#[cfg(feature = "la2000")]
+impl Debug for PageTableEntry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let ppn = self.ppn().0;
+        let flags = self.flags().bits();
+        write!(f, "PTE {{ ppn: {:#x}, flags: {:#x} }}", ppn, flags)
+    }
+}
 
 impl PageTableEntry {
     const PPN_MASK: usize = ((1 << PALEN) - 1) << 12;
-    pub fn new(ppn: PhysPageNum, flags: PTEFlags) -> Self {
+    pub fn new(ppn: PhysPageNum, mut flags: PTEFlags) -> Self {
+        flags.insert(PTEFlags::MAT_CC);
         Self {
             bits: ppn.0 << 12 | flags.bits(),
         }
@@ -105,6 +115,7 @@ impl PageTableEntry {
         flags.remove(PTEFlags::W);
         flags.remove(PTEFlags::D);
         flags.insert(PTEFlags::COW);
+        flags.insert(PTEFlags::MAT_CC);
         Self {
             bits: pte.ppn().0 << 12 | flags.bits(),
         }
@@ -530,7 +541,10 @@ impl PageTable {
                         for (index, entry) in pagetable.iter().enumerate() {
                             if entry.is_valid() && entry.is_user() {
                                 va = va | (index << 12);
+                                #[cfg(not(feature = "la2000"))]
                                 log::error!("--- va: {:#x}: {:?}", va, entry);
+                                #[cfg(feature = "la2000")]
+                                log::error!("--- va: {:#x}, bits: {:#x}", va, entry.bits);
                                 va = va & !(index << 12);
                             }
                         }

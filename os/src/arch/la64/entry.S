@@ -6,13 +6,13 @@
 .equ CSR_DMW1, 0x181
 
 _start:
-0:
+
     # 先读CSR.CRMD看看内存映射模式
     # CRMD的csr_num是0x0
-    csrrd $t1, 0x0
+    # csrrd $t1, 0x0
     # CRMD是0x8, 直接地址映射模式 
 
-    # li.d  $t0, 0x1fe20000  # 加载 uart_addr 到临时寄存器 $t0
+    # li.d  $t0, 0x800000001fe20000  # 加载 uart_addr 到临时寄存器 $t0
     # li.w $t2, 0x48 # 加载字符'H'到临时寄存器 $t2
     # st.b $t2, $t0, 0 # 将字符'H'写入串口
     # 这个down掉了
@@ -31,23 +31,29 @@ _start:
     srli.d      $t0,    $t0,    0x30
     slli.d      $t0,    $t0,    0x30
     addi.d      $t0,    $t0,    0x11
-    csrwr       $t0,    CSR_DMW1   # Make sure the window remains the same after the switch.
+    csrwr       $t0,    0x181   # Make sure the window remains the same after the switch.
     sub.d       $t0,    $t0,    $t0
-    addi.d      $t0,    $t0,    0x11
-    csrwr       $t0,    CSR_DMW0
+    addi.d      $t1,    $t0,    0x11
+    # li.d  $t0, 0x800000001fe20000  # 加载 uart_addr 到临时寄存器 $t0
+    # li.w $t2, 0x48 # 加载字符'H'到临时寄存器 $t2
+    # st.b $t2, $t0, 0 # 将字符'H'写入串口
+    csrwr       $t1,    0x180      #00->00
     pcaddi      $t0,    0x0
     slli.d      $t0,    $t0,    0x10
     srli.d      $t0,    $t0,    0x10
-    jirl        $t0,    $t0,    0x10    # 跳0段的下一条指令
+    jirl        $t0,    $t0,    0x10    # 跳0段的下一条指令180
     # The barrier
-    sub.d       $t0,    $t0,    $t0
-    csrwr       $t0,    0x181
-    sub.d       $t0,    $t0,    $t0
-    # IMPACT END, 实际上就是设置了下DMW0, 中间好像倒腾了下DMW1, 最后是置回去, 目前还不理解
+    sub.d       $t2,    $t1,    $t1
+    addi.d      $t2,    $t2,    0x11
+    csrwr       $t2,    0x181  #00->00
+    csrwr       $t1,    0x180  #recover uart
+    #can use uart
+    # li.d  $t0, 0x800000001fe20000  # 加载 uart_addr 到临时寄存器 $t0
+    # li.w $t2, 0x48 # 加载字符'H'到临时寄存器 $t2
+    # st.b $t2, $t0, 0 # 将字符'H'写入串口
     la.global $sp, boot_stack_top
     bl rust_main
-1:
-    b 1b
+
     .section .bss.stack
     .globl boot_stack
 boot_stack:

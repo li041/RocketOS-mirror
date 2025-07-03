@@ -18,6 +18,6 @@ pub fn set_next_trigger() {
     TCfg::read()
         .set_enable(true)
         .set_periodic(false)
-        .set_init_val(get_clock_freq() / TICKS_PER_SEC)
+        .set_init_val(get_clock_freq() / TICKS_PER_SEC * 10)
         .write();
 }

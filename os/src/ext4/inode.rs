@@ -1,6 +1,8 @@
 #![allow(unused)]
 use core::ptr;
 
+use alloc::boxed::Box;
+use alloc::collections::btree_map::BTreeMap;
 use alloc::string::String;
 use alloc::sync::{Arc, Weak};
 use alloc::vec;
@@ -419,7 +421,7 @@ impl Ext4InodeDisk {
             // 偏移量是3个u32, 是extent_header的大小
             let extent_ptr = self.block.as_ptr().add(12) as *const Ext4Extent;
             for i in 0..extent_header.entries as usize {
-                extents.push(ptr::read(extent_ptr.add(i as usize)));
+                extents.push(ptr::read_volatile(extent_ptr.add(i as usize)));
             }
         }
         extents
@@ -435,7 +437,6 @@ impl Ext4InodeDisk {
         ext4_block_size: usize,
     ) -> Option<Ext4Extent> {
         let current_block = logical_start_block;
-
         // 获取根节点的extent_header
         let extent_header = self.extent_header();
         // 遍历extent B+树，直到找到所有需要的块范围
@@ -464,7 +465,8 @@ impl Ext4InodeDisk {
             let start_block = extent.logical_block;
             let end_block = start_block + extent.len as u32;
             if logical_start_block >= start_block && logical_start_block < end_block {
-                return Some(*extent);
+                let extent = unsafe { core::ptr::read(extent as *const Ext4Extent) };
+                return Some(extent);
             }
         }
         return None;
@@ -644,7 +646,13 @@ impl Ext4InodeDisk {
             (*extent_header_ptr).entries += 1;
             for (i, extent) in extents.iter().enumerate() {
                 let extent_ptr = self.block.as_ptr().add(12 + i * 12) as *mut Ext4Extent;
+                // extent_ptr.write_volatile(*extent);
+                // *extent_ptr = *extent;
+                // core::ptr::write(extent_ptr, *extent);
+                #[cfg(not(feature = "la2000"))]
                 extent_ptr.write(*extent);
+                #[cfg(feature = "la2000")]
+                extent.write_fields_to_ptr(extent_ptr as *mut u8);
             }
         }
         Ok(())
@@ -714,7 +722,10 @@ pub struct Ext4Inode {
     pub link: RwLock<Option<String>>,
     pub inner: FSMutex<Ext4InodeInner>,
     pub self_weak: Weak<Self>,
+    #[cfg(feature = "virt")]
     pub xattrs: RwLock<HashMap<String, Vec<u8>>>, // 扩展属性
+    #[cfg(feature = "board")]
+    pub xattrs: RwLock<BTreeMap<String, Vec<u8>>>, // 扩展属性
 }
 
 impl Drop for Ext4Inode {
@@ -837,7 +848,10 @@ impl Ext4Inode {
             link: RwLock::new(None),
             inner: FSMutex::new(Ext4InodeInner::new(new_inode_disk)),
             self_weak: weak.clone(),
+            #[cfg(feature = "virt")]
             xattrs: RwLock::new(HashMap::new()),
+            #[cfg(feature = "board")]
+            xattrs: RwLock::new(BTreeMap::new()),
         })
     }
     pub fn new_root(
@@ -856,7 +870,10 @@ impl Ext4Inode {
             link: RwLock::new(None),
             inner: FSMutex::new(Ext4InodeInner::new(root_inode_disk)),
             self_weak: weak.clone(),
+            #[cfg(feature = "virt")]
             xattrs: RwLock::new(HashMap::new()),
+            #[cfg(feature = "board")]
+            xattrs: RwLock::new(BTreeMap::new()),
         })
     }
     // 所有的读/写都是基于Ext4Inode::read/write, 通过页缓存和extent tree来读写
@@ -1098,19 +1115,24 @@ impl Ext4Inode {
 
     pub fn lookup_extent(&self, page_index: usize) -> Option<Ext4Extent> {
         // 仅用于文件的读
-        if let Some(extent) = self.inner.read().inode_on_disk.lookup_extent(
+        // if let Some(extent) = self.inner.read().inode_on_disk.lookup_extent(
+        //     page_index as u32,
+        //     self.block_device.clone(),
+        //     self.ext4_fs.upgrade().unwrap().block_size(),
+        // ) {
+        //     Some(extent)
+        // } else {
+        //     log::error!(
+        //         "[Ext4Inode::lookup_extent] No valid extent found for logical block {}, space file hole",
+        //         page_index
+        //     );
+        //     None
+        // }
+        self.inner.read().inode_on_disk.lookup_extent(
             page_index as u32,
             self.block_device.clone(),
             self.ext4_fs.upgrade().unwrap().block_size(),
-        ) {
-            Some(extent)
-        } else {
-            log::error!(
-                "[Ext4Inode::lookup_extent] No valid extent found for logical block {}, space file hole",
-                page_index
-            );
-            None
-        }
+        )
     }
     /// 由上层调用者保证
     ///     1. 确定是inline_data才调用
@@ -1519,7 +1541,7 @@ impl Ext4Inode {
     /// 只读取磁盘上的目录项, 不会加载Inode进入内存
     /// 上层调用者应优先使用DentryCache, 只有未命中时才调用
     pub fn lookup(&self, name: &str) -> Option<Ext4DirEntry> {
-        // log::info!("[Ext4Inode::lookup] name: {}", name);
+        log::info!("[Ext4Inode::lookup] name: {}", name);
         debug_assert!(self.inner.read().inode_on_disk.is_dir(), "not a directory");
         // if name == "lkfile_3" {
         //     log::warn!("[Ext4Inode::lookup] lkfile_3 is a special file, returning dummy dentry");
@@ -1790,9 +1812,7 @@ impl Ext4Inode {
         if mode == FallocFlags::empty() || mode == FallocFlags::KEEP_SIZE {
             if len == 314572800 {
                 // 特殊处理, 直接返回0, 支持其他文件系统后再分配
-                // log::warn!("[Ext4Inode::fallocate] Special case for len == 314572800, returning 0");
-                println!("[Ext4Inode::fallocate] Special case for len == 314572800, returning 0");
-
+                log::warn!("[Ext4Inode::fallocate] Special case for len == 314572800, returning 0");
                 return Ok(0);
             }
             // 分配从 `offset` 开始 `size` 字节的磁盘空间
@@ -2144,7 +2164,10 @@ pub fn load_inode(
         link: RwLock::new(None),
         inner: FSMutex::new(Ext4InodeInner::new(inode_on_disk)),
         self_weak: weak.clone(),
+        #[cfg(feature = "virt")]
         xattrs: RwLock::new(HashMap::new()),
+        #[cfg(feature = "board")]
+        xattrs: RwLock::new(BTreeMap::new()),
     })
 }
 

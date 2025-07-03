@@ -35,11 +35,15 @@ boot_stack_top:
     .align 12
 boot_pagetable:
     # we need 2 pte here
+    # 0x0000_0000_4000_0000 -> 0x0000_0000_4000_0000
     # 0x0000_0000_8000_0000 -> 0x0000_0000_8000_0000
+    # 0xffff_fc00_4000_0000 -> 0x0000_0000_4000_0000
     # 0xffff_fc00_8000_0000 -> 0x0000_0000_8000_0000
     .quad 0
-    .quad 0
+    .quad (0x40000 << 10) | 0xcf
     .quad (0x80000 << 10) | 0xcf # VRWXAD
-    .zero 8 * 255
+    .quad (0xc0000 << 10) | 0xcf # VRWXAD
+    .zero 8 * 253
+    .quad (0x40000 << 10) | 0xcf # VRWXAD
     .quad (0x80000 << 10) | 0xcf # VRWXAD
     .zero 8 * 253

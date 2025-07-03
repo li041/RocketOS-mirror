@@ -78,6 +78,7 @@ impl Debug for Ext4SuperBlockDisk {
             .field("inodes_per_group", &self.inodes_per_group)
             .field("blocks_per_group", &self.blocks_per_group)
             .field("free_blocks_count", &self.free_blocks_count())
+            .field("free_inodes_count", &self.free_inodes_count)
             .finish()
     }
 }

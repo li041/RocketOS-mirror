@@ -57,9 +57,17 @@ pub fn for_each_task<T>(f: impl Fn(&Arc<Task>) -> T) -> Vec<T> {
     TASK_MANAGER.for_each(f)
 }
 
+#[cfg(feature = "virt")]
 pub struct TaskManager(Mutex<HashMap<Tid, Weak<Task>>>);
+#[cfg(feature = "board")]
+pub struct TaskManager(Mutex<BTreeMap<Tid, Weak<Task>>>);
 
 impl TaskManager {
+    #[cfg(feature = "board")]
+    pub fn new() -> Self {
+        Self(Mutex::new(BTreeMap::new()))
+    }
+    #[cfg(feature = "virt")]
     pub fn new() -> Self {
         Self(Mutex::new(HashMap::new()))
     }
@@ -449,7 +457,7 @@ impl TimeManager {
         // })
         // .map(|(k, _)| k.clone())
         // .collect();
-        
+
         // 第二步：再移除这些键，收集对应的值
         for key in keys_to_remove {
             if let Some(entry) = guard.remove(&key) {

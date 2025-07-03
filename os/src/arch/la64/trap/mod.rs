@@ -1,13 +1,14 @@
 use core::arch::global_asm;
 
 use crate::{
-     arch::Interrupt, fs::dentry::clean_dentry_cache, mm::VirtAddr, signal::{handle_signal, SiField, Sig, SigInfo}, syscall::syscall, task::{current_task, handle_timeout, yield_current_task}
+     arch::{mm::{copy_from_user, copy_to_user}, trap::mem_access::Instruction, BadV, CrMd, EStat, Interrupt, TLBRBadV, TLBRPrMd, PGD, PGDH, PGDL, PWCH, PWCL, TLBRERA}, fs::dentry::clean_dentry_cache, mm::VirtAddr, signal::{handle_signal, SiField, Sig, SigInfo}, syscall::syscall, task::{current_task, handle_timeout, yield_current_task}
 };
 
 use super::{register, Exception, TIClr, Trap, ERA};
 
 pub mod context;
 pub mod timer;
+pub mod mem_access;
 
 pub use context::TrapContext;
 use timer::set_next_trigger;
@@ -104,7 +105,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
         | Trap::Exception(Exception::PageModifyFault)
         | Trap::Exception(Exception::PageInvalidLoad) => {
             let badv = register::BadV::read().get_vaddr();
-            // log::error!("{:?} at {:#x}", cause, badv);
+            log::error!("{:?} at {:#x}", cause, badv);
             let va = VirtAddr::from(badv);
             let cause = PageFaultCause::from(cause);
             let task = current_task();
@@ -136,6 +137,59 @@ pub fn trap_handler(cx: &mut TrapContext) {
             clean_dentry_cache();
             yield_current_task();
         }
+        Trap::Exception(Exception::AddressNotAligned) => {
+            let pc = cx.era;
+            let mut ins = 0u32;
+            copy_from_user(pc as *const u32 , &mut ins as *mut u32, 1);
+            let ins = Instruction::from(ins);
+            let op = ins.get_op_code();
+            // 解析op_code
+            if op.is_err() {
+                panic!("Unsupported OpCode! Instruction: {:?} ", ins);
+            }
+            let op = op.unwrap();
+            let addr = BadV::read().get_vaddr();
+            let sz = op.get_size();
+            let is_aligned: bool = addr % sz == 0;
+            if !is_aligned {
+                assert!([2, 4, 8].contains(&sz));
+                // 手动模拟未对齐的内存访问
+                if op.is_store() { // 存储操作
+                    let rd_num = ins.get_rd_num();
+                    let mut rd = if rd_num != 0 { cx.r[rd_num] } else { 0 };
+                    for i in 0..sz {
+                        let mut seg = rd as u8;
+                        copy_to_user((addr + i) as *mut u8, &mut seg as *mut u8, 1);
+                        rd >>= 8;
+                    }
+                } else { // 读取操作
+                    let mut rd = 0usize;
+                    for i in (0..sz).rev() {
+                        rd <<= 8;
+                        let mut read_byte = 0u8;
+                        copy_from_user((addr + 1) as *const u8, &mut read_byte as *mut u8, 1);
+                        rd |= read_byte as usize;
+                        //debug!("{:#x}, {:#x}", rd, read_byte);
+                    }
+                    if !op.is_unsigned_ld() {
+                        match sz {
+                            2 => rd = (rd as u16) as i16 as isize as usize,
+                            4 => rd = (rd as u32) as i32 as isize as usize,
+                            8 => rd = rd,
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+                cx.era += 4;
+            }
+            if cx.era == pc {
+                panic!(
+                    "Failed to execute the command. Bad Instruction: {}, PC:{}",
+                    unsafe { *(cx.era as *const u32) },
+                    pc
+                );
+            }
+        }
         _ => {
             panic!(
                 "Unhandled exception: {:?}, era: {:#x}, bad instruction: {:#x}",
@@ -150,6 +204,132 @@ pub fn trap_handler(cx: &mut TrapContext) {
 }
 
 #[no_mangle]
-pub fn kernel_trap_handler(_cx: &mut TrapContext) {
-    todo!()
+pub fn kernel_trap_handler(cx: &mut TrapContext) {
+    let cause = register::EStat::read().cause();
+    let sub_code = EStat::read().exception_sub_code();
+    match cause {
+        Trap::TLBReFill => {
+            println!(
+                "[trap_handler] {:?}\n\
+                 [trap_handler] {:?}\n\
+                 [trap_handler] {:?}\n\
+                 [trap_handler] {:?}\n\
+                 [trap_handler] {:?}\n\
+                 [trap_handler] {:?}\n\
+                 [trap_handler] {:?}",
+                CrMd::read(),
+                TLBRERA::read(),
+                TLBRBadV::read(),
+                TLBRPrMd::read(),
+                PGD::read(),
+                PWCL::read(),
+                PWCH::read()
+            );
+        }
+        Trap::Exception(Exception::AddressNotAligned) => {
+            let pc = cx.era;
+            loop {
+                let ins = Instruction::from(pc as *const Instruction);
+                let op = ins.get_op_code();
+                // 解析op_code
+                if op.is_err() {
+                    break;
+                }
+                let op = op.unwrap();
+                let addr = BadV::read().get_vaddr();
+                let sz = op.get_size();
+                let is_aligned: bool = addr % sz == 0;
+                if is_aligned {
+                    break;
+                }
+                assert!([2, 4, 8].contains(&sz));
+                // 手动模拟未对齐的内存访问
+                if op.is_store() { // 存储操作
+                    let rd_num = ins.get_rd_num();
+                    let mut rd = if rd_num != 0 { cx.r[rd_num] } else { 0 };
+                    for i in 0..sz {
+                        unsafe { ((addr + i) as *mut u8).write_unaligned(rd as u8) };
+                        rd >>= 8;
+                    }
+                } else { // 读取操作
+                    let mut rd = 0;
+                    for i in (0..sz).rev() {
+                        rd <<= 8;
+                        let read_byte =
+                            (unsafe { ((addr + i) as *mut u8).read_unaligned() } as usize);
+                        rd |= read_byte;
+                        //debug!("{:#x}, {:#x}", rd, read_byte);
+                    }
+                    if !op.is_unsigned_ld() {
+                        match sz {
+                            2 => rd = (rd as u16) as i16 as isize as usize,
+                            4 => rd = (rd as u32) as i32 as isize as usize,
+                            8 => rd = rd,
+                            _ => unreachable!(),
+                        }
+                    }
+                    let rd_num = ins.get_rd_num();
+                    if rd_num != 0 {
+                        cx.r[rd_num] = rd;
+                    }
+                }
+                cx.era += 4;
+                break;
+            }
+            if cx.era == pc {
+                panic!(
+                    "Failed to execute the command. Bad Instruction: {}, PC:{}",
+                    unsafe { *(cx.era as *const u32) },
+                    pc
+                );
+            }
+            return;
+        }
+        _ => {}
+    }
+    panic!(
+        "a trap {:?} from kernel! bad addr = {:#x}, bad instruction = {:#x}, pc:{:#x}, (subcode:{}), PGDH: {:?}, PGDL: {:?}, {}",
+        cause,
+        get_bad_addr(),
+        get_bad_instruction(),
+        get_bad_ins_addr(),
+        sub_code,
+        PGDH::read(),
+        PGDL::read(),
+        if let Trap::Exception(ty) = cause {
+            match ty {
+                Exception::AddressError => match sub_code {
+                    0 => "ADdress error Exception for Fetching instructions",
+                    1 => "ADdress error Exception for Memory access instructions",
+                    _ => "Unknown",
+                },
+                _ => "",
+            }
+        } else {
+            ""
+        }
+    );
+}
+
+pub fn get_exception_cause() -> Trap {
+    register::EStat::read().cause()
+}
+
+pub fn get_bad_ins_addr() -> usize {
+    match get_exception_cause() {
+        Trap::Interrupt(_) | Trap::Exception(_) => register::ERA::read().get_pc(),
+        Trap::TLBReFill => register::TLBRERA::read().get_pc(),
+        Trap::MachineError(_) => register::MErrEra::read().get_pc(),
+        Trap::Unknown => 0,
+    }
+}
+pub fn get_bad_addr() -> usize {
+    match get_exception_cause() {
+        Trap::Exception(_) => register::BadV::read().get_vaddr(),
+        Trap::TLBReFill => register::TLBRBadV::read().get_vaddr(),
+        _ => 0,
+    }
+}
+pub fn get_bad_instruction() -> usize {
+    register::BadI::read().get_inst()
 }

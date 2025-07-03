@@ -31,6 +31,7 @@ use crate::{
     },
     utils::{c_str_to_string, extract_cstrings},
 };
+use alloc::string::String;
 use alloc::task;
 use alloc::{sync::Arc, vec};
 use bitflags::bitflags;
@@ -223,6 +224,7 @@ pub fn sys_clone(
 
 pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> SyscallRet {
     let path = c_str_to_string(path)?;
+
     // 过滤掉一些不必要的测试
     // if path.starts_with("ltp/testcases/bin/") {
     //     if path.ends_with(".sh") {

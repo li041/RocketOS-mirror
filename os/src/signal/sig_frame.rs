@@ -147,7 +147,7 @@ pub struct LinuxSigInfo {
     pub si_errno: i32,
     pub si_code: i32,
     pub si_trapno: i32,
-    pub si_pid: i32, // 发送信号的进程ID
+    pub si_pid: i32,     // 发送信号的进程ID
     pub _pad: [i32; 27], // 填充以对齐
 }
 

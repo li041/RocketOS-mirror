@@ -2,6 +2,7 @@
 use core::{arch::asm, iter::Map, mem, ops::Range, usize};
 
 use super::{address::StepByOne, area::MapArea, shm::ShmSegment, VPNRange};
+use crate::drivers::block::ramdisk::{RAMDISK_BASE, RAMDISK_SIZE};
 use crate::drivers::get_dev_tree_size;
 use crate::fs::file;
 use crate::signal::Sig;
@@ -135,6 +136,7 @@ impl MemorySet {
         }
     }
 
+    #[cfg(target_arch = "riscv64")]
     pub fn new_kernel() -> Self {
         let mut memory_set = Self::new_bare();
 
@@ -289,13 +291,21 @@ impl MemorySet {
         }
         #[cfg(target_arch = "riscv64")]
         {
-            let dev_tree_size = get_dev_tree_size(0xbfe00000 as usize);
+            use crate::arch::config::DTB_BASE;
+            let dtb_addr = match *DTB_BASE.lock() {
+                Some(base) => base,
+                None => {
+                    // 如果未初始化，返回一个错误值，或采取其他适当的错误处理
+                    panic!("dtb base address not initialized");
+                }
+            };
+            let dev_tree_size = get_dev_tree_size(dtb_addr);
             log::error!("[Dev_tree] size is {}", dev_tree_size);
             memory_set.push_with_offset(
                 MapArea::new(
                     VPNRange::new(
-                        VirtAddr::from(KERNEL_BASE + 0xbfe00000).floor(),
-                        VirtAddr::from(KERNEL_BASE + 0xbfe00000 + dev_tree_size).ceil(),
+                        VirtAddr::from(KERNEL_BASE + dtb_addr).floor(),
+                        VirtAddr::from(KERNEL_BASE + dtb_addr + dev_tree_size).ceil(),
                     ),
                     MapType::Linear,
                     MapPermission::R | MapPermission::W,
@@ -306,6 +316,28 @@ impl MemorySet {
                 None,
                 0,
             );
+        }
+        #[cfg(feature = "vf2")]
+        {
+            log::trace!("mapping ramdisk region");
+            for pair in MMIO {
+                memory_set.push_with_offset(
+                    MapArea::new(
+                        VPNRange::new(
+                            VirtAddr::from(RAMDISK_BASE + KERNEL_BASE).floor(),
+                            VirtAddr::from(RAMDISK_BASE + RAMDISK_SIZE + KERNEL_BASE).ceil(),
+                        ),
+                        MapType::Linear,
+                        MapPermission::R | MapPermission::W,
+                        // MapPermission::R | MapPermission::W | MapPermission::A | MapPermission::D,
+                        None,
+                        0,
+                        false,
+                    ),
+                    None,
+                    0,
+                );
+            }
         }
         #[cfg(target_arch = "riscv64")]
         {
@@ -320,6 +352,11 @@ impl MemorySet {
             *pte = PageTableEntry::new(kstack_second_level_frame.ppn, PTEFlags::V);
         }
         log::trace!("mapping complete!");
+        memory_set
+    }
+    #[cfg(target_arch = "loongarch64")]
+    pub fn new_kernel() -> Self {
+        let memory_set = Self::new_bare();
         memory_set
     }
 
@@ -1523,43 +1560,6 @@ impl MemorySet {
 
 /// MemorySet检查的方法
 impl MemorySet {
-    // pub fn check_writable_vpn_range(&self, vpn_range: VPNRange) -> SyscallRet {
-    //     let mut vpn = vpn_range.get_start();
-    //     let end_vpn = vpn_range.get_end();
-
-    //     while vpn < end_vpn {
-    //         let mut found = false;
-
-    //         for (_, area) in self.areas.iter() {
-    //             if area.vpn_range.contains_vpn(vpn) {
-    //                 found = true;
-    //                 if area.map_perm.contains(MapPermission::W)
-    //                     || area.map_perm.contains(MapPermission::COW)
-    //                 {
-    //                     break;
-    //                 }
-    //                 log::warn!(
-    //                     "[check_writable_vpn_range] vpn {:#x} not writable nor COW",
-    //                     vpn.0
-    //                 );
-    //                 self.page_table.dump_all_user_mapping();
-    //                 return Err(Errno::EFAULT);
-    //             }
-    //         }
-
-    //         if !found {
-    //             log::error!(
-    //                 "[check_writable_vpn_range] vpn {:#x} not mapped in any area",
-    //                 vpn.0
-    //             );
-    //             return Err(Errno::EFAULT);
-    //         }
-
-    //         vpn.step();
-    //     }
-
-    //     Ok(0)
-    // }
     pub fn check_writable_vpn_range(&self, vpn_range: VPNRange) -> SyscallRet {
         log::trace!("[check_writable_vpn_range]");
         let mut current_vpn = vpn_range.get_start();
@@ -1853,6 +1853,11 @@ impl MemorySet {
                         }
                     } else if !pte.is_valid() {
                         // === 懒分配处理 ===
+                        log::info!(
+                            "[pre_handle_cow_and_lazy_alloc] lazy allocation area, vpn: {:#x}, pte: {:#x?}",
+                            vpn.0,
+                            pte
+                        );
                         if let Some((_, area)) = self.areas.range_mut(..=vpn).next_back() {
                             if area.vpn_range.contains_vpn(vpn) {
                                 let offset = area.offset
@@ -1861,10 +1866,31 @@ impl MemorySet {
                                     if let Some(page) =
                                         area.backend_file.as_ref().unwrap().clone().get_page(offset)
                                     {
-                                        let pte_flags = PTEFlags::from(area.map_perm);
-                                        let ppn = page.ppn();
-                                        *pte = PageTableEntry::new(ppn, pte_flags);
-                                        area.pages.insert(vpn, page);
+                                        let mut pte_flags = PTEFlags::from(area.map_perm);
+                                        if pte_flags.contains(PTEFlags::COW) {
+                                            // 如果是COW, 则需要分配新的页
+                                            let page =
+                                                Arc::new(Page::new_framed(Some(page.get_ref(0))));
+                                            pte_flags.remove(PTEFlags::COW);
+                                            pte_flags.insert(PTEFlags::W);
+                                            #[cfg(target_arch = "loongarch64")]
+                                            pte_flags.insert(PTEFlags::D);
+                                            log::warn!(
+                                                "[pre_handle_cow_and_lazy_alloc] lazy alloc filebe, vpn: {:#x}, ppn: {:#x}",
+                                                vpn.0,
+                                                page.ppn().0
+                                            );
+                                            *pte = PageTableEntry::new(
+                                                page.ppn(),
+                                                pte_flags | PTEFlags::V,
+                                            );
+                                            area.pages.insert(vpn, page);
+                                        } else {
+                                            let ppn = page.ppn();
+                                            *pte =
+                                                PageTableEntry::new(ppn, pte_flags | PTEFlags::V);
+                                            area.pages.insert(vpn, page);
+                                        }
                                     } else {
                                         return Err(Errno::EFAULT);
                                     }
@@ -1876,7 +1902,7 @@ impl MemorySet {
                                     map_perm.insert(MapPermission::W);
                                     let pte_flags = PTEFlags::from(map_perm);
                                     let ppn = page.ppn();
-                                    *pte = PageTableEntry::new(ppn, pte_flags);
+                                    *pte = PageTableEntry::new(ppn, pte_flags | PTEFlags::V);
                                     area.pages.insert(vpn, Arc::new(page));
                                 }
                                 unsafe {
@@ -1922,14 +1948,6 @@ impl MemorySet {
                     pte,
                     current_task().tid()
                 );
-                if va.0 == 0x97020 {
-                    log::error!(
-                        "[handle_recoverable_page_fault] COW: {:#x}, pte: {:#x?}, tid: {:#x}",
-                        va.0,
-                        pte,
-                        current_task().tid()
-                    );
-                }
                 // 1. fork COW area
                 // 如果refcnt == 1, 则直接修改pte, 否则, 分配新的frame, 修改pte, 更新MemorySet
                 // debug!("handle cow page fault(cow), vpn {:#x}", vpn.0);

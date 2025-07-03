@@ -81,16 +81,16 @@ pub struct Task {
 
     // 变量
     // 基本变量
-    tid: RwLock<TidHandle>,                                 // 线程id
-    tgid: AtomicUsize,                                      // 线程组id
+    tid: RwLock<TidHandle>,                         // 线程id
+    tgid: AtomicUsize,                              // 线程组id
     tid_address: Mutex<TidAddress>,                 // 线程id地址
-    status: Mutex<TaskStatus>,                              // 任务状态
-    time_stat: SyncUnsafeCell<TimeStat>,                    // 任务时间统计
+    status: Mutex<TaskStatus>,                      // 任务状态
+    time_stat: SyncUnsafeCell<TimeStat>,            // 任务时间统计
     parent: Arc<Mutex<Option<Weak<Task>>>>,         // 父任务
     children: Arc<Mutex<BTreeMap<Tid, Arc<Task>>>>, // 子任务
     thread_group: Arc<Mutex<ThreadGroup>>,          // 线程组
-    exit_code: AtomicI32,                                   // 退出码
-    exe_path: Arc<RwLock<String>>,                          // 执行路径
+    exit_code: AtomicI32,                           // 退出码
+    exe_path: Arc<RwLock<String>>,                  // 执行路径
 
     // 内存管理
     // 包括System V shm管理
@@ -103,12 +103,12 @@ pub struct Task {
     pwd: Arc<Mutex<Arc<Path>>>,
     umask: AtomicU16, // 文件权限掩码
     // 信号处理
-    sig_pending: Mutex<SigPending>,      // 待处理信号
-    sig_handler: Arc<Mutex<SigHandler>>, // 信号处理函数
-    sig_stack: Mutex<Option<SignalStack>>, // 额外信号栈
-    itimerval: Arc<RwLock<[ITimerVal; 3]>>,      // 定时器
-    rlimit: Arc<RwLock<[RLimit; 16]>>,           // 资源限制
-    cpu_mask: Mutex<CpuMask>,            // CPU掩码
+    sig_pending: Mutex<SigPending>,         // 待处理信号
+    sig_handler: Arc<Mutex<SigHandler>>,    // 信号处理函数
+    sig_stack: Mutex<Option<SignalStack>>,  // 额外信号栈
+    itimerval: Arc<RwLock<[ITimerVal; 3]>>, // 定时器
+    rlimit: Arc<RwLock<[RLimit; 16]>>,      // 资源限制
+    cpu_mask: Mutex<CpuMask>,               // CPU掩码
     // 权限设置
     pgid: AtomicUsize, // 进程组id
     uid: AtomicU32,    // 用户id
@@ -141,8 +141,11 @@ impl Drop for Task {
 
 impl Task {
     // used by idle task
-    pub fn zero_init() -> Self {
-        Self {
+    pub fn zero_init() -> Arc<Self> {
+        println!("[Task::zero_init] create idle task");
+        let sig_handler = Arc::new(Mutex::new(SigHandler::new()));
+        println!("after sig_handler init");
+        let task = Arc::new(Self {
             kstack: KernelStack(0),
             tid: RwLock::new(TidHandle(0)),
             tgid: AtomicUsize::new(0),
@@ -161,7 +164,7 @@ impl Task {
             pwd: Arc::new(Mutex::new(Path::zero_init())),
             umask: AtomicU16::new(0),
             sig_pending: Mutex::new(SigPending::new()),
-            sig_handler: Arc::new(Mutex::new(SigHandler::new())),
+            sig_handler,
             sig_stack: Mutex::new(None),
             itimerval: Arc::new(RwLock::new([ITimerVal::default(); 3])),
             rlimit: Arc::new(RwLock::new([RLimit::default(); RLIM_NLIMITS])),
@@ -176,7 +179,9 @@ impl Task {
             sgid: AtomicU32::new(0),
             fsgid: AtomicU32::new(0),
             sup_groups: RwLock::new(Vec::new()),
-        }
+        });
+        println!("Task::zero_init complete");
+        task
     }
 
     /// 初始化地址空间, 将 `TrapContext` 与 `TaskContext` 压入内核栈中
@@ -205,6 +210,11 @@ impl Task {
         kstack -= core::mem::size_of::<TaskContext>();
         let task_cx_ptr = kstack as *mut TaskContext;
         // 创建进程实体
+        let memory_set = RwLock::new(Arc::new(RwLock::new(memory_set)));
+        let root = Arc::new(Mutex::new(root_path.clone()));
+        let pwd = Arc::new(Mutex::new(root_path));
+        let exe_path = Arc::new(RwLock::new(String::new()));
+
         let task = Arc::new(Task {
             kstack: KernelStack(kstack),
             tid: RwLock::new(tid),
@@ -217,12 +227,12 @@ impl Task {
             children: Arc::new(Mutex::new(BTreeMap::new())),
             thread_group: Arc::new(Mutex::new(ThreadGroup::new())),
             exit_code: AtomicI32::new(0),
-            exe_path: Arc::new(RwLock::new(String::from("/initproc"))),
-            memory_set: RwLock::new(Arc::new(RwLock::new(memory_set))),
+            exe_path,
+            memory_set,
             robust_list_head: AtomicUsize::new(0),
             fd_table: Mutex::new(FdTable::new()),
-            root: Arc::new(Mutex::new(root_path.clone())),
-            pwd: Arc::new(Mutex::new(root_path)),
+            root,
+            pwd,
             umask: AtomicU16::new(S_IWGRP | S_IWOTH), // 默认umask为022
             sig_pending: Mutex::new(SigPending::new()),
             sig_handler: Arc::new(Mutex::new(SigHandler::new())),
@@ -240,6 +250,7 @@ impl Task {
             sgid,
             fsgid,
             sup_groups,
+            //memory_set: RwLock::new(Arc::new(RwLock::new(memory_set))),
         });
         // 向线程组中添加该进程
         task.thread_group
@@ -617,8 +628,6 @@ impl Task {
         memory_set.activate();
         // 更新exe_path
         *self.exe_path.write() = exe_path.clone();
-        // 6.11 Debug
-        log::error!("[kernel_execve] task{} exe_path: {}", self.tid(), exe_path);
 
         #[cfg(target_arch = "loongarch64")]
         memory_set.push_with_offset(
@@ -1737,6 +1746,7 @@ pub struct ThreadGroup {
 
 impl ThreadGroup {
     pub fn new() -> Self {
+        log::debug!("[ThreadGroup:new]");
         Self {
             member: BTreeMap::new(),
         }

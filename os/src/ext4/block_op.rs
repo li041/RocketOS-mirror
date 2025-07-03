@@ -439,12 +439,18 @@ impl<'a> Ext4Bitmap<'a> {
     /// 注意: inode_num从1开始, 而bitmap的索引从0开始, bit_index = inode_num - 1
     /// 注意: inode_bitmap_size的单位是byte
     pub fn alloc(&mut self, inode_bitmap_size: usize) -> Option<usize> {
+        log::info!(
+            "[Ext4Bitmap::alloc] inode_bitmap_size: {}, bitmap length: {}",
+            inode_bitmap_size,
+            self.bitmap.len()
+        );
         // 逐字节处理, 加速alloc过程
-        for (i, byte) in self.bitmap.iter_mut().enumerate() {
-            if *byte != 0xff {
+        for (i, byte_ptr) in self.bitmap.iter_mut().enumerate() {
+            let byte = *byte_ptr;
+            if byte != 0xff {
                 for j in 0..8 {
-                    if (*byte & (1 << j)) == 0 {
-                        *byte |= 1 << j;
+                    if (byte & (1 << j)) == 0 {
+                        *byte_ptr |= 1 << j;
                         if i <= inode_bitmap_size {
                             // 这里加1是因为inode_num从1开始
                             return Some(i * 8 + j + 1);
@@ -591,6 +597,53 @@ impl<'a> Ext4ExtentBlock<'a> {
 
 impl<'a> Ext4ExtentBlock<'a> {
     // 递归查找
+    #[cfg(feature = "la2000")]
+    pub fn lookup_extent(
+        &self,
+        logical_block: u32,
+        block_device: Arc<dyn BlockDevice>,
+        ext4_block_size: usize,
+    ) -> Ext4Extent {
+        let header = self.extent_header();
+        if header.depth == 0 {
+            // 叶子节点
+            let extents = unsafe {
+                core::slice::from_raw_parts(
+                    self.block.as_ptr().add(12) as *const Ext4Extent,
+                    header.entries as usize,
+                )
+            };
+            for extent in extents {
+                if logical_block >= extent.logical_block
+                    && logical_block < extent.logical_block + extent.len as u32
+                {
+                    // return Some((extent.physical_start_block() as usize, extent.len as usize));
+                    return *extent;
+                }
+            }
+            return Ext4Extent::default(); // 没有找到, 返回默认值
+        } else {
+            // 索引节点
+            let idxs = unsafe {
+                core::slice::from_raw_parts(
+                    self.block.as_ptr().add(12) as *const Ext4ExtentIdx,
+                    header.entries as usize,
+                )
+            };
+            if let Some(idx) = idxs.iter().find(|idx| logical_block >= idx.block) {
+                let block_num = idx.physical_leaf_block();
+                return Ext4ExtentBlock::new(
+                    get_block_cache(block_num, block_device.clone(), ext4_block_size)
+                        .lock()
+                        .get_mut(0),
+                )
+                .lookup_extent(logical_block, block_device, ext4_block_size);
+            } else {
+                return Ext4Extent::default(); // 没有找到, 返回默认值
+            }
+        }
+    }
+    #[cfg(not(feature = "la2000"))]
     pub fn lookup_extent(
         &self,
         logical_block: u32,
@@ -610,6 +663,7 @@ impl<'a> Ext4ExtentBlock<'a> {
                 if logical_block >= extent.logical_block
                     && logical_block < extent.logical_block + extent.len as u32
                 {
+                    // return Some((extent.physical_start_block() as usize, extent.len as usize));
                     return Some(*extent);
                 }
             }

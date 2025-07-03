@@ -179,6 +179,7 @@ pub fn yield_current_task() {
             "**********************************  task {} start **********************************",
             next_task.tid()
         );
+
         // 获得下一个任务的内核栈
         // 可以保证`Ready`的任务`Task`中的内核栈与实际运行的sp保持一致
         let next_task_kernel_stack = next_task.kstack();

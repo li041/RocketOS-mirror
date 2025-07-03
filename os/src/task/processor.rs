@@ -11,7 +11,7 @@ use crate::arch::switch;
 #[cfg(target_arch = "riscv64")]
 lazy_static! {
     pub static ref IDLE_TASK: Arc<Task> = {
-        let idle_task = Arc::new(Task::zero_init());
+        let idle_task = Task::zero_init();
         // 将tp寄存器指向idle_task
         unsafe {
             // 注意这里需要对Arc指针先解引用再取`IDLE_TASK`地址
@@ -26,7 +26,7 @@ lazy_static! {
 #[cfg(target_arch = "loongarch64")]
 lazy_static! {
     pub static ref IDLE_TASK: Arc<Task> = {
-        let idle_task = Arc::new(Task::zero_init());
+        let idle_task = Task::zero_init();
         // 将tp寄存器指向idle_task
         unsafe {
             // 注意这里需要对Arc指针先解引用再取`IDLE_TASK`地址
@@ -80,6 +80,7 @@ pub fn run_tasks() {
 
 /// 获取当前任务
 pub fn current_task() -> Arc<Task> {
+    log::trace!("current_task");
     PROCESSOR.read().current_task()
 }
 

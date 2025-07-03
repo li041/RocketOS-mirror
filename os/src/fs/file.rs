@@ -339,8 +339,6 @@ impl FileOp for File {
                         // 没有数据, 继续查找下一个页
                         page_aligned_offset += PAGE_SIZE;
                     }
-                    // 6.7 Debug
-                    log::warn!("SeekData: found data at offset: {}", inner.offset);
                 }
                 Whence::SeekHole => {
                     // 一直get_page直到找到hole

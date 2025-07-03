@@ -72,7 +72,7 @@ __trap_from_user:
     # 从kernel_tp中载入内核tp
     ld.d $r2, $sp, 35*8
     # 设置例外入口地址
-    la $t0, __trap_from_user
+    la $t0, __trap_from_kernel
     csrwr $t0, CSR_EENTRY
     bl trap_handler
     b __return_to_user
@@ -115,6 +115,7 @@ __return_to_user:
 
 .align 12
 __trap_from_kernel:
+    # 不涉及到tp的改变，34*8字节足够
     addi.d $sp, $sp, -34*8
     # 保存通用寄存器
     st.d $r1, $sp, 1*8
@@ -135,7 +136,11 @@ __trap_from_kernel:
 
     # 保存sp
     st.d $r3, $sp, 3*8 
+    # 通过a0传递cx
+    add.d $a0, $sp, $zero
     bl kernel_trap_handler
+
+    ld.d $r3, $sp, 3*8
     # 内核态的trap_handler返回时, 恢复内核态的上下文
     ld.d $t0, $sp, 32*8
     ld.d $t1, $sp, 33*8
@@ -144,8 +149,9 @@ __trap_from_kernel:
     csrwr $t1, CSR_ERA
     # sp
     ld.d $r1, $sp, 1*8
-    .set n, 3
-    .rept 29
+    ld.d $r2, $sp, 2*8
+    .set n, 4
+    .rept 28
         LOAD_GP %n
         .set n, n+1
     .endr

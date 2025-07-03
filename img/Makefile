@@ -1,6 +1,7 @@
 IMG ?= pre2024
 # ARCH ?= loongarch64
 ARCH ?= riscv64
+COUNT ?= 4096
 LIBC ?= musl
 
 # Cross-compiler prefixes
@@ -39,13 +40,13 @@ endif
 
 all:
 	-@rm -f disk.img disk.img
-	dd if=/dev/zero of=disk.img count=4096 bs=1M
+	dd if=/dev/zero of=disk.img count=$(COUNT) bs=1M
 	mkfs.ext4 disk.img 
 	mkdir -p mnt
 	mount disk.img mnt
 	cp -r ./custom/* mnt
 	umount mnt
-	dd if=/dev/zero of=disk-la.img count=4096 bs=1M
+	dd if=/dev/zero of=disk-la.img count=$(COUNT) bs=1M
 	mkfs.ext4 disk-la.img 
 	mkdir -p mnt
 	mount disk-la.img mnt
@@ -68,7 +69,7 @@ pre2025:
 
 init_img_2024:
 	-@rm -f $(EXT4_OUT)
-	dd if=/dev/zero of=$(EXT4_OUT) count=4096 bs=1M
+	dd if=/dev/zero of=$(EXT4_OUT) count=$(COUNT) bs=1M
 	mkfs.ext4 $(EXT4_OUT)
 	mkdir -p mnt_temp
 	sudo mount $(EXT4_OUT) mnt_temp
@@ -81,7 +82,7 @@ init_img_2024:
 
 init_img_2025:
 	-@rm -f $(EXT4_OUT)
-	dd if=/dev/zero of=$(EXT4_OUT) count=4096 bs=1M
+	dd if=/dev/zero of=$(EXT4_OUT) count=$(COUNT) bs=1M
 	mkfs.ext4 $(EXT4_OUT)
 	mkdir -p mnt_temp
 	sudo mount $(EXT4_OUT) mnt_temp
@@ -94,7 +95,7 @@ init_img_2025:
 
 custom:
 	-@rm -f $(EXT4_OUT)
-	dd if=/dev/zero of=$(EXT4_OUT) count=4096 bs=1M
+	dd if=/dev/zero of=$(EXT4_OUT) count=$(COUNT) bs=1M
 	mkfs.ext4 $(EXT4_OUT)
 	mkdir -p mnt
 	sudo mount $(EXT4_OUT) mnt

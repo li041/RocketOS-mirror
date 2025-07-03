@@ -20,6 +20,9 @@ impl Log for SimpleLogger {
             Level::Debug => 32, // Green
             Level::Trace => 90, // BrightBlack
         };
+        #[cfg(feature = "board")]
+        println!("[{:>5}] {}", record.level(), record.args(),);
+        #[cfg(feature = "virt")]
         println!(
             "\u{1B}[{}m[{:>5}] {}\u{1B}[0m",
             color,
@@ -42,10 +45,10 @@ pub fn init() {
         Some("trace") => LevelFilter::Trace,
         _ => LevelFilter::Off,
     });
-    println!(
-        "[kernel] logger initialized with LOG={:?}",
-        option_env!("LOG")
-    );
+    // println!(
+    //     "[kernel] logger initialized with LOG={:?}",
+    //     option_env!("LOG")
+    // );
 }
 
 #[cfg(test)]

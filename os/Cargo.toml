@@ -9,10 +9,13 @@ panic = "abort"
 [features]
 default = []
 test = []
-la2000 = []
+virt = []
+vf2 = ["board"]
+la2000 = ["board"]
 
+board = []
 [dependencies]
-buddy_system_allocator = "0.11.0"
+buddy_system_allocator = "0.8.0"
 lazy_static = { version = "1.5.0", features = ["spin_no_std"] }
 log = "0.4"
 xmas-elf = "0.7.0"
@@ -60,3 +63,4 @@ riscv = { git = "https://github.com/rcore-os/riscv", features = ["inline-asm"] }
 
 [profile.release]
 debug = true
+panic = "abort"

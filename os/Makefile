@@ -11,7 +11,7 @@
 # ARCH ?= loongarch64
 ARCH ?= riscv64
 MODE := debug
-FEATURES := default
+FEATURES ?= board
 #ip option not unspecified
 IP ?= 10.0.2.15
 GW ?= 10.0.2.2
@@ -115,6 +115,13 @@ gdbclient:
 # 	cargo build $(MODE_ARG) --features $(FEATURES) --offline 
 # 	@$(OBJCOPY) $(KERNEL_ELF) --strip-all -O binary $(KERNEL_BIN)
 
+build-vf2:
+	@rm -rf .cargo
+	@mkdir .cargo
+	@cp cargo/config_vf2.toml .cargo/config.toml
+	USER_TARGET_PATH=$(USER_TARGET_PATH) LOG=$(LOG) cargo build $(MODE_ARG) --features vf2 --target $(TARGET)
+	@$(OBJCOPY) $(KERNEL_ELF) --strip-all -O binary $(KERNEL_BIN)
+
 build: move-cargo
 	USER_TARGET_PATH=$(USER_TARGET_PATH) LOG=$(LOG) cargo build $(MODE_ARG) --features $(FEATURES) --target $(TARGET)
 	@$(OBJCOPY) $(KERNEL_ELF) --strip-all -O binary $(KERNEL_BIN)
@@ -136,6 +143,11 @@ move-cargo:
 make-user:
 	@cd ../user && make ARCH=$(ARCH)
 	@./build
+
+zImage: build-vf2
+	gzip -f $(KERNEL_BIN)
+	mkimage -A riscv -O linux -C gzip -T kernel -a 0x40200000 -e 0x40200000 -n RocketOS -d $(KERNEL_BIN).gz zImage
+	sudo cp zImage /srv/tftp/
 
 all: move-cargo make-user build-offline move-bin
 
