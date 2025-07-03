@@ -66,6 +66,7 @@ ifeq ($(ARCH), riscv64)
                     -kernel $(KERNEL_BIN) \
                     -nographic \
                     -smp 2\
+                    -device VGA \
                     -bios default\
                     -drive file=$(FS),if=none,format=raw,id=x0 \
                     -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0\

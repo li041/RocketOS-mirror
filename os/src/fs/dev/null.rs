@@ -72,6 +72,17 @@ impl InodeOp for NullInode {
         kstat.blocks = 0;
         kstat
     }
+    fn getxattr(&self, _key: &str) -> Result<alloc::vec::Vec<u8>, Errno> {
+        Err(Errno::ENODATA) // /dev/null没有扩展属性
+    }
+    fn setxattr(
+        &self,
+        _key: alloc::string::String,
+        _value: alloc::vec::Vec<u8>,
+        _flags: &crate::fs::uapi::SetXattrFlags,
+    ) -> SyscallRet {
+        Err(Errno::EPERM) // /dev/null不支持设置扩展属性
+    }
     fn get_resident_page_count(&self) -> usize {
         0
     }
@@ -173,5 +184,8 @@ impl FileOp for NullFile {
     }
     fn fsync(&self) -> SyscallRet {
         Err(Errno::ESPIPE)
+    }
+    fn fdatasync(&self) -> SyscallRet {
+        Err(Errno::EINVAL)
     }
 }

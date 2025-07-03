@@ -6,7 +6,7 @@ use crate::timer::TimeSpec;
 
 use super::dentry::Dentry;
 use super::kstat::Kstat;
-use super::uapi::{DevT, FallocFlags, RenameFlags};
+use super::uapi::{DevT, FallocFlags, RenameFlags, SetXattrFlags};
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -122,6 +122,18 @@ pub trait InodeOp: Any + Send + Sync {
         unimplemented!();
     }
     fn get_link(&self) -> String {
+        unimplemented!();
+    }
+    fn setxattr(&self, _key: String, _value: Vec<u8>, _flags: &SetXattrFlags) -> SyscallRet {
+        unimplemented!();
+    }
+    fn getxattr(&self, _key: &str) -> Result<Vec<u8>, Errno> {
+        unimplemented!();
+    }
+    fn listxattr(&self) -> Result<Vec<String>, Errno> {
+        unimplemented!();
+    }
+    fn removexattr(&self, _key: &str) -> SyscallRet {
         unimplemented!();
     }
     /* get/set属性方法 */

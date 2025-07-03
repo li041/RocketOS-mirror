@@ -619,7 +619,7 @@ fn create_file_from_dentry(
         S_IFBLK => {
             let (_major, id) = inode.get_devt();
             // /dev/loopX
-            assert!(dentry.absolute_path == format!("/dev/loop{}", id));
+            // assert!(dentry.absolute_path == format!("/dev/loop{}", id));
             // 这里的id是从0开始的
             let loop_device = get_loop_device(id as usize);
             if loop_device.is_none() {

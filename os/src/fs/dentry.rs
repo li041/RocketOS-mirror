@@ -12,7 +12,7 @@ use lazy_static::lazy_static;
 use spin::{Mutex, RwLock};
 
 use crate::{
-    ext4::inode::{S_IFREG, S_ISGID, S_ISUID},
+    ext4::inode::{S_IFMT, S_IFREG, S_ISGID, S_ISUID},
     syscall::errno::{Errno, SyscallRet},
     task::current_task,
     timer::TimeSpec,
@@ -200,7 +200,7 @@ pub fn chown(inode: &Arc<dyn InodeOp>, new_uid: u32, new_gid: u32) -> SyscallRet
     let task = current_task();
     let (euid, egid) = (task.fsuid(), task.fsgid());
     let mut i_mode = inode.get_mode();
-    let is_reg = i_mode & S_IFREG != 0;
+    let is_reg = i_mode & S_IFMT == S_IFREG; // 是否是常规文件
     log::info!(
         "[chown] euid: {}, egid: {}, new_uid: {}, new_gid: {}, i_mode: {:o}",
         euid,

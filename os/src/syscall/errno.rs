@@ -89,17 +89,19 @@ pub enum Errno {
     ENOTEMPTY = -39,
     /// 符号链接嵌套过深（可能形成环路）
     ELOOP = -40,
+    // 没有数据可读（如管道已读完）
+    ENODATA = -61,
     /// 对非套接字执行套接字操作
     ENOTSOCK = -88,
     /// 发送信息超过一次message最大内容
     EMSGSIZE = -90,
-    ENOPROTOOPT=-92,
+    ENOPROTOOPT = -92,
     ///EPROTONOSUPPORT表示不支持所选的套接字协议
-    EPROTONOSUPPORT=-93,
+    EPROTONOSUPPORT = -93,
     /// 操作不支持（如对普通文件调用套接字操作）
     EOPNOTSUPP = -95,
     // address family 不支持
-    EAFNOSUPPORT= -97,
+    EAFNOSUPPORT = -97,
     /// 套接字地址已在使用中（如端口被占用）
     EADDRINUSE = -98,
     /// 地址不可用（如绑定到不存在的 IP）

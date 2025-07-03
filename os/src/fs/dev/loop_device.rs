@@ -6,6 +6,7 @@ use crate::{
     arch::mm::{copy_from_user, copy_to_user},
     ext4::inode::{Ext4InodeDisk, S_IFCHR},
     fs::{
+        dentry::Dentry,
         file::{FileOp, OpenFlags},
         inode::InodeOp,
         kstat::Kstat,
@@ -69,6 +70,9 @@ pub fn get_loop_device(id: usize) -> Option<Arc<LoopDevice>> {
 const LOOP_CTL_GET_FREE: usize = 0x4c82;
 
 impl FileOp for LoopManager {
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
     fn ioctl(&self, op: usize, _arg_ptr: usize) -> SyscallRet {
         match op {
             LOOP_CTL_GET_FREE => {
@@ -120,7 +124,7 @@ impl LoopInfo {
 }
 
 pub struct LoopDevice {
-    path: Arc<Path>,
+    dentry: Arc<Dentry>,
     inode: Arc<dyn InodeOp>,
     flags: OpenFlags,
     device_id: u32,
@@ -129,9 +133,14 @@ pub struct LoopDevice {
 }
 
 impl LoopDevice {
-    pub fn new(path: Arc<Path>, inode: Arc<dyn InodeOp>, flags: OpenFlags, id: usize) -> Arc<Self> {
+    pub fn new(
+        dentry: Arc<Dentry>,
+        inode: Arc<dyn InodeOp>,
+        flags: OpenFlags,
+        id: usize,
+    ) -> Arc<Self> {
         Arc::new(Self {
-            path,
+            dentry,
             inode,
             flags,
             device_id: id as u32,
@@ -146,6 +155,9 @@ impl LoopDevice {
 }
 
 impl FileOp for LoopDevice {
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
     fn read(&self, buf: &mut [u8]) -> SyscallRet {
         let file = self.backend_file.lock();
         if let Some(f) = file.as_ref() {
@@ -222,6 +234,12 @@ impl FileOp for LoopDevice {
             _ => Err(Errno::EINVAL),
         }
     }
+    fn get_inode(&self) -> Arc<dyn InodeOp> {
+        self.inode.clone()
+    }
+    fn get_flags(&self) -> OpenFlags {
+        self.flags
+    }
     fn writable(&self) -> bool {
         // Loop设备通常是可写的
         true
@@ -271,6 +289,17 @@ impl InodeOp for LoopInode {
         kstat.nlink = 1;
         kstat.blocks = 0;
         kstat
+    }
+    fn getxattr(&self, _key: &str) -> Result<Vec<u8>, Errno> {
+        Err(Errno::ENODATA) // Loop设备没有扩展属性
+    }
+    fn setxattr(
+        &self,
+        _key: alloc::string::String,
+        _value: Vec<u8>,
+        _flags: &crate::fs::uapi::SetXattrFlags,
+    ) -> SyscallRet {
+        Err(Errno::EPERM) // Loop设备不支持设置扩展属性
     }
     fn get_resident_page_count(&self) -> usize {
         0
@@ -330,6 +359,9 @@ impl LoopControlFile {
 }
 
 impl FileOp for LoopControlFile {
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
     fn read(&self, buf: &mut [u8]) -> SyscallRet {
         Err(Errno::ENOSYS) // Loop control file does not support read
     }
