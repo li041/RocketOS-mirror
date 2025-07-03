@@ -14,7 +14,6 @@ use lazy_static::lazy_static;
 pub use old::{FileMeta, FileOld};
 
 pub mod dentry;
-pub mod dev;
 pub mod etc;
 pub mod fd_set;
 pub mod fdtable;
@@ -28,9 +27,22 @@ pub mod old;
 pub mod page_cache;
 pub mod path;
 pub mod pipe;
-pub mod proc;
 mod stdio;
 pub mod tmp;
+
+#[cfg(not(feature = "la2000"))]
+pub mod dev;
+#[cfg(feature = "la2000")]
+pub mod dev_la2000;
+#[cfg(feature = "la2000")]
+pub use dev_la2000 as dev;
+#[cfg(not(feature = "la2000"))]
+pub mod proc;
+#[cfg(feature = "la2000")]
+pub mod proc_la2000;
+#[cfg(feature = "la2000")]
+pub use proc_la2000 as proc;
+
 // pub mod tty;
 // pub mod fd_set;
 pub mod uapi;

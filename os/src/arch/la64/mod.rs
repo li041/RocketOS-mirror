@@ -68,6 +68,10 @@ pub fn bootstrap_init() {
         .set_dir4_base(0)
         .set_dir4_width(0)
         .write();
+    // 初始化tlb
+    unsafe {
+        core::arch::asm!("invtlb 0x0, $r0, $r0");
+    }
     log::error!("PWCL: {:?}", PWCL::read());
     log::error!("PWCH: {:?}", PWCH::read());
     // 输出配置寄存器信息

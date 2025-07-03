@@ -19,6 +19,9 @@ pub const KSTACK_PG_NUM_SHIFT: usize = 2usize.trailing_zeros() as usize;
 
 /// mm
 pub const KERNEL_STACK_SIZE: usize = PAGE_SIZE << KSTACK_PG_NUM_SHIFT;
+#[cfg(feature = "board")]
+pub const KERNEL_HEAP_SIZE: usize = PAGE_SIZE * 0x6000;
+#[cfg(feature = "virt")]
 pub const KERNEL_HEAP_SIZE: usize = PAGE_SIZE * 0x8000;
 pub const USER_MAX_VA: usize = 0x0000_003f_ffff_ffff; // 256GB
 /// 用户栈大小: 两页
@@ -34,7 +37,11 @@ pub const DL_INTERP_OFFSET: usize = 0x30_0000_0000;
 
 // 设备树地址
 // 设备树地址并没有通过a1传递, 查看hw/loongarch64/virt.h, 硬编码
+
+#[cfg(feature = "virt")]
 pub const DEVICE_TREE_ADDR: usize = 0x100000;
+#[cfg(feature = "board")]
+pub const DEVICE_TREE_ADDR: usize = 0x0ecce600;
 
 // 系统调用
 pub type SysResult<T> = Result<T, usize>;

@@ -29,7 +29,7 @@ use lazy_static::lazy_static;
 
 pub use context::TaskContext;
 pub use id::{info_allocator, IdAllocator};
-pub use kstack::get_stack_top_by_sp;
+pub use kstack::{get_stack_top_by_sp, KSTACK_TOP};
 pub use manager::{
     add_group, add_real_timer, dump_wait_queue, for_each_task, get_group, get_task, handle_timeout,
     new_group, remove_timer, unregister_task, update_real_timer, wait, wait_timeout, wakeup,

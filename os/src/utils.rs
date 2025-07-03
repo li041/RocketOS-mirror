@@ -57,7 +57,9 @@ pub fn c_str_to_string(ptr: *const u8) -> Result<String, Errno> {
     let vpn_range = VPNRange::new(start_vpn, end_vpn);
     let mut ptr = current_task().op_memory_set_mut(|memory_set| {
         match memory_set.translate_va_to_pa(VirtAddr::from(ptr as usize)) {
-            Some(pa) => return Ok(pa),
+            Some(pa) => {
+                return Ok(pa);
+            }
             None => {}
         };
         memory_set.check_valid_user_vpn_range(vpn_range, MapPermission::R)?;
@@ -76,7 +78,9 @@ pub fn c_str_to_string(ptr: *const u8) -> Result<String, Errno> {
     let mut ret = String::new();
     log::trace!("[c_str_to_string] convert ptr at {:#x} to string", ptr);
     loop {
-        let ch: u8 = unsafe { *(ptr as *const u8) };
+        // let ch: u8 = unsafe { *(ptr as *const u8) };
+        let ch: u8 = unsafe { ptr::read_volatile(ptr as *const u8) };
+
         if ch == 0 {
             break;
         }

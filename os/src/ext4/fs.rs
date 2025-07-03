@@ -77,7 +77,7 @@ impl Ext4FileSystem {
         // Todo: 没有考虑灵活块组的支持
         let inode_bitmap_size = self.super_block.inodes_per_group as usize / 8;
         log::info!(
-            "inode_bitmap_size: {}, inodes_per_group: {}",
+            "[Ext4FileSystem::alloc_inode]inode_bitmap_size: {}, inodes_per_group: {}",
             inode_bitmap_size,
             self.super_block.inodes_per_group
         );

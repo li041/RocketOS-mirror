@@ -62,7 +62,7 @@ impl IdAllocator {
     pub fn dealloc(&mut self, id: usize) {
         debug_assert!(id < self.next);
         //if !self.recycled.contains(&id) {
-            self.recycled.push(id);
+        self.recycled.push(id);
         //}
     }
 }

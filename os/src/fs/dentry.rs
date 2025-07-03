@@ -1,7 +1,7 @@
 use core::fmt::{Debug, Formatter};
 
 use alloc::{
-    collections::vec_deque::VecDeque,
+    collections::{btree_map::BTreeMap, vec_deque::VecDeque},
     format,
     string::{String, ToString},
     sync::{Arc, Weak},
@@ -300,7 +300,10 @@ pub struct DentryInner {
     pub inode: Option<Arc<dyn InodeOp>>,
     pub parent: Option<Arc<Dentry>>,
     // chrildren 是一个哈希表, 用于存储子目录/文件, name不是绝对路径
+    #[cfg(feature = "virt")]
     pub children: HashMap<String, Weak<Dentry>>,
+    #[cfg(feature = "board")]
+    pub children: BTreeMap<String, Weak<Dentry>>,
 }
 
 // impl Drop for Dentry {
@@ -319,7 +322,10 @@ impl DentryInner {
             inode: Some(inode),
             // parent: parent.map(|p| Arc::downgrade(&p)),
             parent,
+            #[cfg(feature = "virt")]
             children: HashMap::new(),
+            #[cfg(feature = "board")]
+            children: BTreeMap::new(),
         }
     }
     // 负目录项
@@ -328,7 +334,10 @@ impl DentryInner {
             inode: None,
             // parent: parent.map(|p| Arc::downgrade(&p)),
             parent,
+            #[cfg(feature = "virt")]
             children: HashMap::new(),
+            #[cfg(feature = "board")]
+            children: BTreeMap::new(),
         }
     }
 }
@@ -588,6 +597,9 @@ pub fn delete_dentry(dentry: Arc<Dentry>) {
 // 全局单例, 外层拿锁
 // 注意管理器中对于Dentry的管理应该是Weak
 pub struct DentryCache {
+    #[cfg(feature = "board")]
+    cache: RwLock<BTreeMap<String, Arc<Dentry>>>,
+    #[cfg(feature = "virt")]
     cache: RwLock<HashMap<String, Arc<Dentry>>>,
     capacity: usize,
 }
@@ -595,7 +607,10 @@ pub struct DentryCache {
 impl DentryCache {
     fn new(capacity: usize) -> Self {
         DentryCache {
+            #[cfg(feature = "virt")]
             cache: RwLock::new(HashMap::new()),
+            #[cfg(feature = "board")]
+            cache: RwLock::new(BTreeMap::new()),
             capacity,
         }
     }

@@ -1,12 +1,16 @@
 pub mod block_cache;
 pub mod block_dev;
+pub mod ramdisk;
 
 use block_dev::BlockDevice;
 
 use alloc::sync::Arc;
 use lazy_static::*;
 
+#[cfg(feature = "virt")]
 pub type BlockDeviceImpl = crate::arch::VirtIOBlock;
+#[cfg(feature="board")]
+pub type BlockDeviceImpl = crate::drivers::block::ramdisk::RamDisk;
 
 lazy_static! {
     pub static ref BLOCK_DEVICE: Arc<dyn BlockDevice> = Arc::new(BlockDeviceImpl::new());

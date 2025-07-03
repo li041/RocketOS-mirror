@@ -108,11 +108,15 @@ impl GroupDesc {
     ) -> Option<usize> {
         debug_assert!(
             inode_bitmap_size <= ext4_block_size,
-            "inode_bitmap_size: {}, ext4_block_size: {}",
+            "[GroupDesc::alloc_inode] inode_bitmap_size: {}, ext4_block_size: {}",
             inode_bitmap_size,
             ext4_block_size
         );
         let mut inner = self.inner.write();
+        log::info!(
+            "[GroupDesc::alloc_inode] free_inode_count: {}",
+            inner.free_inodes_count
+        );
         // 检查当前块组是否还有空闲的inode
         if inner.free_inodes_count > 0 {
             // 注意inode_bitmap的size = inodes_per_group / 8 byte

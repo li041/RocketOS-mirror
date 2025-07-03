@@ -1,3 +1,4 @@
+use alloc::vec::Vec;
 use bitflags::bitflags;
 
 use super::{Sig, SigSet, MAX_SIGNUM};
@@ -42,7 +43,6 @@ pub const SIG_IGN: usize = 1;
 
 // 处理操作
 #[derive(Copy, Clone, Debug, Default)]
-#[repr(C)]
 pub struct SigAction {
     pub sa_handler: usize,    // 信号处理函数指针
     pub flags: SigActionFlag, // 额外信息
@@ -53,12 +53,15 @@ pub struct SigAction {
 impl SigAction {
     pub fn new(sig: Sig) -> Self {
         let sa_handler = SIG_DFL; // 默认处理方式
-        Self {
+        let flags = SigActionFlag::default();
+        let mask = SigSet::empty(); // 默认不阻塞任何信号
+        let sig_action = Self {
             sa_handler,
-            flags: Default::default(),
+            flags,
             restorer: 0,
-            mask: SigSet::empty(),
-        }
+            mask,
+        };
+        sig_action
     }
 
     pub fn is_user(&self) -> bool {

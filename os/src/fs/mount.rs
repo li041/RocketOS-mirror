@@ -202,7 +202,6 @@ pub fn do_ext4_mount(block_device: Arc<dyn BlockDevice>) -> Arc<Path> {
     init_devfs(root_path.clone());
     init_procfs(root_path.clone());
     init_tmpfs(root_path.clone());
-
     root_path
 }
 

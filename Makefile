@@ -87,6 +87,10 @@ run:
 	@cd ./user && make build ARCH=$(ARCH) MODE=$(MODE)
 	@cd ./os && make run ARCH=$(ARCH) MODE=$(MODE)
 
+zImage:
+	@cd ./user && make build ARCH=$(ARCH) MODE=$(MODE)
+	@cd ./os && make zImage ARCH=$(ARCH) MODE=$(MODE)
+
 bench: 
 	@cd ./user && make build ARCH=$(ARCH) MODE=$(MODE)
 	@cd ./os && make bench ARCH=$(ARCH) MODE=$(MODE)

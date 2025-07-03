@@ -1,10 +1,11 @@
+use super::config::KERNEL_BASE;
 use crate::{
     arch::{boards::qemu::CLOCK_FREQ, sbi::set_timer},
+    mm::VirtAddr,
     timer::{StatxTimeStamp, TimeSpec, TimeVal, MSEC_PER_SEC, TICKS_PER_SEC, USEC_PER_SEC},
 };
 use riscv::register::time;
-
-use super::config::KERNEL_BASE;
+use spin::Mutex;
 
 impl TimeSpec {
     pub fn new_machine_time() -> Self {
@@ -15,6 +16,7 @@ impl TimeSpec {
             nsec: (current_time % 1000000) * 1000,
         }
     }
+    #[cfg(feature = "virt")]
     pub fn new_wall_time() -> Self {
         // new a time spec with machine time
         let current_time = read_rtc();
@@ -22,6 +24,17 @@ impl TimeSpec {
             sec: (current_time / NANOS_PER_SEC) as usize,
             nsec: (current_time % NANOS_PER_SEC) as usize,
         }
+    }
+    #[cfg(feature = "board")]
+    pub fn new_wall_time() -> Self {
+        let mut base_time = TimeSpec {
+            sec: 1_757_088_000,
+            nsec: 0,
+        };
+        let current_time = get_time_ns();
+        base_time.nsec += (current_time % 1_000_000_000);
+        base_time.sec += (current_time / 1_000_000_000) as usize;
+        base_time
     }
     pub fn from_nanos(nanos: usize) -> Self {
         let sec = nanos / 1_000_000_000;
@@ -88,11 +101,11 @@ pub fn set_next_trigger() {
     set_timer(get_time() + CLOCK_FREQ / TICKS_PER_SEC);
 }
 
-const GOLDFISH_RTC_BASE: usize = 0x10_1000;
+// const GOLDFISH_RTC_BASE: usize = 0x10_1000;
 const TIME_LOW: usize = 0x00;
 const TIME_HIGH: usize = 0x04;
 pub const NANOS_PER_SEC: u64 = 1_000_000_000;
-
+pub static GOLDFISH_RTC_BASE: Mutex<Option<usize>> = Mutex::new(None);
 /**
  * Goldfish RTC 寄存器布局
  * 实际返回的是纳秒
@@ -101,11 +114,22 @@ pub const NANOS_PER_SEC: u64 = 1_000_000_000;
  */
 /// 返回的是自Epoch以来的纳秒数
 pub fn read_rtc() -> u64 {
-    let low = unsafe {
-        core::ptr::read_volatile((KERNEL_BASE + GOLDFISH_RTC_BASE + TIME_LOW) as *const u32)
-    } as u64;
-    let high = unsafe {
-        core::ptr::read_volatile((KERNEL_BASE + GOLDFISH_RTC_BASE + TIME_HIGH) as *const u32)
-    } as u64;
+    // 锁定 Mutex，获取其中的值
+    let rtc_base = match *GOLDFISH_RTC_BASE.lock() {
+        Some(base) => base,
+        None => {
+            // 如果未初始化，返回一个错误值，或采取其他适当的错误处理
+            panic!("RTC base address not initialized");
+        }
+    };
+    log::error!("[read_rtc] GOLDFISH_RTC_BASE is {:?}", rtc_base);
+    // 读取低32位和高32位
+    let low = unsafe { core::ptr::read_volatile((KERNEL_BASE + rtc_base + TIME_LOW) as *const u32) }
+        as u64;
+    let high =
+        unsafe { core::ptr::read_volatile((KERNEL_BASE + rtc_base + TIME_HIGH) as *const u32) }
+            as u64;
+
+    // 返回合并后的64位时间戳
     (high << 32) | low
 }

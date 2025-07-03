@@ -147,7 +147,7 @@ impl Page {
             .collect()
     }
     /// fs_block_id和inner_offset用于回写block cache
-    pub fn new_inline(inode: Weak<dyn InodeOp>, inline_data: &[u8]) -> Self {
+    pub fn new_inline(inode: Weak<dyn InodeOp>, inline_data: &[u8]) -> Arc<Self> {
         unsafe {
             // let layout = Layout::from_size_align_unchecked(PAGE_SIZE, PAGE_SIZE);
             // let vaddr = alloc(layout);
@@ -157,13 +157,13 @@ impl Page {
             buf.fill(0); // 清空页
             let len_to_copy = inline_data.len();
             buf[..len_to_copy].copy_from_slice(inline_data);
-            return Self {
+            return Arc::new(Self {
                 vaddr: vaddr as usize,
                 page_kind: PageKind::Inline(RwLock::new(InlinePageInfo {
                     inode,
                     modified: false,
                 })),
-            };
+            });
         }
     }
 }
@@ -316,7 +316,6 @@ impl Page {
                 if let Some(inode) = inode {
                     if let Some(ext4_inode) = inode.as_any().downcast_ref::<Ext4Inode>() {
                         if guard.modified {
-                            // Debug 6.12: 死锁
                             let mut inner = ext4_inode.inner.write();
 
                             // assert!(inner.inode_on_disk.has_inline_data());

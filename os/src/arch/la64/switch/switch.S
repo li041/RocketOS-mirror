@@ -1,9 +1,9 @@
 .altmacro
 .macro SAVE_SN n
-    st.d $s\n, $a0, (\n+2)*8
+    st.d $s\n, $sp, (\n+2)*8
 .endm
 .macro LOAD_SN n
-    ld.d $s\n, $a1, (\n+2)*8
+    ld.d $s\n, $a0, (\n+2)*8
 .endm
     .section .text
     .globl __switch

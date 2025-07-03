@@ -6,6 +6,7 @@
 #![feature(sync_unsafe_cell)]
 #![feature(trait_upcasting)]
 #![feature(ip_from)]
+#![feature(allocator_api)]
 #![allow(static_mut_refs)]
 #![allow(non_snake_case)]
 #![allow(non_camel_case_types)]
@@ -62,8 +63,12 @@ fn clear_bss() {
         fn sbss();
         fn ebss();
     }
+    // unsafe {
+    //     ptr::write_bytes(sbss as *mut c_void, 0, ebss as usize - sbss as usize);
+    // }
     unsafe {
-        ptr::write_bytes(sbss as *mut c_void, 0, ebss as usize - sbss as usize);
+        core::slice::from_raw_parts_mut(sbss as usize as *mut u8, ebss as usize - sbss as usize)
+            .fill(0);
     }
 }
 
@@ -88,7 +93,7 @@ static DEBUG_FLAG: AtomicU8 = AtomicU8::new(0);
 #[no_mangle]
 #[cfg(target_arch = "riscv64")]
 pub fn rust_main(_hart_id: usize, dtb_address: usize) -> ! {
-    use crate::utils::seconds_to_beijing_datetime;
+    use crate::{arch::config::DTB_BASE, drivers::init_device, utils::seconds_to_beijing_datetime};
     use arch::{
         timer::{read_rtc, NANOS_PER_SEC},
         trap::{self, TrapContext},
@@ -105,15 +110,16 @@ pub fn rust_main(_hart_id: usize, dtb_address: usize) -> ! {
             core::mem::size_of::<TaskContext>()
         )
     }
-
     clear_bss();
+    DTB_BASE.lock().replace(dtb_address);
     logging::init();
     mm::init();
     trap::init();
-    let seconds = read_rtc() / NANOS_PER_SEC;
-    println!("rtc time: {:?}", seconds);
-    println!("data time: {:?}", seconds_to_beijing_datetime(seconds));
-    drivers::net::init_net_device(dtb_address);
+    init_device(dtb_address);
+    // let seconds = read_rtc() / NANOS_PER_SEC;
+    // println!("rtc time: {:?}", seconds);
+    // println!("data time: {:?}", seconds_to_beijing_datetime(seconds));
+    // drivers::net::init_net_device(dtb_address);
     // 允许S mode访问U mode的页面
     //  S mode下会访问User的堆
     #[cfg(target_arch = "riscv64")]
@@ -140,22 +146,39 @@ pub fn rust_main(_hart_id: usize, dtb_address: usize) -> ! {
 pub fn rust_main() -> ! {
     use arch::{
         bootstrap_init,
+        config::{PAGE_SIZE, SUC_DMW_VESG},
         drivers::pci,
         sbi::shutdown,
         timer::ls7a_rtc_init,
         trap::{
             self,
             timer::{enable_timer_interrupt, set_next_trigger},
+            TrapContext,
         },
+        DMW, DMW2, DMW3,
     };
-    use task::{add_initproc, run_tasks};
-
+    use task::{add_initproc, current_task, run_tasks, Task, TaskContext, KSTACK_TOP};
     clear_bss();
-    logging::init();
     bootstrap_init();
+    logging::init();
+
+    pub fn show_context_size() {
+        log::error!(
+            "size of trap context: {}",
+            core::mem::size_of::<TrapContext>()
+        );
+        log::error!(
+            "size of task context: {}",
+            core::mem::size_of::<TaskContext>()
+        )
+    }
+    show_context_size();
+
     mm::init();
+    #[cfg(feature = "virt")]
     pci::init();
     trap::init();
+    #[cfg(feature = "virt")]
     ls7a_rtc_init();
     enable_timer_interrupt();
     add_initproc();

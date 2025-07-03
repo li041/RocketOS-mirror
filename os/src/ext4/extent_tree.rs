@@ -1,3 +1,5 @@
+use core::{mem, ptr};
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct Ext4ExtentHeader {
@@ -71,6 +73,17 @@ pub struct Ext4Extent {
     start_lo: u32, // 数据块号的低32位
 }
 
+impl Default for Ext4Extent {
+    fn default() -> Self {
+        Self {
+            logical_block: 0,
+            len: 0,
+            start_hi: 0,
+            start_lo: 0,
+        }
+    }
+}
+
 impl Ext4Extent {
     // 这个对应的EXT4的物理块号(fs_block_id), 不是qemu上VirtIOBlock的块号, 在BlockCache中转换
     pub fn physical_start_block(&self) -> usize {
@@ -83,5 +96,22 @@ impl Ext4Extent {
             start_hi: (physical_block >> 32) as u16,
             start_lo: physical_block as u32,
         }
+    }
+    /// 将字段逐个写入 `ptr` 指向的内存中（12 字节，未对齐也支持）
+    pub unsafe fn write_fields_to_ptr(&self, mut ptr: *mut u8) {
+        // 写入 logical_block: u32
+        ptr::write_unaligned(ptr as *mut u32, self.logical_block);
+        ptr = ptr.add(mem::size_of::<u32>());
+
+        // 写入 len: u16
+        ptr::write_unaligned(ptr as *mut u16, self.len);
+        ptr = ptr.add(mem::size_of::<u16>());
+
+        // 写入 start_hi: u16
+        ptr::write_unaligned(ptr as *mut u16, self.start_hi);
+        ptr = ptr.add(mem::size_of::<u16>());
+
+        // 写入 start_lo: u32
+        ptr::write_unaligned(ptr as *mut u32, self.start_lo);
     }
 }

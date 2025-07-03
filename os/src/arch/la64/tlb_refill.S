@@ -24,14 +24,20 @@ __rfill:
     lddir $t0, $t0, 2
     # 如果lddir失败, 跳转到构造无效页表项
     beqz $t0, construct_invalid
-    # 查出来最低位为1, 需要减去
-    addi.d $t0, $t0, -1
+    # 过往的错误认知: 出来最低位为1, 需要减去
+    # addi.d $t0, $t0, -1
+    # 7.13 查出来带flags, 需要去除
+    # 右移12位, 再左移12位, 清除flags
+    srli.d $t0, $t0, 12
+    slli.d $t0, $t0, 12
 
     # 第二次lddir - 获取一级页目录
     lddir $t0, $t0, 1
     # 如果lddir失败, 跳转到构造无效页表项
     beqz $t0, construct_invalid
-    addi.d $t0, $t0, -1
+    # addi.d $t0, $t0, -1
+    srli.d $t0, $t0, 12
+    slli.d $t0, $t0, 12
     ldpte $t0, 0
     ldpte $t0, 1
     tlbfill
