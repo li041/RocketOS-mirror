@@ -2,15 +2,21 @@ use crate::{
     fs::{
         dentry::{Dentry, DentryFlags},
         dev::{
-            loop_device::LoopInode, null::NullInode, rtc::RtcInode, tty::TtyInode,
+            invalid::InvalidInode,
+            loop_device::{self, insert_loop_device, LoopDevice, LoopInode},
+            null::NullInode,
+            rtc::RtcInode,
+            tty::TtyInode,
             urandom::UrandomInode,
         },
+        file::OpenFlags,
         inode::InodeOp,
         kstat::Kstat,
         pipe::PipeInode,
         uapi::{DevT, FallocFlags, RenameFlags},
     },
     mm::Page,
+    net::socket::{Domain, Protocol, Socket, SocketInode, SocketType},
     syscall::errno::{Errno, SyscallRet},
     task::current_task,
     timer::TimeSpec,
@@ -23,11 +29,12 @@ use alloc::{
     sync::Arc,
 };
 use block_op::Ext4DirContentWE;
-use dentry::{EXT4_DT_CHR, EXT4_DT_DIR, EXT4_DT_FIFO, EXT4_DT_LNK};
+use dentry::{EXT4_DT_CHR, EXT4_DT_DIR, EXT4_DT_FIFO, EXT4_DT_LNK, EXT4_DT_SOCK};
 use fs::EXT4_BLOCK_SIZE;
 use inode::{
     load_inode, write_inode, write_inode_on_disk, Ext4Inode, EXT4_EXTENTS_FL, EXT4_INLINE_DATA_FL,
-    S_IALLUGO, S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFLNK, S_IFMT, S_IFREG, S_ISGID, S_ISVTX,
+    S_IALLUGO, S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFLNK, S_IFMT, S_IFREG, S_IFSOCK, S_ISGID,
+    S_ISVTX,
 };
 
 use core::any::Any;
@@ -651,13 +658,46 @@ impl InodeOp for Ext4Inode {
                             .alloc_inode(self.block_device.clone(), false);
                         let loop_inode = LoopInode::new(new_inode_num, mode, 7, id);
                         self.add_entry(dentry.clone(), new_inode_num as u32, EXT4_DT_CHR);
-                        dentry.inner.lock().inode = Some(loop_inode);
+                        dentry.inner.lock().inode = Some(loop_inode.clone());
+                        let loop_device = LoopDevice::new(
+                            dentry.clone(),
+                            loop_inode,
+                            OpenFlags::empty(),
+                            id as usize,
+                        );
+                        insert_loop_device(loop_device, id as usize);
+                    }
+                    (0, 0) => {
+                        // 会创建成功, 但dev=0是无效的设备号, 没有对应的内核驱动会处理该设备
+                        log::warn!("[Ext4Inode::mknod] dev=0, no device driver will handle this");
+                        let new_inode_num = self
+                            .ext4_fs
+                            .upgrade()
+                            .unwrap()
+                            .alloc_inode(self.block_device.clone(), false);
+                        let invalid_inode = InvalidInode::new(new_inode_num);
+                        self.add_entry(dentry.clone(), new_inode_num as u32, EXT4_DT_CHR);
+                        dentry.inner.lock().inode = Some(invalid_inode.clone());
+                        let loop_device =
+                            LoopDevice::new(dentry.clone(), invalid_inode, OpenFlags::empty(), 0);
+                        insert_loop_device(loop_device, 0);
                     }
                     _ => panic!(
                         "Unsupported block device: major: {}, minor: {}",
                         major, minor
                     ),
                 }
+            }
+            S_IFSOCK => {
+                // Unix域套接字
+                let new_inode_num = self
+                    .ext4_fs
+                    .upgrade()
+                    .unwrap()
+                    .alloc_inode(self.block_device.clone(), false);
+                let socket_inode = SocketInode::new(new_inode_num);
+                self.add_entry(dentry.clone(), new_inode_num as u32, EXT4_DT_SOCK);
+                dentry.inner.lock().inode = Some(socket_inode);
             }
             _ => panic!("Unsupported file type: {}", file_type),
         }
@@ -690,6 +730,23 @@ impl InodeOp for Ext4Inode {
     }
     fn get_inode_num(&self) -> usize {
         self.inode_num
+    }
+    fn setxattr(
+        &self,
+        key: String,
+        value: Vec<u8>,
+        flags: &crate::fs::uapi::SetXattrFlags,
+    ) -> SyscallRet {
+        self.setxattr(key, value, &flags)
+    }
+    fn getxattr(&self, key: &str) -> Result<Vec<u8>, Errno> {
+        self.getxattr(key)
+    }
+    fn listxattr(&self) -> Result<Vec<String>, Errno> {
+        self.listxattr()
+    }
+    fn removexattr(&self, key: &str) -> SyscallRet {
+        self.removexattr(key)
     }
     fn get_size(&self) -> usize {
         self.inner.read().inode_on_disk.get_size() as usize

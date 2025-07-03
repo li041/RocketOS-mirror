@@ -652,7 +652,7 @@ pub fn sys_mprotect(addr: usize, size: usize, prot: i32) -> SyscallRet {
 //     })
 // }
 
-// Todo: 
+// Todo:
 pub fn sys_mremap(
     old_address: usize,
     old_size: usize,
@@ -790,7 +790,24 @@ pub fn sys_get_mempolicy(
     Ok(0)
 }
 
-pub fn sys_mlock(_addr: usize, _len: usize) -> SyscallRet {
-    log::error!("Unimplemented sys_mlock");
-    Ok(0)
+// Todo: 目前没有实现页锁定功能
+pub fn sys_mlock(addr: usize, len: usize) -> SyscallRet {
+    log::warn!("Unimplemented sys_mlock");
+    let task = current_task();
+    if addr % PAGE_SIZE != 0 || len == 0 {
+        return Err(Errno::EINVAL);
+    }
+    let start_vpn = VirtPageNum::from(addr >> PAGE_SIZE_BITS);
+    let end_vpn = VirtPageNum::from(ceil_to_page_size(addr + len) >> PAGE_SIZE_BITS);
+    let lock_range = VPNRange::new(start_vpn, end_vpn);
+    // Todo:
+    task.op_memory_set_mut(|memory_set| {
+        if let Some(area) = memory_set.areas.get_mut(&start_vpn) {
+            area.locked = true;
+            return Ok(0 as usize);
+        } else {
+            log::warn!("[sys_mlock] vpn {:#x} not found in memory_set", start_vpn.0);
+            return Err(Errno::ENOMEM);
+        }
+    })
 }

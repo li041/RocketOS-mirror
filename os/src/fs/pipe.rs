@@ -80,6 +80,17 @@ impl InodeOp for PipeInode {
         kstat.blocks = 0;
         kstat
     }
+    fn getxattr(&self, _key: &str) -> Result<Vec<u8>, Errno> {
+        Err(Errno::ENODATA) // 管道不支持扩展属性
+    }
+    fn setxattr(
+        &self,
+        _key: alloc::string::String,
+        _value: Vec<u8>,
+        _flags: &super::uapi::SetXattrFlags,
+    ) -> SyscallRet {
+        Err(Errno::EPERM) // 管道不支持设置扩展属性
+    }
     fn get_resident_page_count(&self) -> usize {
         0
     }

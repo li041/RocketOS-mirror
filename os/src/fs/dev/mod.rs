@@ -18,6 +18,7 @@ use tty::{TtyFile, TTY};
 use urandom::{UrandomFile, URANDOM};
 use zero::{ZeroFile, ZERO};
 
+pub mod invalid;
 pub mod loop_device;
 pub mod null;
 pub mod rtc;
@@ -284,7 +285,7 @@ pub fn init_devfs(root_path: Arc<Path>) {
             let parent_inode = nd.dentry.get_inode();
             parent_inode.mknod(dentry.clone(), loop0_mode, loop_devt);
             let loop0_file = LoopDevice::new(
-                Path::new(root_path.mnt.clone(), dentry.clone()),
+                dentry.clone(),
                 dentry.get_inode().clone(),
                 OpenFlags::O_RDWR,
                 0,

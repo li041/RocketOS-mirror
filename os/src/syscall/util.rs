@@ -136,7 +136,7 @@ pub fn sys_times(buf: usize) -> SyscallRet {
     Ok(0)
 }
 
-#[derive(Debug, Clone, Copy, Default,PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SyslogAction {
     CLOSE = 0,
     OPEN = 1,
@@ -175,12 +175,17 @@ impl TryFrom<usize> for SyslogAction {
 }
 
 pub fn sys_syslog(log_type: usize, buf: *mut u8, len: isize) -> SyscallRet {
-    log::info!("[syslog]log_type is {:?},buf is {:?},len is {:?}",log_type,buf,len);
-    let task=current_task();
-    if task.egid()!=0&&task.euid()!=0 {
+    log::info!(
+        "[syslog]log_type is {:?},buf is {:?},len is {:?}",
+        log_type,
+        buf,
+        len
+    );
+    let task = current_task();
+    if task.egid() != 0 && task.euid() != 0 {
         return Err(Errno::EPERM);
     }
-    if buf.is_null()||len<=1 {
+    if buf.is_null() || len <= 1 {
         return Err(Errno::EINVAL);
     }
     const LOG_BUF_LEN: usize = 4096;
@@ -189,7 +194,7 @@ pub fn sys_syslog(log_type: usize, buf: *mut u8, len: isize) -> SyscallRet {
     let log_type = SyslogAction::try_from(log_type)?;
     let log = LOG.as_bytes();
     let len = LOG.len().min(len as usize);
-    if log_type==SyslogAction::CONSOLE_LEVEL&&len>8 {
+    if log_type == SyslogAction::CONSOLE_LEVEL && len > 8 {
         return Err(Errno::EINVAL);
     }
     match log_type {
@@ -261,8 +266,8 @@ pub const CLOCK_THREAD_CPUTIME_ID: usize = 3;
 pub const CLOCK_MONOTONIC_RAW: usize = 4;
 /// 一个不可设置的系统级实时时钟，用于测量真实（即墙上时钟）时间
 pub const CLOCK_REALTIME_COARSE: usize = 5;
-pub const CLOCK_MONOTONIC_COARSE:usize =6;
-pub const CLOCK_BOOTTIME:usize=7;
+pub const CLOCK_MONOTONIC_COARSE: usize = 6;
+pub const CLOCK_BOOTTIME: usize = 7;
 pub fn sys_clock_gettime(clock_id: usize, timespec: *mut TimeSpec) -> SyscallRet {
     //如果tp是NULL, 函数不会存储时间值, 但仍然会执行其他检查（如 `clockid` 是否有效）。
     if timespec.is_null() {
@@ -279,12 +284,12 @@ pub fn sys_clock_gettime(clock_id: usize, timespec: *mut TimeSpec) -> SyscallRet
             // log::info!("[sys_clock_gettime] CLOCK_REALTIME: {:?}", time);
             copy_to_user(timespec, &time as *const TimeSpec, 1)?;
         }
-        CLOCK_MONOTONIC | CLOCK_MONOTONIC_RAW | CLOCK_MONOTONIC_COARSE|CLOCK_BOOTTIME=> {
+        CLOCK_MONOTONIC | CLOCK_MONOTONIC_RAW | CLOCK_MONOTONIC_COARSE | CLOCK_BOOTTIME => {
             let time = TimeSpec::new_machine_time();
             // log::info!("[sys_clock_gettime] CLOCK_MONOTONIC: {:?}", time);
             copy_to_user(timespec, &time as *const TimeSpec, 1)?;
         }
-        CLOCK_PROCESS_CPUTIME_ID|CLOCK_THREAD_CPUTIME_ID  => {
+        CLOCK_PROCESS_CPUTIME_ID | CLOCK_THREAD_CPUTIME_ID => {
             // let time = TimeSpec::new_process_time();
             let task = current_task();
             let (utime, stime) = task.process_us_time();
@@ -442,7 +447,7 @@ pub fn sys_getrusage(who: i32, rusage: *mut RUsage) -> SyscallRet {
    如果 clock_settime() 的参数 tp 指向的时间值不是 res 的倍数，则将其截断为 res 的倍数。（Todo)
 */
 pub fn sys_clock_getres(clockid: usize, res: usize) -> SyscallRet {
-    if (clockid as isize)<0 {
+    if (clockid as isize) < 0 {
         return Err(Errno::EINVAL);
     }
     if res == 0 {

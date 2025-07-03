@@ -5,13 +5,14 @@ use alloc::string::String;
 use alloc::sync::{Arc, Weak};
 use alloc::vec;
 use alloc::vec::Vec;
+use hashbrown::HashMap;
 use spin::{Mutex, RwLock};
 
 use crate::arch::config::EXT4_MAX_INLINE_DATA;
 use crate::drivers::block::VIRTIO_BLOCK_SIZE;
 use crate::fs::inode::InodeOp;
 use crate::fs::kstat::Kstat;
-use crate::fs::uapi::FallocFlags;
+use crate::fs::uapi::{FallocFlags, SetXattrFlags};
 use crate::fs::FS_BLOCK_SIZE;
 use crate::syscall::errno::{Errno, SyscallRet};
 use crate::task::current_task;
@@ -713,6 +714,7 @@ pub struct Ext4Inode {
     pub link: RwLock<Option<String>>,
     pub inner: FSMutex<Ext4InodeInner>,
     pub self_weak: Weak<Self>,
+    pub xattrs: RwLock<HashMap<String, Vec<u8>>>, // 扩展属性
 }
 
 impl Drop for Ext4Inode {
@@ -835,6 +837,7 @@ impl Ext4Inode {
             link: RwLock::new(None),
             inner: FSMutex::new(Ext4InodeInner::new(new_inode_disk)),
             self_weak: weak.clone(),
+            xattrs: RwLock::new(HashMap::new()),
         })
     }
     pub fn new_root(
@@ -853,6 +856,7 @@ impl Ext4Inode {
             link: RwLock::new(None),
             inner: FSMutex::new(Ext4InodeInner::new(root_inode_disk)),
             self_weak: weak.clone(),
+            xattrs: RwLock::new(HashMap::new()),
         })
     }
     // 所有的读/写都是基于Ext4Inode::read/write, 通过页缓存和extent tree来读写
@@ -2013,6 +2017,44 @@ impl Ext4Inode {
 
 // set/get系列方法, 判断标志, 辅助函数
 impl Ext4Inode {
+    // 设置扩展属性(仅内存, 不写回磁盘)
+    pub fn setxattr(&self, key: String, value: Vec<u8>, flags: &SetXattrFlags) -> SyscallRet {
+        let mut xattrs = self.xattrs.write();
+        match (xattrs.contains_key(&key), flags) {
+            (true, &SetXattrFlags::CREATE) => {
+                log::error!("[Ext4Inode::setxattr] xattr {} already exists", key);
+                return Err(Errno::EEXIST);
+            }
+            (false, &SetXattrFlags::REPLACE) => {
+                log::error!("[Ext4Inode::setxattr] xattr {} does not exist", key);
+                return Err(Errno::ENODATA);
+            }
+            _ => {
+                // 设置或更新扩展属性
+                xattrs.insert(key, value);
+                log::info!("[Ext4Inode::setxattr] set xattr successfully");
+                return Ok(0);
+            }
+        }
+    }
+    pub fn getxattr(&self, key: &str) -> Result<Vec<u8>, Errno> {
+        let xattrs = self.xattrs.read();
+        xattrs.get(key).cloned().ok_or(Errno::ENODATA)
+    }
+    pub fn listxattr(&self) -> Result<Vec<String>, Errno> {
+        let xattrs = self.xattrs.read();
+        Ok(xattrs.keys().cloned().collect())
+    }
+    pub fn removexattr(&self, key: &str) -> SyscallRet {
+        let mut xattrs = self.xattrs.write();
+        if xattrs.remove(key).is_some() {
+            log::info!("[Ext4Inode::removexattr] removed xattr{}", key);
+            Ok(0)
+        } else {
+            log::error!("[Ext4Inode::removexattr] xattr {} does not exist", key);
+            Err(Errno::ENODATA)
+        }
+    }
     pub fn get_nlinks(&self) -> u16 {
         self.inner.read().inode_on_disk.get_nlinks()
     }
@@ -2102,6 +2144,7 @@ pub fn load_inode(
         link: RwLock::new(None),
         inner: FSMutex::new(Ext4InodeInner::new(inode_on_disk)),
         self_weak: weak.clone(),
+        xattrs: RwLock::new(HashMap::new()),
     })
 }
 

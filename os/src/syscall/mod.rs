@@ -14,12 +14,15 @@ use errno::{Errno, SyscallRet};
 use fs::{
     sys_chdir, sys_chroot, sys_close, sys_copy_file_range, sys_dup, sys_dup3, sys_faccessat,
     sys_fadvise64, sys_fallocate, sys_fchdir, sys_fchmod, sys_fchmodat, sys_fchown, sys_fchownat,
-    sys_fcntl, sys_fstat, sys_fstatat, sys_fstatfs, sys_fsync, sys_ftruncate, sys_getcwd,
-    sys_getdents64, sys_ioctl, sys_linkat, sys_lseek, sys_mkdirat, sys_mknodat, sys_mount,
-    sys_msync, sys_openat, sys_openat2, sys_pipe2, sys_ppoll, sys_pread, sys_preadv, sys_pselect6,
-    sys_pwrite, sys_pwritev, sys_read, sys_readlinkat, sys_readv, sys_renameat2, sys_sendfile,
-    sys_statfs, sys_statx, sys_symlinkat, sys_sync, sys_sync_file_range, sys_truncate, sys_umask,
-    sys_umount2, sys_unlinkat, sys_utimensat, sys_write, sys_writev,
+    sys_fcntl, sys_fdatasync, sys_fgetxattr, sys_flistxattr, sys_fremovexattr, sys_fsetxattr,
+    sys_fstat, sys_fstatat, sys_fstatfs, sys_fsync, sys_ftruncate, sys_getcwd, sys_getdents64,
+    sys_getxattr, sys_ioctl, sys_lgetxattr, sys_linkat, sys_listxattr, sys_llistxattr,
+    sys_lremovexattr, sys_lseek, sys_lsetxattr, sys_mkdirat, sys_mknodat, sys_mount, sys_msync,
+    sys_openat, sys_openat2, sys_pipe2, sys_ppoll, sys_pread, sys_preadv, sys_preadv2,
+    sys_pselect6, sys_pwrite, sys_pwritev, sys_pwritev2, sys_read, sys_readlinkat, sys_readv,
+    sys_removexattr, sys_renameat2, sys_sendfile, sys_setxattr, sys_statfs, sys_statx,
+    sys_symlinkat, sys_sync, sys_sync_file_range, sys_truncate, sys_umask, sys_umount2,
+    sys_unlinkat, sys_utimensat, sys_write, sys_writev,
 };
 use mm::{
     sys_brk, sys_get_mempolicy, sys_madvise, sys_membarrier, sys_mlock, sys_mmap, sys_mprotect,
@@ -76,7 +79,18 @@ mod task;
 mod util;
 // mod time;
 
+const SYSCALL_SETXATTR: usize = 5;
+const SYSCALL_LSETXATTR: usize = 6;
+const SYSCALL_FSETXATTR: usize = 7;
+const SYSCALL_GETXATTR: usize = 8;
+const SYSCALL_LGETXATTR: usize = 9;
 const SYSCALL_FGETXATTR: usize = 10;
+const SYSCALL_LISTATTR: usize = 11;
+const SYSCALL_LLISTATTR: usize = 12;
+const SYSCALL_FLISTXATTR: usize = 13;
+const SYSCALL_REMOVEXATTR: usize = 14;
+const SYSCALL_LREMOVEXATTR: usize = 15;
+const SYSCALL_FREMOVEXATTR: usize = 16;
 const SYSCALL_GETCWD: usize = 17;
 const SYSCALL_DUP: usize = 23;
 const SYSCALL_DUP3: usize = 24;
@@ -123,6 +137,7 @@ const SYSCALL_FSTATAT: usize = 79;
 const SYSCALL_FSTAT: usize = 80;
 const SYSCALL_SYNC: usize = 81;
 const SYSCALL_FSYNC: usize = 82;
+const SYSCALL_FDATASYNC: usize = 83;
 const SYSCALL_SYNC_FILE_RANGE: usize = 84;
 const SYSCALL_UTIMENSAT: usize = 88;
 const SYSCALL_ACCT: usize = 89;
@@ -218,10 +233,13 @@ const SYSCALL_GET_MEMPOLICY: usize = 236;
 const SYSCALL_ACCEPT4: usize = 242;
 const SYSCALL_WAIT4: usize = 260;
 const SYSCALL_PRLIMIT: usize = 261;
+const SYSCALL_FANOTIFY: usize = 262;
 const SYSCALL_RENAMEAT2: usize = 276;
 const SYSCALL_GETRANDOM: usize = 278;
 const SYSCALL_MEMBARRIER: usize = 283;
 const SYSCALL_COPY_FILE_RANGE: usize = 285;
+const SYSCALL_PREADV2: usize = 286;
+const SYSCALL_PWRITEV2: usize = 287;
 const SYSCALL_STATX: usize = 291;
 const SYSCALL_STRERROR: usize = 300;
 const SYSCALL_PERROR: usize = 301;
@@ -229,6 +247,7 @@ const SYSCALL_PSELECT: usize = 72;
 const SYSCALL_SETSID: usize = 157;
 const SYSCALL_ADJTIMEX: usize = 171;
 const SYSCALL_CLOCKADJTIME: usize = 266;
+const SYSCALL_FSOPEN: usize = 430;
 const SYSCALL_CLOSE_RANGE: usize = 436;
 const SYSCALL_OPENAT2: usize = 437;
 const SYSCALL_FACCESSAT2: usize = 439;
@@ -258,6 +277,30 @@ pub fn syscall(
     // }
     // log::error!("syscall_id: {}", syscall_id);
     match syscall_id {
+        SYSCALL_SETXATTR => sys_setxattr(
+            a0 as *const u8,
+            a1 as *const u8,
+            a2 as *const u8,
+            a3,
+            a4 as i32,
+        ),
+        SYSCALL_LSETXATTR => sys_lsetxattr(
+            a0 as *const u8,
+            a1 as *const u8,
+            a2 as *const u8,
+            a3,
+            a4 as i32,
+        ),
+        SYSCALL_FSETXATTR => sys_fsetxattr(a0, a1 as *const u8, a2 as *const u8, a3, a4 as i32),
+        SYSCALL_GETXATTR => sys_getxattr(a0 as *const u8, a1 as *const u8, a2 as *mut u8, a3),
+        SYSCALL_LGETXATTR => sys_lgetxattr(a0 as *const u8, a1 as *const u8, a2 as *mut u8, a3),
+        SYSCALL_FGETXATTR => sys_fgetxattr(a0, a1 as *const u8, a2 as *mut u8, a3),
+        SYSCALL_LISTATTR => sys_listxattr(a0 as *const u8, a1 as *mut u8, a2),
+        SYSCALL_LLISTATTR => sys_llistxattr(a0 as *const u8, a1 as *mut u8, a2),
+        SYSCALL_FLISTXATTR => sys_flistxattr(a0, a1 as *mut u8, a2),
+        SYSCALL_REMOVEXATTR => sys_removexattr(a0 as *const u8, a1 as *const u8),
+        SYSCALL_LREMOVEXATTR => sys_lremovexattr(a0 as *const u8, a1 as *const u8),
+        SYSCALL_FREMOVEXATTR => sys_fremovexattr(a0, a1 as *const u8),
         SYSCALL_GETCWD => sys_getcwd(a0 as *mut u8, a1),
         SYSCALL_DUP => sys_dup(a0),
         SYSCALL_DUP3 => sys_dup3(a0, a1, a2 as i32),
@@ -319,6 +362,7 @@ pub fn syscall(
         SYSCALL_FSTAT => sys_fstat(a0 as i32, a1 as *mut Stat),
         SYSCALL_SYNC => sys_sync(),
         SYSCALL_FSYNC => sys_fsync(a0),
+        SYSCALL_FDATASYNC => sys_fdatasync(a0),
         SYSCALL_SYNC_FILE_RANGE => sys_sync_file_range(a0, a1 as isize, a2 as isize, a3 as i32),
         SYSCALL_UTIMENSAT => {
             sys_utimensat(a0 as i32, a1 as *const u8, a2 as *const TimeSpec, a3 as i32)
@@ -419,6 +463,8 @@ pub fn syscall(
         SYSCALL_GETRANDOM => Ok(0),
         SYSCALL_MEMBARRIER => sys_membarrier(a0 as i32, a1 as i32, a2 as u32),
         SYSCALL_COPY_FILE_RANGE => sys_copy_file_range(a0, a1, a2, a3, a4, a5 as i32),
+        SYSCALL_PREADV2 => sys_preadv2(a0, a1 as *const IoVec, a2, a3 as i32, a4 as i32, a5 as i32),
+        SYSCALL_PWRITEV2 => sys_pwritev2(a0, a1 as *const IoVec, a2, a3 as isize, a4 as i32),
         SYSCALL_STATX => sys_statx(
             a0 as i32,
             a1 as *const u8,
@@ -431,6 +477,7 @@ pub fn syscall(
         SYSCALL_SETSOCKOPT => syscall_setsocketopt(a0, a1, a2, a3 as *const u8, a4),
         SYSCALL_GETSOCKOPT => syscall_getsocketopt(a0, a1, a2, a3 as *mut u8, a4),
         SYSCALL_ADJTIMEX => sys_adjtimex(a0 as *mut KernelTimex),
+        // SYSCALL_FSOPEN => sys_fsopen(a0 as  ),
         SYSCALL_CLOCKADJTIME => sys_clock_adjtime(a0 as i32, a1 as *mut KernelTimex),
         SYSCALL_SOCKETPAIR => syscall_socketpair(a0, a1, a2, a3 as *mut i32),
         SYSCALL_SENDMSG => syscall_sendmsg(a0, a1, a2),
@@ -441,7 +488,7 @@ pub fn syscall(
         SYSCALL_SETHOSTNAME => syscall_sethostname(a0 as *const u8, a1),
         SYSCALL_SHUTDOMN => sys_shutdown(),
         _ => {
-            log::warn!(
+            println!(
                 "Unsupported syscall_id: {}, {}",
                 syscall_id,
                 SYSCALL_NUM_2_NAME

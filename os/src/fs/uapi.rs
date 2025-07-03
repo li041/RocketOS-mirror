@@ -333,3 +333,17 @@ bitflags::bitflags! {
         const CLOSE_RANGE_UNSHARE = 0x2;
     }
 }
+
+// setxattr flags
+pub const XATTR_SIZE_MAX: usize = 65536; // 最大扩展属性值大小
+bitflags::bitflags! {
+    #[derive(Debug, Clone, Copy, Default, PartialEq)]
+    pub struct SetXattrFlags: i32 {
+        /// 如果属性不存在，则创建它。
+        const CREATE = 0x1;
+        /// 如果属性已存在，则覆盖它。
+        const REPLACE = 0x2;
+    }
+}
+
+// memfd_create flags

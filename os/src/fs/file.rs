@@ -88,6 +88,9 @@ pub trait FileOp: Any + Send + Sync {
     fn fsync(&self) -> SyscallRet {
         unimplemented!();
     }
+    fn fdatasync(&self) -> SyscallRet {
+        unimplemented!();
+    }
     fn fadvise(&self, _offset: usize, _len: usize, _advice: i32) -> SyscallRet {
         unimplemented!();
     }
@@ -371,6 +374,9 @@ impl FileOp for File {
         self.inner_handler(|inner| inner.inode.fallocate(_mode, _offset, _length))
     }
     fn fsync(&self) -> SyscallRet {
+        self.inner_handler(|inner| inner.inode.fsync())
+    }
+    fn fdatasync(&self) -> SyscallRet {
         self.inner_handler(|inner| inner.inode.fsync())
     }
     // Todo:
