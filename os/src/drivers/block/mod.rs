@@ -1,5 +1,6 @@
 pub mod block_cache;
 pub mod block_dev;
+#[cfg(feature="board")]
 pub mod ramdisk;
 pub mod sdio;
 

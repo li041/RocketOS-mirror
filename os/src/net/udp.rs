@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-02 12:09:33
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-07-13 11:13:20
+ * @LastEditTime: 2025-07-28 12:25:47
  * @FilePath: /RocketOS_netperfright/os/src/net/udp.rs
  * @Description: udp socket
  * 
@@ -258,7 +258,7 @@ use super::SOCKET_SET;
     }
     pub fn shutdown(&self) {
         log::error!("[udp_shutdown]begin shutdown");
-        poll_interfaces();
+        // poll_interfaces();
         let handle=unsafe { self.handle.get().read().unwrap() };
         SOCKET_SET.lock().get_mut().unwrap().with_socket_mut::<_,udp::Socket,_>(handle, |socket|{
             socket.close();

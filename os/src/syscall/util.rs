@@ -1,5 +1,7 @@
 use core::{cell::UnsafeCell, time};
 
+use alloc::vec::Vec;
+use rand::{rngs::SmallRng, RngCore, SeedableRng};
 use spin::Mutex;
 
 use super::errno::SyscallRet;
@@ -1359,6 +1361,20 @@ pub fn sys_bpf(cmd: i32, bpf_attr_ptr: usize, size: usize) -> SyscallRet {
     }
 }
 
+pub fn sys_getrandom(buf: usize, len: usize, flag: usize) -> SyscallRet {
+    log::error!(
+        "[sys_getrandom] buf is {:#x?},len is {:?},flag is {:?}",
+        buf,
+        len,
+        flag
+    );
+    let mut kernel_buf = Vec::with_capacity(len);
+    copy_from_user(buf as *const u8, kernel_buf.as_mut_ptr(), len)?;
+    let mut rng = SmallRng::from_seed([0; 32]);
+    rng.fill_bytes(kernel_buf.as_mut_slice());
+    copy_to_user(buf as *mut u8, kernel_buf.as_ptr(), len)?;
+    Ok(len)
+}
 pub fn sys_shutdown() -> SyscallRet {
     shutdown(false);
 }

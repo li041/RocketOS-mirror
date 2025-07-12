@@ -16,6 +16,7 @@ use crate::ext4::inode::{
 use crate::fs::dentry::{
     chown, dentry_check_access, Dentry, LinuxDirent64, F_OK, R_OK, W_OK, X_OK,
 };
+use crate::fs::eventfd::EventFd;
 use crate::fs::fd_set::init_fdset;
 use crate::fs::fdtable::{FdFlags, FdTable};
 use crate::fs::file::OpenFlags;
@@ -94,6 +95,7 @@ pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> SyscallRet {
         // }
         // let ret = file.read(unsafe { core::slice::from_raw_parts_mut(buf, len) });
         let mut ker_buf = vec![0u8; len];
+        // log::info!("sys_read: fd: {}, len: {}", fd, len);
         let read_len = file.read(&mut ker_buf)?;
         if fd >= 3 {
             log::info!("sys_read: fd: {}, len: {}", fd, len);
@@ -1015,6 +1017,7 @@ pub fn sys_fstatat(dirfd: i32, pathname: *const u8, statbuf: *mut Stat, flags: i
         Ok(dentry) => {
             let inode = dentry.get_inode();
             let stat = Stat::from(inode.getattr());
+            log::error!("[sys_fstatat]sys_fstatat stat is {:?}", stat);
             if let Err(e) = copy_to_user(statbuf, &stat as *const Stat, 1) {
                 log::error!("fstatat: copy_to_user failed: {:?}", e);
                 return Err(e);
@@ -1125,6 +1128,11 @@ pub fn sys_chroot(pathname: *const u8) -> SyscallRet {
 // Todo: 直接往用户地址空间写入, 没有检查
 pub fn sys_pipe2(fdset_ptr: *mut i32, flags: i32) -> SyscallRet {
     log::trace!("[sys_pipe2]");
+    log::info!(
+        "[sys_pipe2] fdset_ptr: {:?}, flags: {}",
+        fdset_ptr,
+        flags
+    );
     let flags = OpenFlags::from_bits(flags).unwrap();
     let task = current_task();
     let pipe_pair = make_pipe(flags);
@@ -1460,7 +1468,7 @@ pub fn sys_pselect6(
         if sec_signed < 0 {
             return Err(Errno::EINVAL);
         }
-        (tmo.sec * 1000000 + tmo.nsec / 1000) as isize
+        (tmo.sec * 1000000 + tmo.nsec/1000 ) as isize
     };
     log::error!("[sys_pselect6] timeout is {:?}", timeout);
     let mut readfditer = match init_fdset(readfds, nfds) {
@@ -1491,6 +1499,7 @@ pub fn sys_pselect6(
         if readfditer.fdset.valid() {
             for fd in 0..readfditer.fds.len() {
                 log::trace!("[sys_pselect6] read fd: {}", readfditer.fds[fd]);
+                log::error!("[sys_pselect6] read fd: {}", readfditer.fds[fd]);
                 if readfditer.files[fd].r_ready() {
                     //e内核会根据嗅探的结果设置fdset的对应位为1
                     // 8.3 Debug
@@ -1992,6 +2001,7 @@ pub fn sys_readlinkat(dirfd: i32, pathname: *const u8, buf: *mut u8, bufsiz: isi
                 copy_to_user(buf, link_path.as_ptr(), link_path.len())?;
                 return Ok(link_path.len());
             } else {
+                log::info!("[sys_readlinkat] fail to readlinkat: {}", path);
                 return Err(Errno::EINVAL);
             }
         }
@@ -2364,6 +2374,7 @@ pub fn sys_statx(
         return Err(Errno::EINVAL);
     }
     let path = c_str_to_string(pathname)?;
+    log::error!("[sys_statx] path: {:?}", path);
     if path.is_empty() {
         log::error!("[sys_statx] pathname is empty");
         return Err(Errno::ENOENT);
@@ -2999,6 +3010,9 @@ pub fn sys_fchmodat(fd: usize, path: *const u8, mode: usize, flag: i32) -> Sysca
         log::error!("[sys_fchmodat] path is empty");
         return Err(Errno::ENOENT);
     }
+    if path == "/glibc/.git/config.lock" {
+        log::info!("[sys_fchmodat] path is /glibc/.git/config.lock");
+    }
     log::info!(
         "[sys_fchmodat] fd: {}, path: {:?}, mode: {:o}, flag: {}",
         fd,
@@ -3006,6 +3020,10 @@ pub fn sys_fchmodat(fd: usize, path: *const u8, mode: usize, flag: i32) -> Sysca
         mode,
         flag
     );
+    //7.17debug
+    if path == "/glibc/gittest/.git/config.lock" {
+        log::info!("")
+    }
     let mut nd = Nameidata::new(&path, fd as i32)?;
     let follow_symlink = flag & AT_SYMLINK_NOFOLLOW == 0;
     match filename_lookup(&mut nd, follow_symlink) {
@@ -3892,3 +3910,15 @@ pub fn sys_inotify_rm_watch(fd: usize, wd: i32) -> SyscallRet {
     Ok(0)
 }
 /* fake end */
+
+pub fn sys_eventfd(initval: u64, flags: u32) -> SyscallRet {
+    log::info!("[sys_eventfd2] initval: {}, flags: {}", initval, flags);
+    let task=current_task();
+    let fd_table = task.fd_table();
+    let eventfd = Arc::new(EventFd::new(initval as u64, flags));
+    //分配fd并插入文件
+    let fd = fd_table.alloc_fd(eventfd, FdFlags::all())?;
+
+    log::info!("[sys_eventfd2] allocated fd: {}", fd);
+    Ok(fd)
+}

@@ -60,7 +60,7 @@ pub fn init_device(addr: usize) -> usize {
                 let mmio_base = reg.get(0).unwrap().0;
                 let mmio_size = reg.get(0).unwrap().1;
                 log::error!(
-                    "[init_device]:net device node_t name is {:?} mmio base {:#x} mmio size {:?}",
+                    "[init_device]: device node_t name is {:?} mmio base {:#x} mmio size {:?}",
                     node_t.name,
                     mmio_base,
                     mmio_size
@@ -101,11 +101,16 @@ pub fn init_device(addr: usize) -> usize {
                     log::error!("[init_device]:the transport vendor_id is {:#x},version is {:?},device_type:{:?}",transport.vendor_id(),transport.version(),transport.device_type());
                     let dev = VirtioNetDevice::<32, HalImpl, MmioTransport>::new(transport);
                     log::error!("[init_device]:the dev has built");
+                    #[cfg(feature = "virt")]
                     crate::net::init(Some(dev));
                 }
-                #[cfg(feature = "vf2")]
-                if node_t.name == "ethernet@16030000" {
-                    crate::net::init_vf2();
+                if node_t.name == "ethernet@16040000" {
+                    use crate::drivers::net::starfive::StarFiveDeviceWrapper;
+                    let dev=StarFiveDeviceWrapper::<32,HalImpl>::new();
+                    log::error!("[init_device]:the ethernet has built");
+                    #[cfg(feature="vf2")]
+                    crate::net::init_vf2_net(Some(dev));
+
                 }
             }
         }

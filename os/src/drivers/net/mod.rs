@@ -18,7 +18,11 @@ const NET_BUF_LEN: usize = 1536;
 const BUF_LEN: usize = 1 << 12;
 const QUEUE_SIZE: usize = 16;
 pub mod netdevice;
-
+pub mod config;
+pub mod ring;
+pub mod starfive;
+#[cfg(feature="la2000")]
+pub mod la2000;
 static NET_DEVICE_ADDR: Mutex<Option<VirtAddr>> = Mutex::new(None);
 // #[cfg(target_arch = "riscv64")]
 // pub fn init_net_device(dtb_addr: usize) {
@@ -113,7 +117,7 @@ static NET_DEVICE_ADDR: Mutex<Option<VirtAddr>> = Mutex::new(None);
 //     // ///能到这里必然不是virtionetdevice
 //     // return None;
 // }
-#[cfg(target_arch = "loongarch64")]
+#[cfg(target_arch="loongarch64")]
 pub fn init_net_dev_la<T: Transport + 'static>(transport: T) {
     log::error!(
         "[init_net_dev_la]:the transport device_type is {:?}",
@@ -293,7 +297,7 @@ impl<const QS: usize, H: Hal, T: Transport> NetDevice for VirtioNetDevice<QS, H,
         Ok(())
     }
 
-    fn send(&mut self, ptr: NetBufPtr) {
+    fn send(&mut self, ptr: NetBufPtr)->usize {
         // log::error!("[VirtioNetDevice_send]:send begin");
         let send_netbuf = NetBuf::from_ptr_into_netbuf(ptr);
         // log::error!("[VirtioNetDevice_send]:{:?}",send_netbuf.capacity);
@@ -310,6 +314,7 @@ impl<const QS: usize, H: Hal, T: Transport> NetDevice for VirtioNetDevice<QS, H,
             send_netbuf.get_packet()
         );
         self.send_buffers[token as usize] = Some(send_netbuf);
+        return 0;
     }
 
     fn recv(&mut self) -> Option<NetBufPtr> {
@@ -350,7 +355,7 @@ impl<const QS: usize, H: Hal, T: Transport> NetDevice for VirtioNetDevice<QS, H,
 
     fn capabilities(&self) -> smoltcp::phy::DeviceCapabilities {
         let mut cap = DeviceCapabilities::default();
-        cap.max_transmission_unit = 1514;
+        cap.max_transmission_unit = 3_000_000;
         cap.max_burst_size = None;
         cap.medium = Medium::Ethernet;
         cap
@@ -442,6 +447,9 @@ impl NetBuf {
     }
     pub fn from_ptr_into_netbuf(ptr: NetBufPtr) -> Box<Self> {
         unsafe { Box::from_raw(ptr.raw_ptr::<Self>()) }
+    }
+    pub fn from_rawptr_into_netbuf(ptr:usize)->Box<Self> {
+        unsafe { Box::from_raw(ptr as *mut Self) }
     }
     pub fn into_buf_ptr(mut self: Box<Self>) -> NetBufPtr {
         let buf_ptr = self.get_mut_packet().as_mut_ptr();

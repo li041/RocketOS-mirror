@@ -8,6 +8,7 @@ use crate::{
     },
     fs::{
         file::{self, File, OpenFlags},
+        proc::get_shm_max,
         uapi::F_SEAL_WRITE,
     },
     index_list::{IndexList, ListIndex},
@@ -874,6 +875,7 @@ pub enum MadviseAdvice {
     Collapse = 25,      // MADV_COLLAPSE (force THP collapse)
     GuardInstall = 26,  // MADV_GUARD_INSTALL
     GuardRemove = 27,   // MADV_GUARD_REMOVE
+    HWPOISON = 100,     // MADV_HWPOISON (used by kernel to mark pages as poisoned)
 
     /// 非法或未知值
     Unknown(i32),
@@ -907,6 +909,7 @@ impl From<i32> for MadviseAdvice {
             25 => Collapse,
             26 => GuardInstall,
             27 => GuardRemove,
+            100 => HWPOISON,
             other => Unknown(other),
         }
     }
@@ -929,6 +932,11 @@ pub fn sys_madvise(addr: usize, len: usize, advice: i32) -> SyscallRet {
     }
     let aligned_len = ceil_to_page_size(len);
     let advice = MadviseAdvice::from(advice);
+    let start_vpn = VirtPageNum::from(addr >> PAGE_SIZE_BITS);
+    let end_vpn = VirtPageNum::from(ceil_to_page_size(addr + aligned_len) >> PAGE_SIZE_BITS);
+    // 计算映射范围
+    let vpn_range = VPNRange::new(start_vpn, end_vpn);
+    let task = current_task();
     match advice {
         MadviseAdvice::Unknown(val) => {
             log::warn!("[sys_madvise] Unknown advice: {:#x}", val);
@@ -955,9 +963,95 @@ pub fn sys_madvise(addr: usize, len: usize, advice: i32) -> SyscallRet {
             log::info!("[sys_madvise] DontNeed: {:#x} ~ {:#x}", addr, addr + len);
             Ok(0)
         }
+        MadviseAdvice::WillNeed => {
+            task.op_memory_set_mut(|memory_set| {
+                for (_vpn, area) in memory_set.areas.range_mut(..end_vpn) {
+                    if area.vpn_range.is_intersect_with(&vpn_range) {
+                        if let Some(file) = &area.backend_file {
+                            // 如果是文件映射, 则需要预读文件内容
+                            log::info!(
+                                "[sys_madvise] WillNeed: {:#x} ~ {:#x}, area: {:?}",
+                                addr,
+                                addr + len,
+                                area
+                            );
+                        } else {
+                            log::info!(
+                                "[sys_madvise] WillNeed: {:#x} ~ {:#x}, area: {:?}",
+                                addr,
+                                addr + len,
+                                area
+                            );
+                        }
+                    }
+                }
+                Ok(0)
+            })
+        }
+        MadviseAdvice::Free | MadviseAdvice::WipeOnFork => {
+            task.op_memory_set_mut(|memory_set| {
+                for (_vpn, area) in memory_set.areas.range_mut(..end_vpn) {
+                    if area.vpn_range.is_intersect_with(&vpn_range) {
+                        log::info!(
+                            "[sys_madvise] Mergeable/Unmergeable: {:#x} ~ {:#x}, area: {:?}",
+                            addr,
+                            addr + len,
+                            area
+                        );
+                        if area.map_type != MapType::Framed || area.map_perm.contains(MapPermission::S) {
+                            log::warn!(
+                                "[sys_madvise] Mergeable/Unmergeable: {:#x} ~ {:#x} not private anonymous area, cannot merge",
+                                addr,
+                                addr + len
+                            );
+                            return Err(Errno::EINVAL);
+                        }
+                    }
+                }
+                Ok(0)
+            })
+
+        }
+        MadviseAdvice::Mergeable | MadviseAdvice::Unmergeable => {
+            task.op_memory_set_mut(|memory_set| {
+                for (_vpn, area) in memory_set.areas.range_mut(..end_vpn) {
+                    if area.vpn_range.is_intersect_with(&vpn_range) {
+                        log::info!(
+                            "[sys_madvise] Mergeable/Unmergeable: {:#x} ~ {:#x}, area: {:?}",
+                            addr,
+                            addr + len,
+                            area
+                        );
+                        // if area.map_type != MapType::Framed {
+                        //     log::warn!(
+                        //         "[sys_madvise] Mergeable/Unmergeable: {:#x} ~ {:#x} not anonymous area, cannot merge",
+                        //         addr,
+                        //         addr + len
+                        //     );
+                        //     return Err(Errno::EINVAL);
+                        // }
+                    }
+                }
+                Ok(0)
+            })
+        }
         MadviseAdvice::Remove => {
             log::info!("[sys_madvise] Remove: {:#x} ~ {:#x}", addr, addr + len);
-            Ok(0)
+            task.op_memory_set_mut(|memory_set| {
+                for (_vpn, area) in memory_set.areas.range_mut(..end_vpn) {
+                    if area.vpn_range.is_intersect_with(&vpn_range) {
+                        if area.locked {
+                            log::warn!(
+                                "[sys_madvise] Remove: {:#x} ~ {:#x} locked area, cannot remove",
+                                addr,
+                                addr + len
+                            );
+                            return Err(Errno::EINVAL);
+                        }
+                    }
+                }
+                Ok(0)
+            })
         }
         _ => {
             // 目前只处理已知的建议
@@ -966,6 +1060,8 @@ pub fn sys_madvise(addr: usize, len: usize, advice: i32) -> SyscallRet {
         }
     }
 }
+
+const SHM_MIN: usize = 1;
 
 /* shm start */
 pub fn sys_shmget(key: usize, size: usize, shmflg: i32) -> SyscallRet {
@@ -977,19 +1073,27 @@ pub fn sys_shmget(key: usize, size: usize, shmflg: i32) -> SyscallRet {
         shmflg
     );
     let task = current_task();
-    let page_aligned_size = ceil_to_page_size(size);
+    let shm_max = get_shm_max();
+    if size < SHM_MIN || size > shm_max {
+        log::error!(
+            "[sys_shmget] size: {:#x} out of range [{:#x}, {:#x}]",
+            size,
+            SHM_MIN,
+            shm_max
+        );
+        return Err(Errno::EINVAL);
+    }
     if key == IPC_PRIVATE {
         // IPC_PRIVATE是一个特殊的key值, 用于创建一个新的共享内存段
-        let shmid = add_shm_segment(page_aligned_size, task.tgid(), None);
+        let shmid = add_shm_segment(size, task.tgid(), None);
         return Ok(shmid);
     }
-    // 其他key值, 需要检查是否存在
-    let shmid = check_shm_segment_exist(key, page_aligned_size, &shmflg)?;
+    // 其他key值, 需要检查是否存在, 若存在, 则检查权限
+    let shmid = check_shm_segment_exist(key, size, &shmflg)?;
     if shmid == 0 {
         if shmflg.contains(ShmGetFlags::IPC_CREAT) {
             // 创建新的共享内存段, 同时指定了key(已检查key不存在)
-            ShmSegment::new(page_aligned_size, task.tgid());
-            let shmid = add_shm_segment(page_aligned_size, task.tgid(), Some(key));
+            let shmid = add_shm_segment(size, task.tgid(), Some(key));
             debug_assert!(shmid == key);
             return Ok(shmid);
         } else {
@@ -997,7 +1101,6 @@ pub fn sys_shmget(key: usize, size: usize, shmflg: i32) -> SyscallRet {
             return Err(Errno::ENOENT);
         }
     }
-    // 存在, 返回shmid
     Ok(shmid)
 }
 
@@ -1027,8 +1130,9 @@ pub fn sys_shmdt(shmaddr: usize) -> SyscallRet {
 pub fn sys_shmctl(shmid: usize, op: i32, buf: *mut ShmId) -> SyscallRet {
     let shmctl_op = ShmCtlOp::from(op);
     log::info!(
-        "sys_shmctl: shmid: {:#x}, op: {:?}, buf: {:#x}",
+        "sys_shmctl: shmid: {:#x}, op: {}-{:?}, buf: {:#x}",
         shmid,
+        op,
         shmctl_op,
         buf as usize
     );

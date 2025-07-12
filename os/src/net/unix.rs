@@ -127,6 +127,7 @@ impl PasswdEntry {
         // {
         //     return Err(Errno::EINVAL);
         // }
+        log::error!("[passwd_lookup] search key is {:?}",key);
         let db: Database = {
             let mut last_db_lock = LAST_DB.lock();
             if let Some(d) = nscdrequest.db {

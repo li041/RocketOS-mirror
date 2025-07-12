@@ -47,7 +47,7 @@ pub use proc_la2000 as proc;
 // pub mod tty;
 // pub mod fd_set;
 pub mod uapi;
-
+pub mod eventfd;
 pub type FSMutex<T> = RwLock<T>;
 // Todo: 这里动态初始化一个FS_block_size
 lazy_static! {

@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-03 16:40:04
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-28 21:10:21
+ * @LastEditTime: 2025-07-21 12:27:07
  * @FilePath: /RocketOS_netperfright/os/src/net/socket.rs
  * @Description: socket file
  *
@@ -264,7 +264,6 @@ impl Socket {
     //         },
     //         SocketInner::Udp(udp_socket) => todo!(),
     //     }
-    // }
     fn set_recv_timeout(&self, time: Option<TimeSpec>) {
         *self.recvtimeout.lock() = time;
     }
@@ -1750,7 +1749,7 @@ impl FileOp for Socket {
             }
             return;
         }
-        panic!("[socket_add_wait_queue]:can not add wait queue for socket");
+        log::error!("[socket_add_wait_queue]:can not add wait queue for socket");
     }
 
     fn readable(&self) -> bool {
@@ -1762,7 +1761,7 @@ impl FileOp for Socket {
     }
     fn hang_up(&self) -> bool {
         //对于tcp判断对端是否connect,udp则是判断是否为open
-        self.is_connected()
+        self.r_ready()
     }
     fn get_flags(&self) -> OpenFlags {
         let mut flag = OpenFlags::empty();
@@ -1772,6 +1771,7 @@ impl FileOp for Socket {
         if self.is_nonblocking() {
             flag |= OpenFlags::O_NONBLOCK;
         }
+        log::error!("[socket_get_flags]:flag is {:?}", flag);
         flag
     }
     fn set_flags(&self, flags: OpenFlags) {
@@ -1834,6 +1834,9 @@ pub enum SocketOption {
 pub enum TcpSocketOption {
     TCP_NODELAY = 1, // disable nagle algorithm and flush
     TCP_MAXSEG = 2,
+    TCP_KEEPIDLE=4,
+    TCP_KEEPINTVL=5,
+    TCP_KEEPCNT=6,
     TCP_INFO = 11,
     SO_OOBINLINE = 10,
     TCP_CONGESTION = 13,
@@ -2125,11 +2128,18 @@ impl SocketOption {
                             copy_to_user(opt_value, &0u8 as *const u8, size_of::<TimeSpec>());
                         }
                     }
-
-                    *opt_len = size_of::<TimeSpec>() as u32;
                 }
             }
-            SocketOption::SO_ERROR => {}
+            SocketOption::SO_ERROR => {
+                let value: i32 = 0;
+                unsafe {
+                    #[cfg(target_arch = "riscv64")]
+                    copy_nonoverlapping(&value.to_ne_bytes() as *const u8, opt_value, 4);
+                    #[cfg(target_arch = "loongarch64")]
+                    copy_to_user(opt_value, &value.to_ne_bytes() as *const u8, 4);
+                    *opt_len = 4;
+                }
+            }
             SocketOption::SO_SNDTIMEO => {
                 panic!("unimplemented!")
             }
@@ -2188,22 +2198,41 @@ impl TcpSocketOption {
 
         match self {
             TcpSocketOption::TCP_NODELAY => {
-                if opt.len() < 4 {
-                    panic!("can't read a int from socket opt value");
-                }
-                let opt_value = u32::from_be_bytes(<[u8; 4]>::try_from(&opt[0..4]).unwrap());
-                socket.set_nagle_enabled(opt_value == 0);
-                Ok(0)
-            }
+                        if opt.len() < 4 {
+                            panic!("can't read a int from socket opt value");
+                        }
+                        let opt_value = u32::from_be_bytes(<[u8; 4]>::try_from(&opt[0..4]).unwrap());
+                        socket.set_nagle_enabled(opt_value == 0);
+                        Ok(0)
+                    }
             TcpSocketOption::TCP_MAXSEG => {
-                unimplemented!()
-            }
+                        unimplemented!()
+                    }
             TcpSocketOption::TCP_INFO => Ok(0),
             TcpSocketOption::TCP_CONGESTION => {
-                rawsocket.set_congestion(String::from_utf8(Vec::from(opt)).unwrap());
-                Ok(0)
-            }
+                        rawsocket.set_congestion(String::from_utf8(Vec::from(opt)).unwrap());
+                        Ok(0)
+                    }
             TcpSocketOption::SO_OOBINLINE => Ok(0),
+            TcpSocketOption::TCP_KEEPIDLE => {
+                let opt_value = u32::from_le_bytes(<[u8; 4]>::try_from(&opt[0..4]).unwrap());
+                log::error!("[TcpSocketOption::TCP_KEEPIDLE]opt_value is {:?}",opt_value);
+                socket.set_keep_alive();
+                socket.set_tcp_keepidle(opt_value as u64);
+                Ok(0)
+            },
+            TcpSocketOption::TCP_KEEPINTVL => {
+                let opt_value = u32::from_le_bytes(<[u8; 4]>::try_from(&opt[0..4]).unwrap());
+                log::error!("[TcpSocketOption::TCP_KEEPINTVL]opt_value is {:?}", opt_value);
+                socket.set_tcp_keepintvl(opt_value as u64);
+                Ok(0)
+            },
+            TcpSocketOption::TCP_KEEPCNT => {
+                let opt_value = u32::from_le_bytes(<[u8; 4]>::try_from(&opt[0..4]).unwrap());
+                log::error!("[TcpSocketOption::TCP_KEEPCNT]opt_value is {:?}", opt_value);
+                socket.set_tcp_keepcnt(opt_value as u64);
+                Ok(0)
+            },
         }
     }
 
@@ -2215,13 +2244,55 @@ impl TcpSocketOption {
         let buf_len = unsafe { *opt_len };
         match self {
             TcpSocketOption::TCP_NODELAY => {
+                        if buf_len < 4 {
+                            panic!("can't read a int from socket opt value");
+                        }
+                        let value: i32 = if socket.nagle_enabled() { 0 } else { 1 };
+
+                        let value = value.to_ne_bytes();
+
+                        unsafe {
+                            #[cfg(target_arch = "riscv64")]
+                            copy_nonoverlapping(&value as *const u8, opt_addr, 4);
+                            #[cfg(target_arch = "loongarch64")]
+                            copy_to_user(opt_addr, &value as *const u8, 4);
+                            *opt_len = 4;
+                        }
+                    }
+            TcpSocketOption::TCP_MAXSEG => {
+                        let len = size_of::<usize>();
+
+                        let value: usize = 1500;
+
+                        unsafe {
+                            #[cfg(target_arch = "riscv64")]
+                            copy_nonoverlapping(&value as *const usize as *const u8, opt_addr, len);
+                            #[cfg(target_arch = "loongarch64")]
+                            copy_to_user(opt_addr, &value as *const usize as *const u8, len);
+                            *opt_len = len as u32;
+                        };
+                    }
+            TcpSocketOption::TCP_INFO => {}
+            TcpSocketOption::TCP_CONGESTION => {
+                        let bytes = rawsocket.get_congestion();
+                        let bytes = bytes.as_bytes();
+
+                        unsafe {
+                            #[cfg(target_arch = "riscv64")]
+                            copy_nonoverlapping(bytes.as_ptr(), opt_addr, bytes.len());
+                            #[cfg(target_arch = "loongarch64")]
+                            copy_to_user(opt_addr, bytes.as_ptr(), bytes.len());
+                            *opt_len = bytes.len() as u32;
+                        };
+                    }
+            TcpSocketOption::SO_OOBINLINE => {}
+            TcpSocketOption::TCP_KEEPIDLE => {
                 if buf_len < 4 {
                     panic!("can't read a int from socket opt value");
                 }
-                let value: i32 = if socket.nagle_enabled() { 0 } else { 1 };
-
+                let value = socket.get_tcp_keepidle();
                 let value = value.to_ne_bytes();
-
+                log::error!("[TcpSocketOption::TCP_KEEPIDLE]value is {:?}", value);
                 unsafe {
                     #[cfg(target_arch = "riscv64")]
                     copy_nonoverlapping(&value as *const u8, opt_addr, 4);
@@ -2229,34 +2300,35 @@ impl TcpSocketOption {
                     copy_to_user(opt_addr, &value as *const u8, 4);
                     *opt_len = 4;
                 }
-            }
-            TcpSocketOption::TCP_MAXSEG => {
-                let len = size_of::<usize>();
-
-                let value: usize = 1500;
-
+            },
+            TcpSocketOption::TCP_KEEPINTVL => {
+                if buf_len < 4 {
+                    panic!("can't read a int from socket opt value");
+                }
+                let value = socket.get_tcp_keepintvl();
+                let value = value.to_ne_bytes();
                 unsafe {
                     #[cfg(target_arch = "riscv64")]
-                    copy_nonoverlapping(&value as *const usize as *const u8, opt_addr, len);
+                    copy_nonoverlapping(&value as *const u8, opt_addr, 4);
                     #[cfg(target_arch = "loongarch64")]
-                    copy_to_user(opt_addr, &value as *const usize as *const u8, len);
-                    *opt_len = len as u32;
-                };
-            }
-            TcpSocketOption::TCP_INFO => {}
-            TcpSocketOption::TCP_CONGESTION => {
-                let bytes = rawsocket.get_congestion();
-                let bytes = bytes.as_bytes();
-
+                    copy_to_user(opt_addr, &value as *const u8, 4);
+                    *opt_len = 4;
+                }
+            },
+            TcpSocketOption::TCP_KEEPCNT => {
+                if buf_len < 4 {
+                    panic!("can't read a int from socket opt value");
+                }
+                let value = socket.get_tcp_keepcnt();
+                let value = value.to_ne_bytes();
                 unsafe {
                     #[cfg(target_arch = "riscv64")]
-                    copy_nonoverlapping(bytes.as_ptr(), opt_addr, bytes.len());
+                    copy_nonoverlapping(&value as *const u8, opt_addr, 4);
                     #[cfg(target_arch = "loongarch64")]
-                    copy_to_user(opt_addr, bytes.as_ptr(), bytes.len());
-                    *opt_len = bytes.len() as u32;
-                };
-            }
-            TcpSocketOption::SO_OOBINLINE => {}
+                    copy_to_user(opt_addr, &value as *const u8, 4);
+                    *opt_len = 4;
+                }
+            },
         }
     }
 }
@@ -2319,6 +2391,36 @@ pub struct MessageHeaderRaw {
     pub control_len: u32, // control 缓冲区的大小
     pub flags: i32,       // recvmsg/sendmsg 时的 flags
 }
+
+impl Default for MessageHeaderRaw {
+    fn default() -> Self {
+        MessageHeaderRaw {
+            name: core::ptr::null_mut(),
+            name_len: 0,
+            iovec: core::ptr::null_mut(),
+            iovec_len: 0,
+            control: core::ptr::null_mut(),
+            control_len: 0,
+            flags: 0,
+        }
+    }
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct MMsgHdrRaw {
+    pub hdr: MessageHeaderRaw,
+    pub msg_len: u32,
+}
+impl Default for MMsgHdrRaw {
+    fn default() -> Self {
+        MMsgHdrRaw {
+            hdr: MessageHeaderRaw::default(),
+            msg_len: 0,
+        }
+    }
+}
+pub const MAX_IOVECS: usize = 64;
+pub const MAX_BUF_SIZE: usize = 4096;
 // impl Drop for Socket{
 //     fn drop(&mut self) {
 //         let mut waiter=self.waiter.lock();

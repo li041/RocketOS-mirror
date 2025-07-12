@@ -11,7 +11,7 @@ use riscv::register::{
 };
 
 use crate::{
-    arch::mm::PageTable,
+    arch::{mm::PageTable, trap::context::dump_trap_context},
     fs::{dentry::clean_dentry_cache, proc::interrupts::record_interrupt},
     mm::VirtAddr,
     signal::{handle_signal, SiField, SigInfo},
@@ -119,17 +119,16 @@ pub fn trap_handler(cx: &mut TrapContext) {
             // 2. lazy allocation
             let va = VirtAddr::from(stval);
             let casue = PageFaultCause::from(scause.cause());
-            // 8.21 Debug
-            // log::error!(
-            //     "page fault cause {:?}, bad_addr = {:#x}, sepc = {:#x}",
-            //     scause.cause(),
-            //     stval,
-            //     sepc::read()
-            // );
+            log::error!(
+                "page fault cause {:?}, bad_addr = {:#x}, sepc = {:#x}",
+                scause.cause(),
+                stval,
+                sepc::read()
+            );
             let task = current_task();
             task.op_memory_set_mut(|memory_set| {
                 if let Err(sig) = memory_set.handle_recoverable_page_fault(va, casue) {
-                    // memory_set.page_table.dump_all_user_mapping();
+                    memory_set.page_table.dump_all_user_mapping();
                     // dump_trap_context(&current_task());
                     // panic!(
                     log::error!(

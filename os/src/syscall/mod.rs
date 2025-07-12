@@ -11,7 +11,6 @@
 //! submodules, and you should also implement syscalls this way.
 
 use errno::{Errno, SyscallRet};
-use fs::sys_faccessat2;
 pub use fs::{
     sys_chdir, sys_chroot, sys_close, sys_close_range, sys_copy_file_range, sys_dup, sys_dup3,
     sys_faccessat, sys_fadvise64, sys_fallocate, sys_fchdir, sys_fchmod, sys_fchmodat, sys_fchown,
@@ -26,6 +25,7 @@ pub use fs::{
     sys_truncate, sys_umask, sys_umount2, sys_unlinkat, sys_utimensat, sys_vmsplice, sys_write,
     sys_writev,
 };
+use fs::{sys_eventfd, sys_faccessat2};
 use mm::{
     sys_brk, sys_get_mempolicy, sys_madvise, sys_membarrier, sys_mlock, sys_mmap, sys_mprotect,
     sys_mremap, sys_munmap, sys_shmat, sys_shmctl, sys_shmdt, sys_shmget,
@@ -33,7 +33,7 @@ use mm::{
 use net::{
     syscall_accept, syscall_accept4, syscall_bind, syscall_connect, syscall_getpeername,
     syscall_getsocketopt, syscall_getsockname, syscall_listen, syscall_recvfrom, syscall_recvmsg,
-    syscall_send, syscall_sendmsg, syscall_setdomainname, syscall_sethostname,
+    syscall_send, syscall_sendmmsg, syscall_sendmsg, syscall_setdomainname, syscall_sethostname,
     syscall_setsocketopt, syscall_shutdown, syscall_socket, syscall_socketpair,
 };
 use sched::{
@@ -53,10 +53,10 @@ use task::{
 };
 use util::{
     sys_adjtimex, sys_bpf, sys_clock_adjtime, sys_clock_getres, sys_clock_gettime,
-    sys_clock_settime, sys_getitimer, sys_getrlimit, sys_getrusage, sys_prlimit64, sys_setitimer,
-    sys_setrlimit, sys_shutdown, sys_sysinfo, sys_syslog, sys_timer_create, sys_timer_delete,
-    sys_timer_getoverrun, sys_timer_gettimer, sys_timer_settimer, sys_timerfd_create,
-    sys_timerfd_gettime, sys_timerfd_settime, sys_times, sys_uname, SysInfo,
+    sys_clock_settime, sys_getitimer, sys_getrandom, sys_getrlimit, sys_getrusage, sys_prlimit64,
+    sys_setitimer, sys_setrlimit, sys_shutdown, sys_sysinfo, sys_syslog, sys_timer_create,
+    sys_timer_delete, sys_timer_getoverrun, sys_timer_gettimer, sys_timer_settimer,
+    sys_timerfd_create, sys_timerfd_gettime, sys_timerfd_settime, sys_times, sys_uname, SysInfo,
 };
 
 use crate::{
@@ -68,11 +68,14 @@ use crate::{
     mm::shm::{ShmGetFlags, ShmId},
     signal::{SigInfo, SigSet},
     syscall::{
-        fs::{sys_inotify_add_watch, sys_inotify_init, sys_inotify_rm_watch}, sched::{
+        fs::{sys_inotify_add_watch, sys_inotify_init, sys_inotify_rm_watch},
+        sched::{
             sys_getpriority, sys_sched_get_priority_max, sys_sched_get_priority_min,
             sys_sched_getattr, sys_sched_rr_get_interval, sys_sched_setattr, sys_sched_setparam,
             sys_setpriority,
-        }, signal::{sys_rt_sigqueueinfo, sys_sigaltstack}, task::{sys_execveat, sys_getcpu, sys_waitid}
+        },
+        signal::{sys_rt_sigqueueinfo, sys_sigaltstack},
+        task::{sys_execveat, sys_getcpu, sys_waitid},
     },
     task::rusage::RUsage,
     time::KernelTimex,
@@ -106,6 +109,7 @@ const SYSCALL_LREMOVEXATTR: usize = 15;
 const SYSCALL_FREMOVEXATTR: usize = 16;
 const SYSCALL_GETCWD: usize = 17;
 // epoll一族
+const SYSCALL_EVENTFD2: usize = 19;
 const SYSCALL_DUP: usize = 23;
 const SYSCALL_DUP3: usize = 24;
 const SYSCALL_FCNTL: usize = 25;
@@ -314,6 +318,7 @@ const SYSCALL_ACCEPT4: usize = 242;
 const SYSCALL_WAIT4: usize = 260;
 const SYSCALL_PRLIMIT: usize = 261;
 const SYSCALL_FANOTIFY: usize = 262;
+const SYSCALL_SENDMMSG: usize = 269;
 const SYSCALL_SCHED_SETATTR: usize = 274;
 const SYSCALL_SCHED_GETATTR: usize = 275;
 const SYSCALL_RENAMEAT2: usize = 276;
@@ -382,6 +387,7 @@ pub fn syscall(
         SYSCALL_LREMOVEXATTR => sys_lremovexattr(a0 as *const u8, a1 as *const u8),
         SYSCALL_FREMOVEXATTR => sys_fremovexattr(a0, a1 as *const u8),
         SYSCALL_GETCWD => sys_getcwd(a0 as *mut u8, a1),
+        SYSCALL_EVENTFD2 => sys_eventfd(a0 as u64, a1 as u32),
         SYSCALL_DUP => sys_dup(a0),
         SYSCALL_DUP3 => sys_dup3(a0, a1, a2 as i32),
         SYSCALL_FCNTL => sys_fcntl(a0 as i32, a1 as i32, a2),
@@ -569,6 +575,7 @@ pub fn syscall(
         SYSCALL_RECVFROM => syscall_recvfrom(a0, a1 as *mut u8, a2, a3, a4, a5),
         SYSCALL_SHUTDOWN => syscall_shutdown(a0, a1),
         SYSCALL_PRLIMIT => sys_prlimit64(a0, a1 as i32, a2 as *const RLimit, a3 as *mut RLimit),
+        SYSCALL_SENDMMSG => syscall_sendmmsg(a0, a1, a2, a3),
         SYSCALL_SCHED_SETATTR => sys_sched_setattr(a0 as isize, a1, a2 as u32),
         SYSCALL_SCHED_GETATTR => sys_sched_getattr(a0 as isize, a1, a2 as u32, a3 as u32),
         SYSCALL_GETSOCKNAME => syscall_getsockname(a0, a1, a2),
@@ -580,9 +587,9 @@ pub fn syscall(
             a3 as *const u8,
             a4 as i32,
         ),
-        SYSCALL_GETRANDOM => Ok(1), // python3.10 需要这个系统调用
         SYSCALL_MEMFD_CREATE => sys_memfd_create(a0 as *const u8, a1 as i32),
         SYSCALL_BPF => sys_bpf(a0 as i32, a1, a2),
+        SYSCALL_GETRANDOM => sys_getrandom(a0, a1, a2),
         SYSCALL_EXECVEAT => sys_execveat(
             a0 as i32,
             a1 as *mut u8,

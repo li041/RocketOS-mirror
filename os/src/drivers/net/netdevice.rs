@@ -2,8 +2,8 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-26 10:01:09
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-04-30 14:43:29
- * @FilePath: /RocketOS/os/src/drivers/net/netdevice.rs
+ * @LastEditTime: 2025-08-06 17:55:59
+ * @FilePath: /RocketOS_netperfright/os/src/drivers/net/netdevice.rs
  * @Description: 
  * 
  * Copyright (c) 2025 by peterluck2021@163.com, All Rights Reserved. 
@@ -29,7 +29,7 @@ pub trait NetDevice:Sync + Send {
     //回收接收的buffer
     fn recycle_recv_buffer(&mut self,recv_buf:NetBufPtr);
     fn recycle_send_buffer(&mut self)->Result<(),()>;
-    fn send(&mut self,ptr:NetBufPtr);
+    fn send(&mut self,ptr:NetBufPtr)->usize;
     fn recv(&mut self)->Option<NetBufPtr>;
     //分配一个发送的数据包
     fn alloc_send_buffer(&mut self,size:usize)->NetBufPtr;
@@ -43,8 +43,8 @@ pub trait NetDevice:Sync + Send {
 
 
 
-
-#[derive(Debug)]
+#[repr(C)]
+#[derive(Debug,Clone, Copy)]
 pub struct NetBufPtr{
     ///NetBuf指针
     pub netbuf_ptr:NonNull<u8>,

@@ -2,6 +2,7 @@
 use core::{arch::asm, iter::Map, mem, ops::Range, usize};
 
 use super::{address::StepByOne, area::MapArea, shm::ShmSegment, VPNRange};
+#[cfg(feature="board")]
 use crate::drivers::block::ramdisk::{RAMDISK_BASE, RAMDISK_SIZE};
 use crate::drivers::get_dev_tree_size;
 use crate::fs::file;

@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-02 23:04:54
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-06-28 20:57:33
+ * @LastEditTime: 2025-07-19 20:41:37
  * @FilePath: /RocketOS_netperfright/os/src/syscall/net.rs
  * @Description: net syscall
  *
@@ -22,7 +22,7 @@ use crate::{
         addr::{from_ipendpoint_to_socketaddr, LOOP_BACK_IP},
         alg::encode,
         socket::{
-            check_alg, socket_address_from, socket_address_from_af_alg, socket_address_from_unix, socket_address_to, socket_address_tounix, ALG_Option, Domain, IpOption, Ipv6Option, MessageHeaderRaw, Protocol, SOL_PACKET_Option, SockAddrIn, Socket, SocketOption, SocketOptionLevel, SocketType, TcpSocketOption, SOCK_CLOEXEC, SOCK_NONBLOCK
+            check_alg, socket_address_from, socket_address_from_af_alg, socket_address_from_unix, socket_address_to, socket_address_tounix, ALG_Option, Domain, IpOption, Ipv6Option, MMsgHdrRaw, MessageHeaderRaw, Protocol, SOL_PACKET_Option, SockAddrIn, Socket, SocketOption, SocketOptionLevel, SocketType, TcpSocketOption, SOCK_CLOEXEC, SOCK_NONBLOCK
         },
         socketpair::create_buffer_ends,
     },
@@ -647,6 +647,9 @@ pub fn syscall_recvfrom(
             if socketaddr!=0&&socketlen!=0 {
                 socket_address_to(addr, socketaddr, socketlen)?;
             }
+            if size == 0 {
+                return Err(Errno::EAGAIN);
+            }
             return Ok(size);
         }
         Err(e) => Err(e),
@@ -863,7 +866,7 @@ pub fn syscall_getsockname(socketfd: usize, socketaddr: usize, socketlen: usize)
     }
     let mut len = vec![0; 1];
     copy_from_user(socketlen as *const u8, len.as_mut_ptr(), len.len())?;
-    log::error!("[syscall_getpeername]len is {:?}", len);
+    log::error!("[syscall_getsockname]len is {:?}", len);
     if len[0] == 255 {
         return Err(Errno::EINVAL);
     }
@@ -1065,20 +1068,13 @@ pub fn syscall_sendmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallR
     };
 
     // 1. 从用户空间拷贝一份 MessageHeaderRaw
-    let mut user_hdr = MessageHeaderRaw {
-        name: core::ptr::null_mut(),
-        name_len: 0,
-        iovec: core::ptr::null_mut(),
-        iovec_len: 0,
-        control: core::ptr::null_mut(),
-        control_len: 0,
-        flags: 0,
-    };
+    let mut user_hdr = MessageHeaderRaw::default();
     copy_from_user(
         msg_ptr as *const MessageHeaderRaw,
         &mut user_hdr as *mut MessageHeaderRaw,
         1,
     )?;
+    log::error!("[syscall_sendmsg] send user_hdr is {:?}",user_hdr);
     // 2. 准备 name buffer，获得对端地址
     //kernel name for af_alg,peer_addr for tcp/udp,peer_path for unix
     let mut kernel_name = Vec::new();
@@ -1106,7 +1102,7 @@ pub fn syscall_sendmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallR
             peer_addr = Some(socket.peer_name()?);
         }
     }
-    log::error!("[1c]");
+    log::error!("[syscall_sendmsg] peer_addr is {:?}", peer_addr);
     let mut peer_path = Vec::new();
     if socket.domain == Domain::AF_UNIX {
         log::error!("[1d]");
@@ -1247,6 +1243,58 @@ pub fn syscall_sendmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallR
         }
     }
 }
+
+pub fn syscall_sendmmsg(
+    socketfd: usize,
+    mmsghdr_ptr: usize,
+    count: usize,
+    flags: usize,
+) -> SyscallRet {
+    log::error!("[syscall_sendmmsg]: begin sendmmsg: fd={}, ptr={:#x}, count={}, flags={}",
+        socketfd, mmsghdr_ptr, count, flags);
+
+    // Validate file descriptor and socket
+    // let task = current_task();
+    // let file = task.fd_table().get_file(socketfd)
+    //     .ok_or(Errno::EBADF)?;
+    // let socket = file.as_any()
+    //     .downcast_ref::<Socket>()
+    //     .ok_or(Errno::ENOTSOCK)?;
+
+    let hdr_size = 64;
+    log::error!("[syscall_sendmmsg]: header size is {}", hdr_size);
+    let mut any_sent = 0;
+
+    // Loop over each mmsghdr
+    for idx in 0..count {
+        let this_ptr = unsafe { (mmsghdr_ptr as *mut u8).add(idx * hdr_size) } as *mut MMsgHdrRaw;
+
+        // 1. Copy header from user
+        let mut user_mhdr = MMsgHdrRaw::default();
+        copy_from_user(this_ptr, &mut user_mhdr as *mut MMsgHdrRaw, 1)?;
+        log::error!("[syscall_sendmmsg]: user_mhdr: {:?}", user_mhdr);
+        // 2. Perform sendmsg for this message
+        // if user_mhdr.hdr.iovec as usize==0&& user_mhdr.hdr.iovec_len!=0 {
+        //     continue;
+        // }
+        match syscall_sendmsg(socketfd, this_ptr as usize, flags) {
+            Ok(sent) => {
+                any_sent = sent;
+                // 3. Write back the length sent into msg_len
+                log::error!("[syscall_sendmmsg]: sent {} bytes for message {}", sent, idx);
+                let len_ptr = unsafe { (this_ptr as *mut u8).add(32) } as *mut u32;
+                let to_copy: u32 = sent as u32;
+                copy_to_user(len_ptr, &to_copy as *const u32, 1)?;
+            }
+            Err(e) => {
+                log::error!("[syscall_sendmmsg]: sendmsg failed at index {}: {:?}", idx, e);
+                return Err(e);
+            }
+        }
+    }
+    Ok(0)
+}
+
 pub fn syscall_recvmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallRet {
     log::debug!("[syscall_recvmsg]: begin recvmsg");
     log::debug!(

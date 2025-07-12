@@ -8,7 +8,7 @@ use spin::RwLock;
 use crate::{
     arch::{
         mm::{copy_from_user, copy_to_user},
-        sbi::console_getchar,
+        sbi::console_getchar, virtio_blk::virt_to_phys,
     },
     ext4::inode::{Ext4InodeDisk, S_IFCHR},
     fs::{
@@ -20,7 +20,7 @@ use crate::{
     },
     syscall::errno::{Errno, SyscallRet},
     task::{yield_current_task, Tid},
-    timer::TimeSpec,
+    timer::TimeSpec, utils::c_str_to_string,
 };
 
 pub static TTY: Once<Arc<dyn FileOp>> = Once::new();

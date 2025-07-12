@@ -25,3 +25,4 @@ cfs = []
 
 [profile.release]
 panic = "abort"
+

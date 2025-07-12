@@ -55,7 +55,6 @@ use core::{
 use fs::dentry::dump_dentry_cache;
 use mm::FRAME_ALLOCATOR;
 use task::info_allocator;
-
 global_asm!(include_str!("link_app.S"));
 
 /// clear BSS segment
@@ -177,7 +176,8 @@ pub fn rust_main(hart_id: usize) -> ! {
         DMW, DMW2, DMW3,
     };
     use task::run_tasks;
-
+    #[cfg(feature="la2000")]
+    use net::init_la2000_net;
     if IS_BOOT
         .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
         .is_ok()
@@ -196,6 +196,8 @@ pub fn rust_main(hart_id: usize) -> ! {
         println!("[kernel] boot hart {}", hart_id);
         #[cfg(feature = "smp")]
         start_other_harts(hart_id);
+        #[cfg(feature="la2000")]
+        init_la2000_net();
         enable_timer_interrupt();
         set_next_trigger();
         add_initproc(hart_id);

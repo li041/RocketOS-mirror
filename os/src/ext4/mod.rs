@@ -1,4 +1,5 @@
 use crate::{
+    ext4::dentry::EXT4_DT_REG,
     fs::{
         dentry::{Dentry, DentryFlags},
         dev::{
@@ -250,7 +251,7 @@ impl InodeOp for Ext4Inode {
         // 将inode写入block_cache
         write_inode(&new_inode, new_inode_num, self.block_device.clone());
         // 在父目录中添加对应项
-        self.add_entry(dentry.clone(), new_inode_num as u32, EXT4_DT_DIR);
+        self.add_entry(dentry.clone(), new_inode_num as u32, EXT4_DT_REG);
         // 关联到dentry
         dentry.inner.lock().inode = Some(new_inode);
         // 更新dentry flags, 去掉负目录项标志, 添加常规文件标志
@@ -330,6 +331,8 @@ impl InodeOp for Ext4Inode {
                     old_dir_entry.inode_num as u32,
                     old_dir_entry.file_type,
                 );
+            // 更新指向的inode
+            new_dentry.inner.lock().inode = Some(old_dentry.get_inode());
         }
 
         let (old_name, old_inode_num) = {

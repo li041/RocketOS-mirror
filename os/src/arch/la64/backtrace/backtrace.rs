@@ -1,9 +1,13 @@
 use alloc::{string::String, sync::Arc, vec::Vec};
 
-use crate::{arch::backtrace::symbol::lookup_symbol, fs::namei, task::{current_task, get_stack_top_by_sp, Task, KSTACK_SIZE}};
+use crate::{
+    arch::backtrace::symbol::lookup_symbol,
+    fs::namei,
+    task::{current_task, get_stack_top_by_sp, Task, KSTACK_SIZE},
+};
 
 // 嵌套深度
-const MAX_BACKTRACE_DEPTH: usize = 32;  
+const MAX_BACKTRACE_DEPTH: usize = 32;
 
 /// 打印当前任务的调用栈信息
 pub fn dump_backtrace() {
@@ -26,12 +30,13 @@ pub fn dump_backtrace() {
     while frame_count < MAX_BACKTRACE_DEPTH {
         // fp 中存储的是上一个栈帧的sp所指位置
         let (ra, last_sp) = unsafe { read_frame_info(fp) };
-        if let Some(name )  = lookup_symbol(ra-1) { // 这里减1是为了防止右侧开区间被计算
+        if let Some(name) = lookup_symbol(ra - 1) {
+            // 这里减1是为了防止右侧开区间被计算
             print_frame_info_with_symbol(frame_count, ra, name);
         } else {
             print_frame_info(frame_count, fp, ra);
         }
-        
+
         if last_sp < stack_base || last_sp >= stack_top {
             break;
         }
@@ -41,7 +46,10 @@ pub fn dump_backtrace() {
     }
 
     if frame_count >= MAX_BACKTRACE_DEPTH {
-        println!("Backtrace truncated at maximum depth of {}", MAX_BACKTRACE_DEPTH);
+        println!(
+            "Backtrace truncated at maximum depth of {}",
+            MAX_BACKTRACE_DEPTH
+        );
     }
 
     println!("/*************** Backtrace End ***************/");

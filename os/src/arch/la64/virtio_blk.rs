@@ -112,11 +112,11 @@ unsafe impl Hal for HalImpl {
     }
 }
 
-fn virt_to_phys(vaddr: usize) -> usize {
+pub fn virt_to_phys(vaddr: usize) -> usize {
     vaddr
 }
 
-fn phys_to_virt(paddr: usize) -> usize {
+pub fn phys_to_virt(paddr: usize) -> usize {
     paddr
 }
 

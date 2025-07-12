@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-30 16:26:09
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-07-13 12:58:39
+ * @LastEditTime: 2025-08-08 17:30:49
  * @FilePath: /RocketOS_netperfright/os/src/net/tcp.rs
  * @Description: tcp file 
  * 
@@ -12,11 +12,13 @@
 
 //本文将主要用于tcp的连接，按照linux中内容，主要状态转换为socket->bind(to a addr)->listen(listentable)->connect->send/recv
 
-use core::{cell::UnsafeCell, net::SocketAddr, ptr::copy_nonoverlapping, sync::atomic::{AtomicBool, AtomicU8, Ordering}, time};
+use core::{cell::UnsafeCell, net::SocketAddr, ptr::copy_nonoverlapping, sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering}, time};
 use alloc::vec;
 use smoltcp::{iface::SocketHandle, socket::tcp::{self, ConnectError, RecvError, SendError, State}, wire::{IpEndpoint, IpListenEndpoint, Ipv4Address}};
 use spin::Mutex;
 
+#[cfg(feature="la2000")]
+use crate::net::ETH0_LA2000;
 use crate::{arch::timer::get_time, net::{addr::{from_sockaddr_to_ipendpoint, is_unspecified, LOOP_BACK_ENDPOINT}, ETH0, LOOPBACK}, syscall::errno::{Errno, SyscallRet}, task::{current_task, yield_current_task}};
 
 use super::{addr::UNSPECIFIED_ENDPOINT, listentable::ListenTable, poll_interfaces, SocketSetWrapper, LISTEN_TABLE, SOCKET_SET};
@@ -39,7 +41,10 @@ pub struct TcpSocket{
     loacl_addr:UnsafeCell<IpEndpoint>,
     remote_addr:UnsafeCell<IpEndpoint>,
     nonblock:AtomicBool,
-    reuse_addr:AtomicBool
+    reuse_addr:AtomicBool,
+    tcp_keepidle: AtomicU64,
+    tcp_keepintvl: AtomicU64,
+    tcp_keepcnt: AtomicU64,
 }
 //这几个状态i定义用于控制状态切换时的动作
 const STATE_CLOSED:u8=0;
@@ -71,6 +76,24 @@ impl TcpSocket {
     }
     fn is_listening(&self)->bool {
         self.state.load(Ordering::Acquire) ==STATE_LISTENING       
+    }
+    pub fn set_tcp_keepcnt(&self, value: u64) {
+        self.tcp_keepcnt.store(value, Ordering::Release);
+    }
+    pub fn set_tcp_keepidle(&self, value: u64) {
+        self.tcp_keepidle.store(value, Ordering::Release);
+    }
+    pub fn set_tcp_keepintvl(&self, value: u64) {
+        self.tcp_keepintvl.store(value, Ordering::Release);
+    }
+    pub fn get_tcp_keepcnt(&self)->u64{
+        self.tcp_keepcnt.load(Ordering::Acquire)
+    }
+    pub fn get_tcp_keepidle(&self)->u64{
+        self.tcp_keepidle.load(Ordering::Acquire)
+    }
+    pub fn get_tcp_keepintvl(&self)->u64{
+        self.tcp_keepintvl.load(Ordering::Acquire)
     }
     ///这里函数比较当前状态i是否为u8,如果是则执行f动作并切换到busy，直到f返回ok再切换为new,
     /// 如果f返回T,则同样返回T,反之返回当前current状态
@@ -109,10 +132,28 @@ impl TcpSocket {
             //分配一个可用的
             get_ephemeral_port()
         };
+        let task=current_task();
         debug_assert!(port!=0);
         //确保addr不是0.0.0.0
         let addr=if is_unspecified(local_addr.addr) {
-            Some(smoltcp::wire::IpAddress::Ipv4(Ipv4Address::new(127, 0, 0, 1)))
+            #[cfg(feature="vf2")]
+            {Some(smoltcp::wire::IpAddress::Ipv4(Ipv4Address::new(127, 0, 0, 1)))}
+            #[cfg(feature = "la2000")]
+            if task.exe_path().contains("git")|| task.exe_path().contains("curl"){
+                Some(smoltcp::wire::IpAddress::Ipv4(Ipv4Address::new(192, 168, 5, 100)))
+            }
+            else {
+                Some(smoltcp::wire::IpAddress::Ipv4(Ipv4Address::new(127, 0, 0, 1)))
+            }
+            // #[cfg(feature="git")]
+            // {Some(smoltcp::wire::IpAddress::Ipv4(Ipv4Address::new(10, 0, 2, 15)))}
+            #[cfg(feature="virt")]
+            if task.exe_path().contains("git")|| task.exe_path().contains("curl"){
+                Some(smoltcp::wire::IpAddress::Ipv4(Ipv4Address::new(10, 0, 2, 15)))
+            }
+            else {
+                Some(smoltcp::wire::IpAddress::Ipv4(Ipv4Address::new(127, 0, 0, 1)))
+            }
         }else{
             Some(local_addr.addr)
         };
@@ -220,13 +261,21 @@ impl TcpSocket {
             loacl_addr: UnsafeCell::new(UNSPECIFIED_ENDPOINT), 
             remote_addr: UnsafeCell::new(UNSPECIFIED_ENDPOINT), 
             nonblock: AtomicBool::new(false), 
-            reuse_addr: AtomicBool::new(false) }
+            reuse_addr: AtomicBool::new(false),
+            tcp_keepidle: AtomicU64::new(0),
+            tcp_keepintvl: AtomicU64::new(0),
+            tcp_keepcnt: AtomicU64::new(0),
+        }
     }
     pub fn new_connected(handle:SocketHandle,local_endpoint:IpEndpoint,remote_endpoint:IpEndpoint)->Self {
         TcpSocket { state: AtomicU8::new(STATE_CONNECTED),
              handle: UnsafeCell::new(Some(handle)), 
              loacl_addr: UnsafeCell::new(local_endpoint), 
-             remote_addr: UnsafeCell::new(remote_endpoint), nonblock: AtomicBool::new(false), reuse_addr: AtomicBool::new(false) }
+             remote_addr: UnsafeCell::new(remote_endpoint), nonblock: AtomicBool::new(false), reuse_addr: AtomicBool::new(false),
+             tcp_keepidle: AtomicU64::new(0),
+             tcp_keepintvl: AtomicU64::new(0),
+             tcp_keepcnt: AtomicU64::new(0),
+            }
     }
     pub fn local_addr(&self)->Result<IpEndpoint, Errno> {
         match self.get_state() {
@@ -286,12 +335,16 @@ impl TcpSocket {
                 return Err(Errno::ECONNREFUSED);
             }
             //需要判断连接的remote_addr是否是127.0.0.1,这将决定使用什么网卡
-            let iface=if remote_ipendpoint.addr.as_bytes()[0]==127 {
-                //使用回环网络todo
+            #[cfg(not(feature = "la2000"))]
+            let iface = if remote_ipendpoint.addr.as_bytes()[0] == 127 {
                 LOOPBACK.get().unwrap()
-            }else{
+            } else {
                 &ETH0.iface
             };
+            #[cfg(feature="la2000")]
+            let mut binding = ETH0_LA2000.lock();
+            #[cfg(feature="la2000")]
+            let iface=binding.get_mut().unwrap();
             // let (local_endpoint,remote_endpoint)=SOCKET_SET.with_socket_mut::<_,tcp::Socket,_>(handle, |socket|{
             //     //发送SYN等待syn ack
             //     socket.connect(iface.lock().context(), remote_ipendpoint, bound_endpoint).map_err(|e|match e {
@@ -309,7 +362,7 @@ impl TcpSocket {
             let (local_endpoint, remote_endpoint) =
                 SOCKET_SET.lock().get_mut().unwrap().with_socket_mut::<_, tcp::Socket, Result<(IpEndpoint, IpEndpoint), Errno>>(handle, |socket| {
                     socket
-                        .connect(iface.lock().context(), remote_ipendpoint, bound_endpoint)
+                        .connect(iface.lock().context(),remote_ipendpoint, bound_endpoint)
                         .map_err(|e| match e {
                             ConnectError::InvalidState  => Errno::ECONNREFUSED,
                             ConnectError::Unaddressable => Errno::ECONNREFUSED,
@@ -532,11 +585,11 @@ impl TcpSocket {
             SOCKET_SET.lock().get_mut().unwrap().with_socket_mut::<_,tcp::Socket,_>(handle,|socket|{
                 log::error!("[Tcp recv] recv queue len is{:?}",socket.recv_queue());
                 log::error!("[Tcp recv] socket state is {:?}",socket.state());
-                if times>10 {
-                    // socket.close();
-                    return Ok(0);
-                }
-                times+=1;
+                // if times>10 {
+                //     // socket.close();
+                //     return Ok(0);
+                // }
+                // times+=1;
                 if socket.recv_queue()>0 {
                     let len=socket.recv_slice(buf).map_err(|e|{
                         match e {
@@ -558,12 +611,12 @@ impl TcpSocket {
                 else if !socket.may_recv() {
                     // println!("[Tcp_recv] socket state is {:?}",socket.state());
                     // println!("connecting closed");
-                    socket.close();
+                    // socket.close();
                     Ok(0)
                 }
-                // else if socket.recv_queue()==0{
-                //     Ok(0)
-                // }
+                else if socket.recv_queue()==0{
+                    Ok(0)
+                }
                 else{
                     // log::trace!("[recv again]");
                     Err(Errno::EAGAIN)
@@ -673,10 +726,20 @@ impl TcpSocket {
 
 
     pub fn set_nagle_enabled(&self,enable:bool) {
-        let handle=unsafe { self.handle.get().read().unwrap() };
+        let handle=unsafe { self.handle.get().read().unwrap_or_else(||{
+            SOCKET_SET.lock().get().unwrap().add(SocketSetWrapper::new_tcp_socket())
+        }) };
         SOCKET_SET.lock().get_mut().unwrap().with_socket_mut::<_,tcp::Socket,_>(handle, |socket|{
             socket.set_nagle_enabled(enable);
         })
+    }
+    pub fn set_keep_alive(&self) {
+        let handle = unsafe { self.handle.get().read().unwrap_or_else(||{
+            SOCKET_SET.lock().get().unwrap().add(SocketSetWrapper::new_tcp_socket())
+        }) };
+        SOCKET_SET.lock().get_mut().unwrap().with_socket_mut::<_,tcp::Socket,_>(handle, |socket| {
+            socket.keep_alive();
+        });
     }
     pub fn nagle_enabled(&self)->bool {
         let handle=unsafe { self.handle.get().read().unwrap() };

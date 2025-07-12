@@ -208,6 +208,7 @@ impl FileOp for File {
     }
     fn read<'a>(&'a self, buf: &'a mut [u8]) -> SyscallRet {
         if self.inner.lock().path.dentry.is_dir() {
+            log::error!("read a directory as file path : {}", self.inner.lock().path.dentry.absolute_path);
             return Err(Errno::EISDIR);
         }
         let read_size = self.inner_handler(|inner| {

@@ -735,11 +735,11 @@ impl Drop for Ext4Inode {
     // 释放页缓存, inode bitmap, block bitmap, inode table
     // Todo: 可能有资源还没有释放
     fn drop(&mut self) {
-        log::warn!("[Ext4Inode::drop] inode_num: {}", self.inode_num,);
+        // log::warn!("[Ext4Inode::drop] inode_num: {}", self.inode_num,);
         let mut inner = self.inner.write();
         // 将inline_data写回磁盘
         if inner.inode_on_disk.has_inline_data() {
-            log::warn!("[Ext4Inode::drop] has inline data, write back to disk");
+            // log::warn!("[Ext4Inode::drop] has inline data, write back to disk");
             if let Some(inline_page) = self.address_space.lock().get_page_cache(0) {
                 // inline data在页缓存中, 写回磁盘
                 let inline_data: &[u8; EXT4_MAX_INLINE_DATA] = inline_page.get_ref(0);

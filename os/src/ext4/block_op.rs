@@ -65,7 +65,8 @@ impl<'a> Ext4DirContentRO<'a> {
             }
             let null_term_name_len = dentry.name.len() + 1;
             // LinuxDirent64的reclen需要对齐到8字节
-            let d_reclen = (NAME_OFFSET + null_term_name_len + 7) & !0x7;
+            log::info!("[Ext4DirContentRO::getdents]d_type is {:?}",dentry.file_type);
+            let d_reclen: usize = (NAME_OFFSET + null_term_name_len + 7) & !0x7;
             let dirent = LinuxDirent64 {
                 d_ino: dentry.inode_num as u64,
                 d_off: file_offset as u64,

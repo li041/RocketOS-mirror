@@ -1,14 +1,18 @@
+#[cfg(feature="la2000")]
+use alloc::borrow::ToOwned;
 /*
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-30 16:26:05
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-07-13 11:11:01
+ * @LastEditTime: 2025-08-08 22:04:01
  * @FilePath: /RocketOS_netperfright/os/src/net/mod.rs
  * @Description: net mod for interface wrapper,socketset
  *
  * Copyright (c) 2025 by peterluck2021@163.com, All Rights Reserved.
  */
-use alloc::{boxed::Box, vec};
+use alloc::{boxed::Box, sync::Arc, vec};
+#[cfg(feature="la2000")]
+use core::ops::Deref;
 use core::{cell::{OnceCell, RefCell}, ops::DerefMut, panic};
 use lazyinit::LazyInit;
 use listentable::ListenTable;
@@ -19,11 +23,15 @@ use smoltcp::{
     socket::{tcp::SocketBuffer, AnySocket, Socket},
     storage::{PacketBuffer, PacketMetadata},
     wire::{
-        EthernetAddress, EthernetFrame, HardwareAddress, IpCidr, IpProtocol, Ipv4Packet, TcpPacket,
+        EthernetAddress, EthernetFrame, HardwareAddress, IpCidr, IpProtocol, Ipv4Address, Ipv4Cidr, Ipv4Packet, TcpPacket
     },
 };
 // use socket::Socket;
-use crate::arch::virtio_blk::HalImpl;
+use crate::{arch::virtio_blk::HalImpl};
+#[cfg(feature="la2000")]
+use crate::drivers::net::la2000::platform::La2k1000_NetDevice;
+#[cfg(target_arch = "riscv64")]
+use crate::drivers::net::starfive::StarFiveDeviceWrapper;
 use crate::{
     arch::timer::get_time,
     drivers::net::{
@@ -46,7 +54,7 @@ pub mod tcp;
 pub mod udp;
 pub mod unix;
 pub mod socketpair;
-
+const IPV4_DEFAULT: IpCidr = IpCidr::Ipv4(Ipv4Cidr::new(Ipv4Address::new(0, 0, 0, 0), 0));
 ///用于在使用函数返回错误时返回，如果是true可以yield_now,反之必须退出，可能等待没有意义
 /// 任何使用block_on返回是如果是err必须返回是否需要继续阻塞
 // #[derive(Debug)]
@@ -60,6 +68,8 @@ pub mod socketpair;
 static SOCKET_SET: Mutex<OnceCell<SocketSetWrapper>> = Mutex::new(OnceCell::new());
 static RANDOM_SEED: u64 = 0xA2CE_05A2_CE05_A2CE;
 static ETH0: LazyInit<InterfaceWrapper> = LazyInit::new();
+static ETH0_LA2000: Mutex<OnceCell<Mutex<Interface>>> =Mutex::new(OnceCell::new());
+static NET_DEV_LA2000: Mutex<OnceCell<NetDeviceWrapper>> =Mutex::new(OnceCell::new());
 static LOOPBACK_DEV: LazyInit<Mutex<LoopbackDev>> = LazyInit::new();
 static LOOPBACK: LazyInit<Mutex<Interface>> = LazyInit::new();
 static LISTEN_TABLE: Mutex<OnceCell<ListenTable>> =  Mutex::new(OnceCell::new());
@@ -74,11 +84,13 @@ const GATEWAY: &str = "10.0.2.2";
 const IP: &str = "10.0.2.15";
 const GATEWAY_V6: &str = "fe00::2"; // IPv6 网关
 const IP_V6: &str = "fe00::15"; // Guest 的 IPv6 地址
+const GATEWAY_ONBOARD: &str = "192.168.5.131";
+const IP_ONBOARD: &str = "192.168.5.100";
 const DNS_V6: &str = "fe00::3"; // IPv6 DNS 服务器
 const PREFIX_V6: u8 = 64; // IPv6 子网前缀长度（默认 /64）
 
 //net 网络初始化
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", feature = "virt"))]
 pub fn init(net_device: Option<VirtioNetDevice<32, HalImpl, MmioTransport>>) {
     //初始化网卡
     if let Some(dev) = net_device {
@@ -137,53 +149,52 @@ pub fn init(net_device: Option<VirtioNetDevice<32, HalImpl, MmioTransport>>) {
     //     // LOOPBACK_DEV.init_once(Mutex::new(local_device));
     // }
 }
-
-//net 网络初始化
-#[cfg(target_arch = "riscv64")]
-#[cfg(feature = "vf2")]
-pub fn init_vf2() {
+#[cfg(all(target_arch = "riscv64", feature = "vf2"))]
+pub fn init_vf2_net(net_device: Option<StarFiveDeviceWrapper<32, HalImpl>>) {
     //初始化网卡
-    log::error!("[init_net]:begin init virtionetdevice");
-    // let ether_addr = dev.mac_address();
-    // let eth0 = InterfaceWrapper::new(
-    //     "eth0",
-    //     ether_addr,
-    //     NetDeviceWrapper {
-    //         inner: RefCell::new(Box::new(dev)),
-    //     },
-    // );
-    // let gateway_ipv4 = GATEWAY.parse().expect("invalid gateway");
-    // let gateway_ipv6 = GATEWAY_V6.parse().expect("invalid gateway");
-    // eth0.set_gatway(gateway_ipv4, gateway_ipv6);
-    // let ip_ipv4 = IP.parse().expect("invalid ip address");
-    // let ip_ipv6 = IP_V6.parse().expect("invalid ip address");
-    // eth0.set_ip_addr(ip_ipv4, 24);
-    // eth0.set_ip_addr(ip_ipv6, PREFIX_V6);
-    // ETH0.init_once(eth0);
-    let mut socket_set = SOCKET_SET.lock();
-    socket_set.get_or_init(|| {
-        // 初始化代码
-        SocketSetWrapper::new()
-    });
-    let mut listentable = LISTEN_TABLE.lock();
-    listentable.get_or_init(|| {
-        // 初始化代码
-        ListenTable::new()
-    });
-    let mut device = LoopbackDev::new(Medium::Ip);
-    let config = Config::new(smoltcp::wire::HardwareAddress::Ip);
-    let mut iface = Interface::new(
-        config,
-        &mut device,
-        SmolInstant::from_micros_const((get_time() / 1000) as i64),
-    );
-    iface.update_ip_addrs(|ip_addrs| {
-        ip_addrs
-            .push(IpCidr::new(IpAddress::v4(127, 0, 0, 1), 8))
-            .unwrap();
-    });
-    LOOPBACK.init_once(Mutex::new(iface));
-    LOOPBACK_DEV.init_once(Mutex::new(device));
+    if let Some(dev) = net_device {
+        log::error!("[init_net]:begin init virtionetdevice");
+        let ether_addr = dev.mac_address();
+        let eth0 = InterfaceWrapper::new(
+            "eth0",
+            ether_addr,
+            NetDeviceWrapper {
+                inner: RefCell::new(Box::new(dev)),
+            },
+        );
+        let gateway_ipv4 = GATEWAY_ONBOARD.parse().expect("invalid gateway");
+        let gateway_ipv6 = GATEWAY_V6.parse().expect("invalid gateway");
+        eth0.set_gatway(gateway_ipv4, gateway_ipv6);
+        let ip_ipv4 = IP_ONBOARD.parse().expect("invalid ip address");
+        let ip_ipv6 = IP_V6.parse().expect("invalid ip address");
+        eth0.set_ip_addr(ip_ipv4, 24);
+        eth0.set_ip_addr(ip_ipv6, PREFIX_V6);
+        ETH0.init_once(eth0);
+        let mut socket_set = SOCKET_SET.lock();
+        socket_set.get_or_init(|| {
+            // 初始化代码
+            SocketSetWrapper::new()
+        });
+        let mut listentable = LISTEN_TABLE.lock();
+        listentable.get_or_init(|| {
+            // 初始化代码
+            ListenTable::new()
+        });
+        let mut device = LoopbackDev::new(Medium::Ip);
+        let config = Config::new(smoltcp::wire::HardwareAddress::Ip);
+        let mut iface = Interface::new(
+            config,
+            &mut device,
+            SmolInstant::from_micros_const((get_time() / 1000) as i64),
+        );
+        iface.update_ip_addrs(|ip_addrs| {
+            ip_addrs
+                .push(IpCidr::new(IpAddress::v4(127, 0, 0, 1), 8))
+                .unwrap();
+        });
+        LOOPBACK.init_once(Mutex::new(iface));
+        LOOPBACK_DEV.init_once(Mutex::new(device));
+    }
     // else {
     //     panic!("currently not support loopback");
     //     //loopbackdev
@@ -197,8 +208,6 @@ pub fn init_vf2() {
     //     // LOOPBACK_DEV.init_once(Mutex::new(local_device));
     // }
 }
-
-
 #[cfg(target_arch="loongarch64")]
 pub fn init_la<T: Transport + 'static>(net_device: Option<VirtioNetDevice<32, HalImpl, T>>) {
     //初始化网卡
@@ -266,6 +275,126 @@ pub fn init_la<T: Transport + 'static>(net_device: Option<VirtioNetDevice<32, Ha
     //     // LOOPBACK_DEV.init_once(Mutex::new(local_device));
     // }
 }
+#[cfg(all(target_arch="loongarch64",feature="la2000"))]
+pub fn init_la2000_net() {
+    use crate::drivers::net::la2000::platform::La2k1000_NetDevice;
+
+    let net_device=Some(La2k1000_NetDevice::<32>::new());
+    //初始化网卡
+    //需要添加这个trace 否则会panic在uninit lazyinit
+    log::trace!("[init_la]");
+    log::trace!("[init_la]");
+    log::trace!("[init_la]");
+    log::trace!("[init_la]");
+    let mut socket_set = SOCKET_SET.lock();
+        socket_set.get_or_init(|| {
+            // 初始化代码
+            SocketSetWrapper::new()
+    });
+    log::trace!("[init_la]");
+    if let Some(dev) = net_device {
+        use smoltcp::wire::Ipv4Address;
+
+        log::error!("[init_la2000_net]:begin init La2k1000_NetDevice");
+        let ether_addr = dev.mac_address();
+        log::error!("[init_la2000_net new] interface init begin");
+        let mut config = Config::new(HardwareAddress::Ethernet(ether_addr));
+        log::error!("[init_la2000_net] interfaces config init");
+        config.random_seed = RANDOM_SEED;
+        let mut netdev=NetDeviceWrapper {
+                inner: RefCell::new(Box::new(dev)),
+        };
+        log::error!("[init_la2000_net]interface new begin");
+        let mut iface = Interface::new(
+            config,
+            &mut netdev,
+            SmolInstant::from_micros_const(get_time() as i64),
+        );
+        log::error!("[init_la2000_net] interface new end");
+        let gateway_ipv4=Ipv4Address::new(192, 168, 5, 131);
+        log::error!("[init_la2000_net] ineterface set gateway begin ipv4");
+        let res=iface.routes_mut().remove_default_ipv4_route();
+        log::error!("[init_la2000_net]ineterface remove route success {:?}",res);
+        iface.routes_mut().update(|storge|{
+            use smoltcp::iface::Route;
+            use core::ptr;
+            use core::alloc::Layout;
+            use smoltcp::wire::IpAddress;
+            println!("[init_la2000_net] update begin");
+            log::info!("[init_la2000_net] new_ipv4_gateway success");
+            let layout = Layout::new::<Route>();
+            log::info!("[init_la2000_net] route layout init success");
+            let raw = unsafe { alloc::alloc::alloc(layout) } as *mut Route;
+            log::info!("[init_la2000_net] raw ptr init success");
+            if raw.is_null() {
+                panic!("OOM allocating Route");
+            }
+            unsafe {
+                // 把 stack_route.prefix 按位写入 raw.prefix
+                ptr::write(&mut (*raw).cidr, IPV4_DEFAULT);
+                log::error!("[init_la2000_net] write cidr end");
+                // 把 stack_route.gateway 按位写入 raw.gateway
+                ptr::write(&mut (*raw).expires_at, None);
+                log::error!("[init_la2000_net] write expires_at end");
+                // 把 stack_route.metric  按位写入 raw.metric
+                ptr::write(&mut (*raw).preferred_until, None);
+                log::error!("[init_la2000_net] write preferred_until end");
+                let gateway=Ipv4Address::GATEWAY;
+                log::info!("[init_la2000_net] gateway is {:?}",gateway);
+                let address=IpAddress::Ipv4(gateway);
+                log::error!("[init_la2000_net] gateway is {:?}",address);
+                // let address=smoltcp::wire::IpAddress::Ipv4(Ipv4Address::GATEWAY);
+                ptr::write(&mut (*raw).via_router,address);
+                log::error!("[init_la2000_net] write via_router end");
+            }
+            unsafe {
+                let heap_route: &Route = &*raw;
+                log::info!(
+                    "[init_la2000_net] raw cidr is {:?}",
+                    heap_route.via_router
+                );
+            }
+            unsafe {
+                // 将 raw 指针转换为 Box<Route>（接管所有权）
+                let boxed_route = Box::from_raw(raw);
+                // 解引用并 push
+                storge.push(*boxed_route);
+                // Box 离开作用域时会自动释放内存
+                let route=storge.get(0).unwrap();
+                log::info!(
+                    "[init_la2000_net] route via_router is {:?},finally complete",
+                    route.via_router
+                );
+            }
+        });
+        log::error!("[init_la2000_net]ineterface get route success");
+        let ipv4_addr=Ipv4Address::new(192, 168, 5, 100);
+        let ipv4=IpAddress::Ipv4(ipv4_addr);
+        iface.update_ip_addrs(|ipvec|{
+           ipvec.push(IpCidr::new(ipv4, 24)).unwrap(); 
+        });
+        log::error!("[init_la2000_net]begin interface set gateway end");
+        let mut eth0_la2000=ETH0_LA2000.lock();
+        eth0_la2000.get_or_init(||{
+            Mutex::new(iface)
+        });
+        let mut dev_netla2000=NET_DEV_LA2000.lock();
+        dev_netla2000.get_or_init(||{
+            netdev
+        });
+        log::error!("[init_la2000_net]ip addr init complete");
+        let mut listentable = LISTEN_TABLE.lock();
+        listentable.get_or_init(|| {
+            // 初始化代码
+            ListenTable::new()
+        });
+        log::error!("[init_la2000_net] listentable init complete");
+
+        //notion! here we didn`t open local device`
+    }
+}
+
+
 pub fn add_membership(multicast_addr: IpAddress, _interface_addr: IpAddress) {
     // println!("[add_membership]add membership");
     let timestamp = SmolInstant::from_micros_const((get_time() / 1000) as i64);
@@ -354,13 +483,28 @@ impl<'a> SocketSetWrapper<'a> {
     pub fn poll_interfaces(&self) {
         // if LISTEN_TABLE.isipv4_ipv6(5555);
         // if LISTEN_TABLE.is_local(5555) {
-        // yield_current_task();s
-
-        let b = LOOPBACK.lock().poll(
+        // yield_current_task();
+        //vf2不支持git网络
+        let task=current_task();
+        if task.exe_path().contains("git") ||task.exe_path().contains("curl"){
+            #[cfg(not(feature="la2000"))]
+            ETH0.poll(&self.0);
+            #[cfg(feature="la2000")]
+            // poll_la2000(&self.0);
+            let a=ETH0_LA2000.lock().get_mut().unwrap().lock().poll(
             SmolInstant::from_micros_const((get_time() / 1000) as i64),
-            LOOPBACK_DEV.lock().deref_mut(),
-            &mut self.0.lock(),
-        );
+                NET_DEV_LA2000.lock().get_mut().unwrap().deref_mut(), 
+                &mut self.0.lock(),
+            );
+        }
+        else{
+            // #[cfg(any(feature = "virt", feature = "la2000",feature="vf2"))]
+            let b = LOOPBACK.lock().poll(
+                SmolInstant::from_micros_const((get_time() / 1000) as i64),
+                LOOPBACK_DEV.lock().deref_mut(),
+                &mut self.0.lock(),
+            );
+        }
         // log::error!("[poll_interfaces]:LoopbackDev may readiness {}",b);
     }
 
@@ -390,6 +534,7 @@ impl<'a> SocketSetWrapper<'a> {
 
 ///建立这个为了可以创建iface,要求必须实现device trait and size (size由box保证)
 /// 这里基本后面i使用的dyn device就是virtionetdevice
+// #[repr(C,align(32))]
 pub struct NetDeviceWrapper {
     inner: RefCell<Box<dyn NetDevice>>,
 }
@@ -403,15 +548,19 @@ impl Device for NetDeviceWrapper {
         _timestamp: smoltcp::time::Instant,
     ) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
         let mut dev = self.inner.borrow_mut();
+        // #[cfg(feature="la2000")]
         // if !dev.isok_recv() {
+        //     log::info!("[nothing recv]");
         //     return None;
         // }
         if dev.recycle_send_buffer().is_err() {
             return None;
         }
+        #[cfg(not(feature="la2000"))]
         if !dev.isok_send() {
             return None;
         }
+        // return None;
         let buf = match dev.recv() {
             Some(buf) => buf,
             None => return None,
@@ -435,7 +584,7 @@ impl Device for NetDeviceWrapper {
     }
     fn capabilities(&self) -> DeviceCapabilities {
         let mut caps = DeviceCapabilities::default();
-        caps.max_transmission_unit = 1514;
+        caps.max_transmission_unit = 3_000_000;
         caps.max_burst_size = None;
         caps.medium = Medium::Ethernet;
         caps
@@ -460,6 +609,7 @@ impl<'a> RxToken for NetRecvToken<'a> {
         let result = f(recv_buf.packet_mut());
         let mut dev = self.0.borrow_mut();
         dev.recycle_recv_buffer(recv_buf);
+        log::error!("[NetRecvToken] recycle recv buffer {:?}",recv_buf.packet());
         result
     }
 
@@ -476,17 +626,15 @@ impl<'a> TxToken for NetSendToken<'a> {
     where
         F: FnOnce(&mut [u8]) -> R,
     {
-        // log::error!("[NetSendToken]:begin send");
+        log::error!("[NetSendToken]:begin send");
         let mut dev = self.0.borrow_mut();
-        // log::error!("1");
         let send_buffer = dev.alloc_send_buffer(len);
-        // log::error!("2");
+
         let data = send_buffer.packet_mut();
-        // log::error!("3");
+  
         let res = f(data);
-        // log::error!("4");
-        dev.send(send_buffer);
-        // log::error!("5");
+        log::error!("[NetSendToken] send data is {:?}",data);
+        let a=dev.send(send_buffer);
         //利用virtionetdevice的free_device来push回收
         // if dev.recycle_send_buffer().is_err(){
         //     return None;
@@ -511,7 +659,7 @@ fn snoop_tcp_packet(buf: &[u8], sockets: &mut SocketSet<'_>) -> Result<(), smolt
         let dst_addr = (ipv4_packet.dst_addr(), tcp_packet.dst_port()).into();
         log::error!("[snoop_tcp_packet]:src_addr is {:?}", src_addr);
         log::error!("[snoop_tcp_packet]:dst_addr is {:?}", dst_addr);
-        let is_first = tcp_packet.syn() && !tcp_packet.ack();
+        let is_first = tcp_packet.syn() && tcp_packet.ack();
         log::error!(
             "[snoop_tcp_packet]:tcp_packet syn is {:?},ack is {:?}",
             tcp_packet.syn(),
@@ -529,7 +677,20 @@ pub fn poll_interfaces() {
     SOCKET_SET.lock().get().unwrap().poll_interfaces();
 }
 
+// pub fn poll_la2000(sockets: &Mutex<SocketSet>)->bool {
+//         log::info!("[poll_la2000] poll begin");
+//         let binding = ETH0_LA2000.lock();
+//         let mut iface = binding.get().unwrap().lock();
+//         let mut sockets = sockets.lock();
+//         let timestamp = SmolInstant::from_micros_const((get_time() / 1000) as i64);
+//         let binding = NET_DEV_LA2000.lock();
+//         let mut dev=binding.get().unwrap().lock();
+//         let res = iface.poll(timestamp, dev.deref_mut(), &mut sockets);
+//         log::info!("[poll_la2000] res is {:?}",res);
+//         res
+// }
 //connect 时需要1使用网卡抽象
+#[repr(C)]
 pub struct InterfaceWrapper {
     //smoltcp网卡抽象
     iface: Mutex<Interface>,
@@ -545,25 +706,65 @@ unsafe impl Sync for InterfaceWrapper {}
 
 impl<'a> InterfaceWrapper {
     fn new(name: &'static str, address: EthernetAddress, mut dev: NetDeviceWrapper) -> Self {
+        log::error!("[InterfaceWrapper new] interface init begin");
         let mut config = Config::new(HardwareAddress::Ethernet(address));
+        log::error!("[InterfacesWrapper_new] interfaces config init");
         config.random_seed = RANDOM_SEED;
         // let mut dev=VirtioNetDevice::new(transport)
 
         //这里dev要求有trait device+sized,而size可以由boxa承担，但device必须实现,让这里的netwrapper实现
         //Safety
         //这个函数可能会panic 如果config和dev的capability中的介质不同，传入的virtionetdevice中必须是ethernet
+        log::error!("[InterfaceWrapper_new]interface new begin");
         let iface = Mutex::new(Interface::new(
             config,
             &mut dev,
             SmolInstant::from_micros_const(get_time() as i64),
         ));
-        InterfaceWrapper {
+        log::error!("[InterfaceWrapper_new]interface new end");
+
+        let a=InterfaceWrapper {
             iface: iface,
             address: address,
             name: name,
-            dev: Mutex::new(dev),
-        }
+            dev:Mutex::new(dev)
+        };
+        log::error!("[InterfaceWrapper_new] interface new complete");
+        a
     }
+    // fn new_la2000(name: &'static str, address: EthernetAddress, mut dev: NetDeviceWrapper) ->Self {
+    //     log::error!("[InterfaceWrapper new] interface init begin");
+    //     let mut config = Config::new(HardwareAddress::Ethernet(address));
+    //     log::error!("[InterfacesWrapper_new] interfaces config init");
+    //     config.random_seed = RANDOM_SEED;
+    //     // let mut dev=VirtioNetDevice::new(transport)
+
+    //     //这里dev要求有trait device+sized,而size可以由boxa承担，但device必须实现,让这里的netwrapper实现
+    //     //Safety
+    //     //这个函数可能会panic 如果config和dev的capability中的介质不同，传入的virtionetdevice中必须是ethernet
+    //     log::error!("[InterfaceWrapper_new]interface new begin");
+    //     let iface = Mutex::new(Interface::new(
+    //         config,
+    //         &mut dev,
+    //         SmolInstant::from_micros_const(get_time() as i64),
+    //     ));
+    //     log::error!("[InterfaceWrapper_new]interface new end");
+    //     let m_dev=Mutex::new(dev);
+    //     let a=InterfaceWrapper {
+    //         iface: iface,
+    //         address: address,
+    //         name: name,
+    //         dev:m_dev
+    //     };
+    //     // let a=InterfaceWrapper{
+    //     //     iface,
+    //     //     address,
+    //     //     name,
+    //     //     dev: todo!(),
+    //     // }
+    //     log::error!("[InterfaceWrapper_new] interface new complete");
+    //     a
+    // }
     fn name(&self) -> &str {
         self.name
     }
