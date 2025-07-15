@@ -220,6 +220,9 @@ impl FileOp for MapsFile {
     fn readable(&self) -> bool {
         true
     }
+    fn writable(&self) -> bool {
+        false
+    }
     fn get_flags(&self) -> OpenFlags {
         self.flags
     }

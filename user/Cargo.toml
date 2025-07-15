@@ -15,3 +15,4 @@ bitflags = "1.2.1"
 # board_k210 = []
 [features]
 submit = []
+la2000 = []

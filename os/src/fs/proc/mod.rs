@@ -73,6 +73,43 @@ pub fn init_procfs(root_path: Arc<Path>) {
             panic!("create {} failed: {:?}", sys_path, e);
         }
     };
+    let fs_path = "/proc/sys/fs";
+    let mut nd = Nameidata {
+        path_segments: parse_path_uncheck(fs_path),
+        dentry: root_path.dentry.clone(),
+        mnt: root_path.mnt.clone(),
+        depth: 0,
+    };
+    let kernel_mode = S_IFDIR as u16 | 0o755;
+    match filename_create(&mut nd, 0) {
+        Ok(dentry) => {
+            let parent_inode = nd.dentry.get_inode();
+            parent_inode.mkdir(dentry.clone(), kernel_mode);
+        }
+        Err(e) => {
+            panic!("create {} failed: {:?}", fs_path, e);
+        }
+    };
+    let pipe_max_size_path = "/proc/sys/fs/pipe-max-size";
+    let mut nd = Nameidata {
+        path_segments: parse_path_uncheck(pipe_max_size_path),
+        dentry: root_path.dentry.clone(),
+        mnt: root_path.mnt.clone(),
+        depth: 0,
+    };
+    let pipe_max_size_mode = S_IFREG as u16 | 0o444;
+    match filename_create(&mut nd, 0) {
+        Ok(dentry) => {
+            let parent_inode = nd.dentry.get_inode();
+            parent_inode.create(dentry.clone(), pipe_max_size_mode);
+            // 现在dentry的inode指向/proc/sys/kernel/pipe_max_size
+            dentry.get_inode().write(0, b"4096"); // 设置默认的管道最大大小为4096字节
+            insert_core_dentry(dentry.clone());
+        }
+        Err(e) => {
+            panic!("create {} failed: {:?}", pipe_max_size_path, e);
+        }
+    };
     let kernel_path = "/proc/sys/kernel";
     let mut nd = Nameidata {
         path_segments: parse_path_uncheck(kernel_path),
@@ -90,6 +127,26 @@ pub fn init_procfs(root_path: Arc<Path>) {
             panic!("create {} failed: {:?}", kernel_path, e);
         }
     };
+    let domain_path = "/proc/sys/kernel/domainname";
+    let mut nd = Nameidata {
+        path_segments: parse_path_uncheck(domain_path),
+        dentry: root_path.dentry.clone(),
+        mnt: root_path.mnt.clone(),
+        depth: 0,
+    };
+    let domain_mode = S_IFREG as u16 | 0o444;
+    match filename_create(&mut nd, 0) {
+        Ok(dentry) => {
+            let parent_inode = nd.dentry.get_inode();
+            parent_inode.create(dentry.clone(), domain_mode);
+            dentry.get_inode().write(0, b"localdomain"); // 设置默认的域名为"localdomain"
+            insert_core_dentry(dentry.clone());
+        }
+        Err(e) => {
+            panic!("create {} failed: {:?}", domain_path, e);
+        }
+    };
+
     let taint_path = "/proc/sys/kernel/tainted";
     let mut nd = Nameidata {
         path_segments: parse_path_uncheck(taint_path),

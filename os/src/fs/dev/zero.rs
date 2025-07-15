@@ -141,4 +141,7 @@ impl FileOp for ZeroFile {
     fn get_flags(&self) -> OpenFlags {
         self.flags
     }
+    fn get_inode(&self) -> Arc<dyn InodeOp> {
+        self.inode.clone()
+    }
 }
