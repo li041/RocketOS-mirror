@@ -20,7 +20,7 @@ use fs::{
     sys_lremovexattr, sys_lseek, sys_lsetxattr, sys_mkdirat, sys_mknodat, sys_mount, sys_msync,
     sys_openat, sys_openat2, sys_pipe2, sys_ppoll, sys_pread, sys_preadv, sys_preadv2,
     sys_pselect6, sys_pwrite, sys_pwritev, sys_pwritev2, sys_read, sys_readlinkat, sys_readv,
-    sys_removexattr, sys_renameat2, sys_sendfile, sys_setxattr, sys_statfs, sys_statx,
+    sys_removexattr, sys_renameat2, sys_sendfile, sys_setxattr, sys_splice, sys_statfs, sys_statx,
     sys_symlinkat, sys_sync, sys_sync_file_range, sys_truncate, sys_umask, sys_umount2,
     sys_unlinkat, sys_utimensat, sys_write, sys_writev,
 };
@@ -132,6 +132,7 @@ const SYSCALL_PWRITEV: usize = 70;
 const SYSCALL_SENDFILE: usize = 71;
 const SYSCALL_PSELECT6: usize = 72;
 const SYSCALL_PPOLL: usize = 73;
+const SYSCALL_SPLICE: usize = 76;
 const SYSCALL_READLINKAT: usize = 78;
 const SYSCALL_FSTATAT: usize = 79;
 const SYSCALL_FSTAT: usize = 80;
@@ -355,6 +356,7 @@ pub fn syscall(
         SYSCALL_SENDFILE => sys_sendfile(a0, a1, a2 as *mut usize, a3),
         SYSCALL_PSELECT6 => sys_pselect6(a0, a1, a2, a3, a4 as *const TimeSpec, a5),
         SYSCALL_PPOLL => sys_ppoll(a0 as *mut PollFd, a1, a2 as *const TimeSpec, a3),
+        SYSCALL_SPLICE => sys_splice(a0, a1, a2, a3, a4, a5 as i32),
         SYSCALL_READLINKAT => {
             sys_readlinkat(a0 as i32, a1 as *const u8, a2 as *mut u8, a3 as isize)
         }

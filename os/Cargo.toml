@@ -9,6 +9,7 @@ panic = "abort"
 [features]
 default = []
 test = []
+la2000 = []
 
 [dependencies]
 buddy_system_allocator = "0.11.0"

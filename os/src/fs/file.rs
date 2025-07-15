@@ -65,7 +65,7 @@ pub trait FileOp: Any + Send + Sync {
         unimplemented!();
     }
     fn get_path(&self) -> Arc<Path> {
-        unimplemented!();
+        Path::zero_init()
     }
     /// Write `UserBuffer` to file
     fn write<'a>(&'a self, _buf: &'a [u8]) -> SyscallRet {
@@ -210,7 +210,17 @@ impl FileOp for File {
         if self.inner.lock().path.dentry.is_dir() {
             return Err(Errno::EISDIR);
         }
-        let read_size = self.inner_handler(|inner| inner.inode.read(inner.offset, buf));
+        let read_size = self.inner_handler(|inner| {
+            let mut read_size = inner.inode.read(inner.offset, buf);
+            if inner.path.dentry.absolute_path.starts_with("/proc/sys") {
+                // 如果是/proc/sys目录下的文件, 则确保以'\n'结尾
+                if read_size > 0 && buf[read_size - 1] != b'\n' {
+                    buf[read_size] = b'\n';
+                    read_size += 1;
+                }
+            }
+            read_size
+        });
         self.add_offset(read_size);
         Ok(read_size)
     }

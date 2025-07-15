@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicI32, Ordering};
 use spin::Mutex;
 
 use crate::fs::file::{FileOp, OpenFlags};
-use crate::fs::pipe::{PipeRingBuffer, RingBufferStatus};
+use crate::fs::pipe::{PipeRingBuffer, RingBufferStatus, RING_DEFAULT_BUFFER_SIZE};
 use crate::syscall::errno::{Errno, SyscallRet};
 use crate::task::{current_task, wait, wakeup, Tid};
 
@@ -223,8 +223,8 @@ impl FileOp for BufferEnd {
 /// 创建 SocketPair 的两个 BufferEnd
 pub fn create_buffer_ends(flags: OpenFlags) -> (Arc<BufferEnd>, Arc<BufferEnd>) {
     // let buf = SocketPairBuffer::new();
-    let end0_buf = Arc::new(Mutex::new(PipeRingBuffer::new(128)));
-    let end1_buf = Arc::new(Mutex::new(PipeRingBuffer::new(128)));
+    let end0_buf = Arc::new(Mutex::new(PipeRingBuffer::new(RING_DEFAULT_BUFFER_SIZE)));
+    let end1_buf = Arc::new(Mutex::new(PipeRingBuffer::new(RING_DEFAULT_BUFFER_SIZE)));
     let end0 = BufferEnd::new(end0_buf.clone(), end1_buf.clone(), flags);
     let end1 = BufferEnd::new(end1_buf.clone(), end0_buf.clone(), flags);
     // 设置读, 写端

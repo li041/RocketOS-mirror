@@ -8,8 +8,10 @@ use virtio_drivers::PAGE_SIZE;
 use crate::arch::config::USER_MAX_VA;
 use crate::arch::timer::{get_time_ms, get_time_ns, get_time_us};
 use crate::ext4::dentry;
-use crate::ext4::inode::{S_IFMT, S_IFREG, S_IFSOCK, S_ISGID};
-use crate::fs::dentry::{chown, dentry_check_access, LinuxDirent64, F_OK, R_OK, W_OK, X_OK};
+use crate::ext4::inode::{S_IFIFO, S_IFMT, S_IFREG, S_IFSOCK, S_ISGID};
+use crate::fs::dentry::{
+    chown, dentry_check_access, Dentry, LinuxDirent64, F_OK, R_OK, W_OK, X_OK,
+};
 use crate::fs::fd_set::init_fdset;
 use crate::fs::fdtable::FdFlags;
 use crate::fs::file::OpenFlags;
@@ -17,6 +19,7 @@ use crate::fs::kstat::Statx;
 use crate::fs::mount::get_mount_by_dentry;
 use crate::fs::namei::{
     link_path_walk, link_path_walk2, lookup_dentry, open_last_lookups, open_last_lookups2,
+    MAX_SYMLINK_DEPTH,
 };
 use crate::fs::pipe::make_pipe;
 use crate::fs::uapi::{
@@ -51,12 +54,12 @@ use crate::arch::mm::{copy_from_user, copy_to_user};
 use super::errno::SyscallRet;
 
 pub fn sys_lseek(fd: usize, offset: isize, whence: usize) -> SyscallRet {
-    // log::info!(
-    //     "[sys_lseek] fd: {}, offset: {}, whence: {}",
-    //     fd,
-    //     offset,
-    //     whence
-    // );
+    log::info!(
+        "[sys_lseek] fd: {}, offset: {}, whence: {}",
+        fd,
+        offset,
+        whence
+    );
     let task = current_task();
     let file = task.fd_table().get_file(fd);
     let whence = Whence::try_from(whence)?;
@@ -86,9 +89,15 @@ pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> SyscallRet {
         // let ret = file.read(unsafe { core::slice::from_raw_parts_mut(buf, len) });
         let mut ker_buf = vec![0u8; len];
         let read_len = file.read(&mut ker_buf)?;
-        // if fd >= 3 {
-        //     log::info!("sys_read: fd: {}, len: {}", fd, len);
-        // }
+        if fd >= 3 {
+            // log::info!("sys_read: fd: {}, len: {}", fd, len);
+            log::info!(
+                "sys_read: fd: {}, len: {}, buf: {:?}",
+                fd,
+                len,
+                String::from_utf8_lossy(&ker_buf[..read_len])
+            );
+        }
         let ker_buf_ptr = ker_buf.as_ptr();
         // assert!(ker_buf_ptr != core::ptr::null());
         // 写回用户空间
@@ -113,10 +122,10 @@ pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> SyscallRet {
         let file = file.clone();
         let mut ker_buf = vec![0u8; len];
         copy_from_user(buf, ker_buf.as_mut_ptr(), len)?;
-        // if fd >= 3 {
-        //     // log::info!("sys_write: fd: {}, len: {}, buf: {:?}", fd, len, ker_buf);
-        //     log::info!("sys_write: fd: {}, len: {}", fd, len);
-        // }
+        if fd >= 3 {
+            // log::info!("sys_write: fd: {}, len: {}, buf: {:?}", fd, len, ker_buf);
+            log::info!("sys_write: fd: {}, len: {}", fd, len);
+        }
         let ret = file.write(&ker_buf)?;
         Ok(ret)
     } else {
@@ -1143,6 +1152,8 @@ pub fn sys_renameat2(
     newpath: *const u8,
     flags: i32,
 ) -> SyscallRet {
+    let oldpath = c_str_to_string(oldpath)?;
+    let newpath = c_str_to_string(newpath)?;
     log::info!(
         "[sys_renameat2] olddirfd: {}, oldpath: {:?}, newdirfd: {}, newpath: {:?}, flags: {}",
         olddirfd,
@@ -1151,8 +1162,6 @@ pub fn sys_renameat2(
         newpath,
         flags
     );
-    let oldpath = c_str_to_string(oldpath)?;
-    let newpath = c_str_to_string(newpath)?;
     let flags = RenameFlags::from_bits(flags).unwrap();
     // 检查flags
     if (flags.contains(RenameFlags::NOREPLACE) || flags.contains(RenameFlags::WHITEOUT))
@@ -1169,7 +1178,59 @@ pub fn sys_renameat2(
         Ok(old_dentry) => {
             let mut new_nd = Nameidata::new(&newpath, newdirfd)?;
             // 检查newpath是否存在, 并进行相关的类型检查
-            let new_dentry = lookup_dentry(&mut new_nd);
+            // 解析newpath到其目录部分
+            link_path_walk(&mut new_nd)?;
+            let mut new_dentry;
+            {
+                // 到达最后一个组件, 若newpath存在, 则new_dentry为其目录项, 否则为负目录项
+                let mut follow_symlink_cnt = 0;
+                loop {
+                    if follow_symlink_cnt > MAX_SYMLINK_DEPTH {
+                        return Err(Errno::ELOOP); // 避免符号链接循环
+                    }
+                    let segment = new_nd.path_segments[new_nd.depth].as_str();
+                    let target_dentry = if segment == "." {
+                        new_nd.dentry.clone()
+                    } else if segment == ".." {
+                        let parent = new_nd.dentry.get_parent();
+                        debug_assert!(!parent.is_symlink());
+                        parent
+                    } else {
+                        let dentry = lookup_dentry(&mut new_nd);
+                        if !dentry.is_negative() {
+                            if dentry.is_symlink() {
+                                let symlink_target = dentry.get_inode().get_link(); // 读取符号链接目标
+                                log::warn!(
+                                    "[filename_lookup] Resolving symlink: {:?} -> {:?}",
+                                    new_nd.path_segments[new_nd.depth],
+                                    symlink_target
+                                );
+                                new_nd.resolve_symlink(&symlink_target);
+                                follow_symlink_cnt += 1;
+                                continue;
+                            }
+                            // 如果不是最后一个组件, 则继续解析
+                            if new_nd.depth != new_nd.path_segments.len() - 1 {
+                                // 更新nd.dentry
+                                new_nd.dentry = dentry.clone();
+                                new_nd.depth += 1;
+                                continue;
+                            }
+                            dentry
+                        } else {
+                            // 返回负目录项
+                            if new_nd.depth == new_nd.path_segments.len() - 1 {
+                                // 如果是最后一个组件, 则返回负目录项
+                                dentry
+                            } else {
+                                return Err(Errno::ENOENT); // 如果不是最后一个组件, 则返回ENOENT
+                            }
+                        }
+                    };
+                    new_dentry = target_dentry;
+                    break; // 成功解析到最后一个组件, 要么是存在的dentry, 要么是负目录项
+                }
+            }
             if new_dentry.is_negative() {
                 // new_path不存在
                 if flags.contains(RenameFlags::EXCHANGE) {
@@ -1225,6 +1286,14 @@ pub fn sys_renameat2(
             let old_dir_inode = old_dir_entry.get_inode();
             let new_dir_inode = new_dir_entry.get_inode();
             let should_mv = !Arc::ptr_eq(&old_dir_inode, &new_dir_inode);
+
+            log::info!(
+                "[sys_renameat2] old_dir: {:?}, new_dir: {:?}, should_mv: {}",
+                old_dir_entry.absolute_path,
+                new_dir_entry.absolute_path,
+                should_mv
+            );
+
             // inode层次的操作 + dentry层次的操作
             match old_dir_inode.rename(
                 new_dir_inode,
@@ -2477,7 +2546,7 @@ pub fn sys_copy_file_range(
         flags
     );
 
-    if len >= 0x1000000000000 {
+    if len >= EXT4_MAX_FILE_SIZE {
         log::error!("[sys_copy_file_range] len is too large");
         return Err(Errno::EINVAL);
     }
@@ -2651,8 +2720,15 @@ pub fn sys_faccessat(fd: usize, pathname: *const u8, mode: i32, flags: i32) -> S
         return Err(Errno::EINVAL);
     }
     // 检查 flags 是否只包含支持的标志
-    let supported_flags =
-        AT_EACCESS | AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH | 0x60 | 0x2 | 0xfffe | 0x1 | 0xca4b2;
+    let supported_flags = AT_EACCESS
+        | AT_SYMLINK_NOFOLLOW
+        | AT_EMPTY_PATH
+        | 0x60
+        | 0x2
+        | 0xfffe
+        | 0x1
+        | 0xca4b2
+        | 0x404658;
     if flags & !supported_flags != 0 {
         log::error!("[sys_faccessat] Unsupported flags: {:#x}", flags);
         return Err(Errno::EINVAL);
@@ -3381,6 +3457,116 @@ pub fn sys_memfd_create(name: *const u8, flags: u32) -> SyscallRet {
     }
 
     unimplemented!()
+}
+
+pub fn sys_splice(
+    fd_in: usize,
+    in_off_ptr: usize,
+    fd_out: usize,
+    out_off_ptr: usize,
+    len: usize,
+    flags: i32,
+) -> SyscallRet {
+    log::info!(
+        "[sys_splice] fd_in: {}, off_in: {:?}, fd_out: {}, off_out: {:?}, len: {}, flags: {}",
+        fd_in,
+        in_off_ptr,
+        fd_out,
+        out_off_ptr,
+        len,
+        flags
+    );
+
+    if len >= EXT4_MAX_FILE_SIZE {
+        log::error!("[sys_splice] len is too large: {}", len);
+        return Err(Errno::EINVAL);
+    }
+
+    let task = current_task();
+    let in_file = task.fd_table().get_file(fd_in);
+    let out_file = task.fd_table().get_file(fd_out);
+
+    if let (Some(in_file), Some(out_file)) = (in_file, out_file) {
+        if !in_file.readable() || !out_file.writable() {
+            log::error!("[sys_splice] invalid fd");
+            return Err(Errno::EBADF);
+        }
+        // 其中一段必须是管道或FIFO
+        let in_file_mode = in_file.get_inode().get_mode();
+        let out_file_mode = out_file.get_inode().get_mode();
+        // if in_file_mode & S_IFDIR != 0 || out_file_mode & S_IFDIR != 0 {
+        if in_file_mode & S_IFIFO == 0 && out_file_mode & S_IFIFO == 0 {
+            log::error!("[sys_splice] both file descriptors are not pipes or FIFOs");
+            return Err(Errno::EINVAL);
+        }
+        if out_file.get_flags().contains(OpenFlags::O_APPEND) {
+            log::error!("[sys_splice] O_APPEND files cannot be written to");
+            return Err(Errno::EINVAL);
+        }
+        // if (in_file_mode & S_IFMT) == S_IFDIR || (out_file_mode & S_IFMT) == S_IFDIR {
+        //     log::error!("[sys_splice] operations on directories are not allowed");
+        //     return Err(Errno::EISDIR);
+        // }
+
+        let mut in_off = 0isize;
+        let mut out_off = 0isize;
+        // 从用户空间读取偏移值（如果提供了指针）
+        if in_off_ptr != 0 {
+            copy_from_user(in_off_ptr as *const isize, &mut in_off, 1)?;
+        }
+        if in_off < 0 {
+            log::error!("[sys_splice] in_off cannot be negative");
+            return Err(Errno::EINVAL);
+        }
+        if out_off_ptr != 0 {
+            copy_from_user(out_off_ptr as *const isize, &mut out_off, 1)?;
+        }
+        if out_off < 0 {
+            log::error!("[sys_splice] out_off cannot be negative");
+            return Err(Errno::EINVAL);
+        }
+        let mut buf = vec![0u8; len];
+        let read_len = if in_off_ptr == 0 {
+            in_file.read(&mut buf)?
+        } else {
+            in_file.pread(&mut buf, in_off as usize)?
+        };
+
+        if read_len == 0 {
+            log::info!("[sys_copy_file_range] reached end of file, nothing copied");
+            return Ok(0);
+        }
+
+        // 7.14 Debug
+        log::warn!(
+            "[sys_splice] read_len: {}, buf: {:?}",
+            read_len,
+            String::from_utf8_lossy(&buf[..read_len])
+        );
+        let write_len = if out_off_ptr == 0 {
+            out_file.write(&buf[..read_len])?
+        } else {
+            out_file.pwrite(&buf[..read_len], out_off as usize)?
+        };
+
+        // 更新偏移值并写回用户空间
+        if in_off_ptr != 0 {
+            let new_in_off = in_off + read_len as isize;
+            copy_to_user(in_off_ptr as *mut isize, &new_in_off, 1)?;
+        }
+        if out_off_ptr != 0 {
+            let new_out_off = out_off + write_len as isize;
+            copy_to_user(out_off_ptr as *mut isize, &new_out_off, 1)?;
+        }
+        log::info!(
+            "[sys_splice] copied {} bytes from fd_in to fd_out",
+            write_len
+        );
+        Ok(write_len)
+    } else {
+        log::error!("[sys_splice] invalid file descriptors");
+        return Err(Errno::EBADF);
+    }
 }
 
 /* fake end */
