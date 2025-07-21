@@ -1,5 +1,7 @@
 use core::panic::PanicInfo;
 
+use crate::arch::backtrace::backtrace::{count_frames, dump_backtrace};
+
 use super::sbi::shutdown;
 
 #[panic_handler]
@@ -14,5 +16,6 @@ fn panic(info: &PanicInfo) -> ! {
     } else {
         println!("Panicked: {:?}", info.message());
     }
-    shutdown(true)
+    dump_backtrace();
+    shutdown(true);
 }

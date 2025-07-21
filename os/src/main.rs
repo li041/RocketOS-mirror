@@ -41,6 +41,7 @@ mod syscall;
 
 mod task;
 
+mod bpf;
 pub mod utils;
 
 use core::{

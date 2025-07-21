@@ -6,7 +6,10 @@ use crate::{
         mm::copy_to_user,
         trap::context::dump_trap_context,
     },
-    fs::file::{File, OpenFlags},
+    fs::{
+        file::{self, File, OpenFlags},
+        uapi::F_SEAL_WRITE,
+    },
     index_list::{IndexList, ListIndex},
     mm::{
         shm::{
@@ -430,6 +433,13 @@ pub fn sys_mmap(
             Some(f) => f,
             None => return Err(Errno::EBADF),
         };
+        if file.get_inode().get_seals() & F_SEAL_WRITE != 0
+            && map_perm.contains(MapPermission::S)
+            && map_perm.contains(MapPermission::W)
+        {
+            log::error!("[sys_mmap] shared filebe map, but file sealed with F_SEAL_WRITE");
+            return Err(Errno::EPERM);
+        }
         let open_flags = file.get_flags();
         if open_flags.contains(OpenFlags::O_WRONLY) {
             // 如果文件是只写打开的, 则不能进行映射
@@ -503,6 +513,7 @@ pub fn sys_mmap(
 pub fn sys_munmap(start: usize, len: usize) -> SyscallRet {
     // start必须页对齐, 且要大于等于MMAP_MIN_ADDR
     if start % PAGE_SIZE != 0 || len == 0 || start < MMAP_MIN_ADDR {
+        log::error!("[sys_munmap] start: {:#x}, len: {:#x} invalid", start, len);
         return Err(Errno::EINVAL);
     }
     let start_vpn = VirtPageNum::from(start >> PAGE_SIZE_BITS);
@@ -547,7 +558,7 @@ pub fn sys_mprotect(addr: usize, size: usize, prot: i32) -> SyscallRet {
     let remap_range = VPNRange::new(start_vpn, end_vpn);
 
     current_task().op_memory_set_mut(|memory_set| {
-        if !memory_set.remap_area_with_overlap(remap_range, new_perm) {
+        if memory_set.do_mprotect(remap_range, new_perm).is_err() {
             log::warn!(
                 "[sys_mprotect] no mapped area found for {:#x}-{:#x}",
                 addr,
@@ -652,26 +663,188 @@ pub fn sys_mprotect(addr: usize, size: usize, prot: i32) -> SyscallRet {
 //     })
 // }
 
-// Todo:
+const MREMAP_MAYMOVE: i32 = 0x1;
+const MREMAP_FIXED: i32 = 0x2;
+const MREMAP_DONTUNMAP: i32 = 0x4;
+
+//
 pub fn sys_mremap(
-    old_address: usize,
+    old_addr: usize,
     old_size: usize,
     new_size: usize,
     flags: i32,
-    new_address: usize,
-) {
+    new_addr: usize,
+) -> SyscallRet {
     log::info!(
-        "sys_mremap: old_address: {:#x}, old_size: {:#x}, new_size: {:#x}, flags: {:#x}, new_address: {:#x}",
-        old_address,
+        "[sys_mremap] old_address: {:#x}, old_size: {:#x}, new_size: {:#x}, flags: {:#x}, new_address: {:#x}",
+        old_addr,
         old_size,
         new_size,
         flags,
-        new_address
+        new_addr
     );
-    // old_address必须页对齐
-    if old_address % PAGE_SIZE != 0 {
-        return;
+    let task = current_task();
+    let old_start_vpn = VirtPageNum::from(old_addr >> PAGE_SIZE_BITS);
+    let old_end_vpn = VirtPageNum::from(ceil_to_page_size(old_addr + old_size) >> PAGE_SIZE_BITS);
+    let old_vpn_range = VPNRange::new(old_start_vpn, old_end_vpn);
+    let new_end_vpn = VirtPageNum::from(ceil_to_page_size(old_addr + new_size) >> PAGE_SIZE_BITS);
+
+    if flags & MREMAP_MAYMOVE == 0 && flags & MREMAP_FIXED != 0 {
+        // 如果设置了MREMAP_FIXED, 则必须设置MREMAP_MAYMOVE
+        log::error!("[sys_mremap] MREMAP_FIXED requires MREMAP_MAYMOVE");
+        return Err(Errno::EINVAL);
     }
+
+    // old_address必须页对齐
+    if old_addr % PAGE_SIZE != 0 {
+        return Err(Errno::EINVAL);
+    }
+    // 如果设置了MREMAP_FIXED, 则new_address必须页对齐
+    if flags & MREMAP_FIXED != 0 {
+        if new_addr % PAGE_SIZE != 0 {
+            log::error!("[sys_mremap] MREMAP_FIXED requires new_address to be page aligned");
+            return Err(Errno::EINVAL);
+        };
+        // old_range和new_range不能重叠
+        let new_start_vpn = VirtPageNum::from(new_addr >> PAGE_SIZE_BITS);
+        let new_end_vpn =
+            VirtPageNum::from(ceil_to_page_size(new_addr + new_size) >> PAGE_SIZE_BITS);
+        let new_vpn_range = VPNRange::new(new_start_vpn, new_end_vpn);
+        if new_vpn_range.is_intersect_with(&old_vpn_range) {
+            log::error!(
+                "[sys_mremap] MREMAP_FIXED new_address range overlaps with old_address range"
+            );
+            return Err(Errno::EINVAL);
+        }
+        // 处理MREMAP_FIXED逻辑
+        return task.op_memory_set_mut(|memory_set| {
+            let area = memory_set
+                .get_area_by_range(&old_vpn_range)
+                .ok_or(Errno::EFAULT)?;
+            let map_type = area.map_type;
+            let map_perm = area.map_perm;
+            let offset = if area.backend_file.is_some() {
+                let file_offset = area.offset + (old_start_vpn.0 - area.vpn_range.get_start().0) * PAGE_SIZE;
+                log::warn!("[sys_mremap] MREMAP_FIXED, area.offset: {:#x}, new_start_vpn: {:#x}, old_start_vpn: {:#x}, file_offset: {:#x}", 
+                area.offset, new_start_vpn.0, old_start_vpn.0,
+                file_offset);
+                file_offset
+            } else {
+                0
+            };
+            let mut new_area = MapArea::new(
+                new_vpn_range.clone(),
+                map_type,
+                map_perm,
+                area.backend_file.clone(),
+                offset,
+                area.locked,
+            );
+            if flags & MREMAP_DONTUNMAP == 0 {
+                let found = memory_set.remove_area_with_overlap(new_vpn_range);
+                if found == true {
+                    log::warn!(
+                        "[sys_mremap] MAP_FIXED, unmap vpn_range: {:#x} ~ {:#x}",
+                        new_vpn_range.get_start().0,
+                        new_vpn_range.get_end().0
+                    );
+                }
+            }
+
+            if map_type == MapType::Framed && !map_perm.contains(MapPermission::S) {
+                // 懒分配
+                memory_set.insert_map_area_lazily(new_area);
+            } else {
+                new_area.map(&mut memory_set.page_table);
+                memory_set
+                    .areas
+                    .insert(new_area.vpn_range.get_start(), new_area);
+            }
+            return Ok(new_addr);
+        });
+    }
+
+    let delta = new_size as isize - old_size as isize;
+    task.op_memory_set_mut(|memory_set| {
+        // 检查[old_addr, old_addr + old_size)是否落在某个映射区域内
+        let area = memory_set
+            .get_area_by_range(&old_vpn_range)
+            .ok_or(Errno::EFAULT)?;
+
+        if delta == 0 {
+            return Ok(old_addr);
+        }
+
+        let map_type = area.map_type;
+        let map_perm = area.map_perm;
+        let area_clone = area.clone();
+
+        if delta < 0 {
+            // 缩小
+            let remove_range = VPNRange::new(new_end_vpn, old_end_vpn);
+            memory_set.remove_area_with_overlap(remove_range);
+            return Ok(old_addr);
+        }
+
+        // delta > 0
+        let grow_range = VPNRange::new(old_end_vpn, new_end_vpn);
+        if memory_set.is_range_free(grow_range.clone()) {
+            // 在原地扩展
+            log::info!("[sys_mremap] grow in place");
+            if let Some(area) = memory_set.areas.get_mut(&old_start_vpn) {
+                area.vpn_range.set_end(new_end_vpn);
+                return Ok(old_addr);
+            } else {
+                return Err(Errno::EINVAL);
+            }
+        }
+
+        // 无法原地扩展
+        if flags & MREMAP_MAYMOVE == 0 {
+            return Err(Errno::ENOMEM);
+        }
+
+        // 获取新地址
+        let target_addr = memory_set.get_unmapped_area(new_size).get_start().0 << PAGE_SIZE_BITS;
+
+        let new_start_vpn = VirtPageNum::from(target_addr >> PAGE_SIZE_BITS);
+        let new_end_vpn =
+            VirtPageNum::from(ceil_to_page_size(target_addr + new_size) >> PAGE_SIZE_BITS);
+        let new_range = VPNRange::new(new_start_vpn, new_end_vpn);
+
+        // 构造新的 MapArea
+        // 如果是文件映射需要计算偏移
+        let offset = if area_clone.backend_file.is_some() {
+            area_clone.offset + (old_start_vpn.0 - area_clone.vpn_range.get_start().0) * PAGE_SIZE
+        } else {
+            0
+        };
+        let mut new_area = MapArea::new(
+            new_range.clone(),
+            map_type,
+            map_perm,
+            area_clone.backend_file.clone(),
+            offset,
+            area_clone.locked,
+        );
+
+        if flags & MREMAP_DONTUNMAP == 0 {
+            let remove_range = VPNRange::new(old_start_vpn, old_end_vpn);
+            memory_set.remove_area_with_overlap(remove_range);
+        }
+
+        if map_type == MapType::Framed && !map_perm.contains(MapPermission::S) {
+            // 懒分配
+            memory_set.insert_map_area_lazily(new_area);
+        } else {
+            new_area.map(&mut memory_set.page_table);
+            memory_set
+                .areas
+                .insert(new_area.vpn_range.get_start(), new_area);
+        }
+
+        Ok(target_addr)
+    })
 }
 // Todo:
 pub fn sys_madvise(addr: usize, len: usize, advice: i32) -> SyscallRet {

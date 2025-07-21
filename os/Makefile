@@ -11,7 +11,8 @@
 # ARCH ?= loongarch64
 ARCH ?= riscv64
 MODE := release
-FEATURES := virt 
+FEATURES := virt
+BACKTRACE_FEATURES = virt,debug-symbols
 #ip option not unspecified
 IP ?= 10.0.2.15
 GW ?= 10.0.2.2
@@ -125,6 +126,10 @@ build-vf2:
 build: move-cargo
 	USER_TARGET_PATH=$(USER_TARGET_PATH) LOG=$(LOG) cargo build $(MODE_ARG) --features $(FEATURES) --target $(TARGET)
 	@$(OBJCOPY) $(KERNEL_ELF) --strip-all -O binary $(KERNEL_BIN)
+
+build-debug: move-cargo
+	USER_TARGET_PATH=$(USER_TARGET_PATH) LOG=$(LOG) cargo build $(MODE_ARG) --features $(BACKTRACE_FEATURES) --target $(TARGET)
+	@$(OBJCOPY) $(KERNEL_ELF) --strip-all -O binary $(KERNEL_BIN)
 	
 run: build 
 	$(QEMU_CMD) $(QEMU_ARGS)
@@ -132,6 +137,12 @@ run: build
 bench: build 
 	time $(QEMU_CMD) $(QEMU_ARGS) 2>&1 | tee qemu_output-$(ARCH).log
 
+# 第一次编译确定函数布局，第二次将符号表嵌入内核
+backtrace: build-debug
+	@bash ../scripts/gen_symbol.sh $(TARGET) $(MODE) $(ARCH)
+	make build-debug
+	$(QEMU_CMD) $(QEMU_ARGS)
+    
 clean:
 	@$(shell which cargo)  clean
 

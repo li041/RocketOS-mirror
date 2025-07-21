@@ -13,6 +13,7 @@ use spin::{Mutex, RwLock};
 
 use crate::{
     ext4::inode::{S_IFMT, S_IFREG, S_ISGID, S_ISUID},
+    fs::uapi::F_SEAL_SHRINK,
     syscall::errno::{Errno, SyscallRet},
     task::current_task,
     timer::TimeSpec,
@@ -179,6 +180,13 @@ pub fn dentry_check_open(dentry: &Dentry, flags: OpenFlags, mode: i32) -> Result
         }
         // 文件存在且成功(O_WRONLY 或 O_RDWR)打开
         if flags.contains(OpenFlags::O_TRUNC) {
+            if dentry.get_inode().get_seals() & F_SEAL_SHRINK != 0 {
+                log::warn!(
+                    "[dentry_check_open] F_SEAL_SHRINK is set, cannot truncate file {} with O_TRUNC",
+                    dentry.absolute_path
+                );
+                return Err(Errno::EPERM);
+            }
             if dentry.is_regular() {
                 log::warn!(
                     "[dentry_check_open] O_TRUNC flag set, truncating file {}",

@@ -41,7 +41,7 @@ impl From<MapPermission> for PTEFlags {
     fn from(permission: MapPermission) -> Self {
         let flags = PTEFlags::from_bits(permission.bits()).unwrap();
         // 只有可执行权限的maparea, 在页表映射时需要添加读权限
-        if permission.contains(MapPermission::X) {
+        if permission.contains(MapPermission::X) || permission.contains(MapPermission::W) {
             return flags | PTEFlags::R;
         }
         flags

@@ -48,6 +48,7 @@ pub const SIG_DFL: usize = 0;
 pub const SIG_IGN: usize = 1;
 
 // 处理操作
+#[repr(C)]
 #[derive(Copy, Clone, Debug, Default)]
 #[repr(C)]
 pub struct SigAction {

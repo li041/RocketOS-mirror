@@ -1,5 +1,6 @@
 #![allow(unused)]
 use core::ptr;
+use core::sync::atomic::AtomicI32;
 
 use alloc::boxed::Box;
 use alloc::collections::btree_map::BTreeMap;
@@ -14,7 +15,7 @@ use crate::arch::config::EXT4_MAX_INLINE_DATA;
 use crate::drivers::block::VIRTIO_BLOCK_SIZE;
 use crate::fs::inode::InodeOp;
 use crate::fs::kstat::Kstat;
-use crate::fs::uapi::{FallocFlags, SetXattrFlags};
+use crate::fs::uapi::{FallocFlags, SetXattrFlags, F_SEAL_GROW, F_SEAL_SEAL, F_SEAL_SHRINK};
 use crate::fs::FS_BLOCK_SIZE;
 use crate::syscall::errno::{Errno, SyscallRet};
 use crate::task::current_task;
@@ -726,6 +727,8 @@ pub struct Ext4Inode {
     pub xattrs: RwLock<HashMap<String, Vec<u8>>>, // 扩展属性
     #[cfg(feature = "board")]
     pub xattrs: RwLock<BTreeMap<String, Vec<u8>>>, // 扩展属性
+    // 仅当inode对应memfd时有效
+    pub seals: AtomicI32,
 }
 
 impl Drop for Ext4Inode {
@@ -814,6 +817,7 @@ impl Ext4Inode {
         block_device: Arc<dyn BlockDevice>,
         uid: u16,
         gid: u16,
+        seals: i32,
     ) -> Arc<Self> {
         // Todo: 1. init_owner(): 设置mode, uid, gid
         // Todo: 2. 时间戳: atime, mtime, ctime
@@ -852,6 +856,7 @@ impl Ext4Inode {
             xattrs: RwLock::new(HashMap::new()),
             #[cfg(feature = "board")]
             xattrs: RwLock::new(BTreeMap::new()),
+            seals: AtomicI32::new(seals),
         })
     }
     pub fn new_root(
@@ -874,6 +879,7 @@ impl Ext4Inode {
             xattrs: RwLock::new(HashMap::new()),
             #[cfg(feature = "board")]
             xattrs: RwLock::new(BTreeMap::new()),
+            seals: AtomicI32::new(F_SEAL_SEAL),
         })
     }
     // 所有的读/写都是基于Ext4Inode::read/write, 通过页缓存和extent tree来读写
@@ -1642,6 +1648,9 @@ impl Ext4Inode {
         }
         if new_size < current_size {
             // shrink
+            if self.get_seals() & F_SEAL_SHRINK != 0 {
+                return Err(Errno::EPERM);
+            }
             log::warn!(
                 "[Ext4Inode::truncate] Unimplemented shrink size from {} to {}",
                 current_size,
@@ -1650,6 +1659,9 @@ impl Ext4Inode {
             self.shrink_size(current_size, new_size)
         } else {
             // extend
+            if self.get_seals() & F_SEAL_GROW != 0 {
+                return Err(Errno::EPERM);
+            }
             log::warn!(
                 "[Ext4Inode::truncate] Unimplemented extend size from {} to {}",
                 current_size,
@@ -1743,6 +1755,21 @@ impl Ext4Inode {
         new_size: u64,
         should_update_size: bool,
     ) -> SyscallRet {
+        let seals = self.get_seals();
+        log::info!(
+            "[Ext4Inode::extend_size] current_size: {}, new_size: {}, seals: {:?}",
+            current_size,
+            new_size,
+            seals
+        );
+        if seals & F_SEAL_GROW != 0 {
+            log::warn!(
+                "[Ext4Inode::extend_size] F_SEAL_GROW is set, cannot extend size from {} to {}",
+                current_size,
+                new_size
+            );
+            return Err(Errno::EPERM);
+        }
         let mut inner_guard = self.inner.write();
         let inode_on_disk = &mut inner_guard.inode_on_disk;
         if inode_on_disk.has_inline_data() {
@@ -1819,7 +1846,7 @@ impl Ext4Inode {
             let current_size = self.get_size();
             let new_size = (offset + len) as u64;
             if current_size < new_size {
-                self.extend_size(current_size, new_size, should_update_size);
+                self.extend_size(current_size, new_size, should_update_size)?;
             }
             return Ok(0);
         }
@@ -1827,8 +1854,6 @@ impl Ext4Inode {
             // 打孔操作, 只清除数据块内容, 不更新inode的size
             let should_update_size = false;
             // 清除对应页缓存
-            let mut inner_guard = self.inner.write();
-            let inode_on_disk = &mut inner_guard.inode_on_disk;
             let block_size = self.ext4_fs.upgrade().unwrap().block_size() as u64;
             let start_block = offset as u64 / block_size;
             let end_block = (offset + len) as u64 / block_size;
@@ -1841,7 +1866,14 @@ impl Ext4Inode {
             // 清除页缓存
             for page_num in start_block as usize..end_block as usize {
                 address_space.remove_page_cache(page_num);
+                // 先同步会页缓存, 再清除
+                // if let Some(page) = address_space.get_page_cache(page_num) {
+                //     page.sync_with_address_space(&address_space);
+                //     address_space.remove_page_cache(page_num);
+                // }
             }
+            let mut inner_guard = self.inner.write();
+            let inode_on_disk = &mut inner_guard.inode_on_disk;
             // 释放数据块
             let mut block_num = start_block as usize;
             for block_num in start_block..end_block {
@@ -2168,6 +2200,7 @@ pub fn load_inode(
         xattrs: RwLock::new(HashMap::new()),
         #[cfg(feature = "board")]
         xattrs: RwLock::new(BTreeMap::new()),
+        seals: AtomicI32::new(F_SEAL_SEAL),
     })
 }
 

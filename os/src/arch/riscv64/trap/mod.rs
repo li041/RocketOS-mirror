@@ -119,12 +119,18 @@ pub fn trap_handler(cx: &mut TrapContext) {
             // 2. lazy allocation
             let va = VirtAddr::from(stval);
             let casue = PageFaultCause::from(scause.cause());
-            // log::error!("page fault cause {:?}", scause.cause());
+            log::error!(
+                "page fault cause {:?}, bad_addr = {:#x}, sepc = {:#x}",
+                scause.cause(),
+                stval,
+                sepc::read()
+            );
             let task = current_task();
             task.op_memory_set_mut(|memory_set| {
                 if let Err(sig) = memory_set.handle_recoverable_page_fault(va, casue) {
                     // memory_set.page_table.dump_all_user_mapping();
                     // dump_trap_context(&current_task());
+                    // panic!(
                     log::error!(
                         "Unrecoverble page fault in application, bad addr = {:#x}, scause = {:?}, sepc = {:#x}",
                         stval,
@@ -161,7 +167,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
         _ => {
             let current_task = crate::task::current_task();
             log::error!("task {} trap", current_task.tid());
-            if scause.is_interrupt(){
+            if scause.is_interrupt() {
                 record_interrupt(Interrupt::from(scause.code()) as usize);
             }
             panic!(

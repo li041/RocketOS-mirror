@@ -872,6 +872,8 @@ pub struct Ext4Inode {
     pub xattrs: RwLock<HashMap<String, Vec<u8>>>, // 扩展属性
     #[cfg(feature = "board")]
     pub xattrs: RwLock<BTreeMap<String, Vec<u8>>>, // 扩展属性
+    // 仅当inode对应memfd时有效
+    pub seals: i32,
 }
 
 impl Drop for Ext4Inode {

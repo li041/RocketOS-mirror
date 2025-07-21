@@ -1,12 +1,13 @@
 [build]
 target = "loongarch64-unknown-none"
 
- [target.loongarch64-unknown-none]
- rustflags = [
-     "-Clink-arg=-Tsrc/linker_loongarch.ld", 
-     "-Clink-arg=-nostdlib",
-     "-Clink-arg=-static",
- ]
+[target.loongarch64-unknown-none]
+rustflags = [
+    "-Clink-arg=-Tsrc/linker_loongarch.ld",
+    "-Clink-arg=-nostdlib",
+    "-Clink-arg=-static",
+    "-Cforce-frame-pointers=yes",
+]
 
 linker = "loongarch64-linux-musl-gcc"
 [source.crates-io]

@@ -6,7 +6,7 @@ use crate::timer::TimeSpec;
 
 use super::dentry::Dentry;
 use super::kstat::Kstat;
-use super::uapi::{DevT, FallocFlags, RenameFlags, SetXattrFlags};
+use super::uapi::{DevT, FallocFlags, RenameFlags, SetXattrFlags, F_SEAL_SEAL};
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -98,7 +98,7 @@ pub trait InodeOp: Any + Send + Sync {
     // 创建临时文件, 用于临时文件系统, inode没有对应的路径, 不会分配目录项
     // 临时文件没有对应的目录项, 只能通过fd进行访问
     // 与create的唯一区别是: 1. 没有对应的目录项
-    fn tmpfile<'a>(&'a self, _mode: u16) -> Arc<Ext4Inode> {
+    fn tmpfile<'a>(&'a self, _mode: u16, flags: i32) -> Arc<Ext4Inode> {
         unimplemented!();
     }
     fn mkdir<'a>(&'a self, _dentry: Arc<Dentry>, _mode: u16) {
@@ -190,5 +190,12 @@ pub trait InodeOp: Any + Send + Sync {
     }
     fn set_ctime(&self, _ctime: TimeSpec) {
         unimplemented!();
+    }
+    fn get_seals(&self) -> i32 {
+        // unimplemented!();
+        F_SEAL_SEAL
+    }
+    fn add_seals(&self, _seals: i32) -> SyscallRet {
+        Err(Errno::EINVAL)
     }
 }

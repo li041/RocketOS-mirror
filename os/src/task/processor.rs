@@ -154,6 +154,7 @@ impl Processor {
     pub fn switch_to(&mut self, task: Arc<Task>) {
         self.current.time_stat().record_switch_out();
         task.time_stat().record_switch_in();
+        task.set_running();
         self.current = task;
     }
 }

@@ -16,7 +16,7 @@ use crate::{
 use super::{
     inode::InodeOp,
     path::Path,
-    uapi::{FallocFlags, Whence},
+    uapi::{FallocFlags, Whence, F_SEAL_GROW, F_SEAL_WRITE},
 };
 
 // 普通文件
@@ -231,16 +231,26 @@ impl FileOp for File {
     }
     // 依照linux的行为, 而非POSIX标准, 如果文件是O_APPEND打开的, 则pwrite时会向文件末尾写, 同时不更新offset
     fn pwrite<'a>(&'a self, buf: &'a [u8], offset: usize) -> SyscallRet {
-        let write_size = self.inner_handler(|inner| {
+        self.inner_handler(|inner| {
+            let size = inner.inode.get_size();
+            let seals = inner.inode.get_seals();
+            if seals & F_SEAL_WRITE != 0 {
+                return Err(Errno::EPERM);
+            }
+            if seals & F_SEAL_GROW != 0 && offset + buf.len() > size {
+                log::warn!(
+                    "[File::pwrite] F_SEAL_GROW is set, cannot write beyond current size: {}",
+                    size
+                );
+                return Err(Errno::EPERM);
+            }
             if inner.flags.contains(OpenFlags::O_APPEND) {
-                let size = inner.inode.get_size();
-                inner.inode.write(size, buf)
+                Ok(inner.inode.write(size, buf))
             } else {
                 // 如果不是O_APPEND, 则使用指定的offset写入
-                inner.inode.write(offset, buf)
+                Ok(inner.inode.write(offset, buf))
             }
-        });
-        Ok(write_size)
+        })
     }
     fn read_all(&self) -> Vec<u8> {
         self.read_all()
@@ -269,8 +279,11 @@ impl FileOp for File {
             if inner.flags.contains(OpenFlags::O_APPEND) {
                 inner.offset = inner.inode.get_size();
             }
-            inner.inode.write(inner.offset, buf)
-        });
+            if inner.inode.get_seals() & F_SEAL_WRITE != 0 {
+                return Err(Errno::EPERM);
+            }
+            Ok(inner.inode.write(inner.offset, buf))
+        })?;
         self.add_offset(write_size);
         Ok(write_size)
     }

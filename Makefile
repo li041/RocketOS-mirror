@@ -95,6 +95,10 @@ bench:
 	@cd ./user && make build ARCH=$(ARCH) MODE=$(MODE)
 	@cd ./os && make bench ARCH=$(ARCH) MODE=$(MODE)
 
+backtrace: 
+	@cd ./user && make build ARCH=$(ARCH) MODE=$(MODE)
+	@cd ./os && make backtrace ARCH=$(ARCH) MODE=$(MODE)
+
 gdbserver: 
 	@cd ./user && make build
 	@cd ./os && make gdbserver

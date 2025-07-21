@@ -347,3 +347,45 @@ bitflags::bitflags! {
 }
 
 // memfd_create flags
+bitflags::bitflags! {
+    #[derive(Debug, Clone, Copy, Default, PartialEq)]
+    pub struct MemfdCreateFlags: i32 {
+        const MFD_CLOEXEC = 0x1;
+        const MFD_ALLOW_SEALING = 0x2;
+        const MFD_HUGETLB = 0x4; // 使用大页内存
+        const MFD_NOEXEC_SEAL = 0x8;
+        const MFD_EXEC = 0x10; // 允许执行
+    }
+}
+
+pub const MFD_ALLOW_SEALING: i32 = 0x2; // 允许对 memfd 文件进行密封操作
+
+use bitflags::bitflags;
+bitflags! {
+    /// 文件密封（seal）标志，用于限制对 memfd 或 shmem 文件的操作。
+    pub struct SealFlags: i32 {
+        /// 禁止设置更多的密封标志（防止进一步限制）
+        const SEAL = 0x0001;
+        /// 禁止文件缩小（防止 `ftruncate` 缩小文件）
+        const SHRINK = 0x0002;
+        /// 禁止文件增长（防止 `fallocate` 或写入超出当前大小）
+        const GROW = 0x0004;
+        /// 禁止写入（防止任何写入操作）
+        const WRITE = 0x0008;
+        /// 禁止未来的写入（当文件被内存映射时防止写入）
+        const FUTURE_WRITE = 0x0010;
+        /// 禁止修改可执行权限（防止 `chmod` 修改执行位）
+        const EXEC = 0x0020;
+    }
+}
+
+impl From<i32> for SealFlags {
+    fn from(value: i32) -> Self {
+        SealFlags::from_bits_truncate(value)
+    }
+}
+
+pub const F_SEAL_SEAL: i32 = 0x0001; // 禁止设置更多的密封标志
+pub const F_SEAL_SHRINK: i32 = 0x0002; // 禁止文件缩小
+pub const F_SEAL_GROW: i32 = 0x0004; // 禁
+pub const F_SEAL_WRITE: i32 = 0x0008; // 禁止写入

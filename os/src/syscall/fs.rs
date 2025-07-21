@@ -1,3 +1,5 @@
+use core::mem;
+
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -8,7 +10,9 @@ use virtio_drivers::PAGE_SIZE;
 use crate::arch::config::USER_MAX_VA;
 use crate::arch::timer::{get_time_ms, get_time_ns, get_time_us};
 use crate::ext4::dentry;
-use crate::ext4::inode::{S_IFIFO, S_IFMT, S_IFREG, S_IFSOCK, S_ISGID};
+use crate::ext4::inode::{
+    S_IFIFO, S_IFMT, S_IFREG, S_IFSOCK, S_IRGRP, S_IROTH, S_IRUSR, S_ISGID, S_IWUSR,
+};
 use crate::fs::dentry::{
     chown, dentry_check_access, Dentry, LinuxDirent64, F_OK, R_OK, W_OK, X_OK,
 };
@@ -23,8 +27,9 @@ use crate::fs::namei::{
 };
 use crate::fs::pipe::make_pipe;
 use crate::fs::uapi::{
-    convert_old_dev_to_new, CloseRangeFlags, DevT, FallocFlags, OpenHow, PollEvents, PollFd,
-    RenameFlags, ResolveFlags, SetXattrFlags, StatFs, Whence, MAX_OPEN_HOW, XATTR_SIZE_MAX,
+    convert_old_dev_to_new, CloseRangeFlags, DevT, FallocFlags, MemfdCreateFlags, OpenHow,
+    PollEvents, PollFd, RenameFlags, ResolveFlags, SetXattrFlags, StatFs, Whence, MAX_OPEN_HOW,
+    XATTR_SIZE_MAX,
 };
 use crate::fs::{old, path, AT_REMOVEDIR, EXT4_MAX_FILE_SIZE};
 use crate::futex::flags;
@@ -90,13 +95,13 @@ pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> SyscallRet {
         let mut ker_buf = vec![0u8; len];
         let read_len = file.read(&mut ker_buf)?;
         if fd >= 3 {
-            // log::info!("sys_read: fd: {}, len: {}", fd, len);
-            log::info!(
-                "sys_read: fd: {}, len: {}, buf: {:?}",
-                fd,
-                len,
-                String::from_utf8_lossy(&ker_buf[..read_len])
-            );
+            log::info!("sys_read: fd: {}, len: {}", fd, len);
+            // log::info!(
+            //     "sys_read: fd: {}, len: {}, buf: {:?}",
+            //     fd,
+            //     len,
+            //     String::from_utf8_lossy(&ker_buf[..read_len])
+            // );
         }
         let ker_buf_ptr = ker_buf.as_ptr();
         // assert!(ker_buf_ptr != core::ptr::null());
@@ -742,6 +747,10 @@ pub fn sys_openat(dirfd: i32, pathname: *const u8, flags: i32, mode: i32) -> Sys
     let flags = OpenFlags::from_bits(flags).ok_or(Errno::EINVAL)?;
     let task = current_task();
     let path = c_str_to_string(pathname)?;
+    // 7.24 Debug
+    if flags.contains(OpenFlags::O_TRUNC) {
+        log::warn!("[sys_openat] O_TRUNC is set, truncating file: {}", path);
+    }
     if path.len() > PATH_MAX {
         log::error!("[sys_openat] pathname is too long: {}", path.len());
         return Err(Errno::ENAMETOOLONG);
@@ -1345,6 +1354,8 @@ pub enum FcntlOp {
     F_DUPFD_CLOEXEC = 1030,
     F_SETPIPE_SZE = 1031, // 设置管道大小
     F_GETPIPE_SZ = 1032,  // 获取管道大小
+    F_ADD_SEALS = 1033,   // 添加文件密封
+    F_GET_SEALS = 1034,   // 获取文件密封
 }
 
 impl TryFrom<i32> for FcntlOp {
@@ -1359,6 +1370,8 @@ impl TryFrom<i32> for FcntlOp {
             1030 => Ok(FcntlOp::F_DUPFD_CLOEXEC),
             1031 => Ok(FcntlOp::F_SETPIPE_SZE),
             1032 => Ok(FcntlOp::F_GETPIPE_SZ),
+            1033 => Ok(FcntlOp::F_ADD_SEALS),
+            1034 => Ok(FcntlOp::F_GET_SEALS),
             _ => Err(()),
         }
     }
@@ -3453,19 +3466,39 @@ pub fn sys_fremovexattr(fd: usize, name: *const u8) -> SyscallRet {
     }
 }
 
-pub fn sys_memfd_create(name: *const u8, flags: u32) -> SyscallRet {
+pub fn sys_memfd_create(name: *const u8, flags: i32) -> SyscallRet {
+    // 对于memfd_create, name的最大长度为249, 不包括结尾的'\0'字符
+    const NAME_MAX: usize = 249;
     log::info!("[sys_memfd_create] name: {:?}, flags: {}", name, flags);
     let name = c_str_to_string(name)?;
-    if name.is_empty() {
-        log::error!("[sys_memfd_create] name is empty");
-        return Err(Errno::EINVAL);
-    }
     if name.len() > NAME_MAX {
         log::error!("[sys_memfd_create] name is too long: {}", name.len());
-        return Err(Errno::ENAMETOOLONG);
+        return Err(Errno::EINVAL);
     }
+    // Todo: 支持flags
+    let memfd_flags = MemfdCreateFlags::from_bits(flags).ok_or(Errno::EINVAL)?;
 
-    unimplemented!()
+    let mode = S_IFREG | S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH; // 默认权限
+    let task = current_task();
+    let dir_path = task.pwd();
+    let dir_dentry = task.pwd().dentry.clone();
+    // 创建inode
+    let memfd_inode = dir_dentry.get_inode().tmpfile(mode, flags);
+    let memfd_dentry = Dentry::tmp(dir_dentry.clone(), memfd_inode.clone());
+    // 创建文件
+    let open_flags = OpenFlags::O_RDWR | OpenFlags::O_LARGEFILE;
+    let memfd_file = Arc::new(File::new(
+        Path::new(dir_path.mnt.clone(), memfd_dentry.clone()),
+        memfd_inode,
+        open_flags,
+    ));
+    // 创建文件描述符
+    let fd_flags = if memfd_flags.contains(MemfdCreateFlags::MFD_CLOEXEC) {
+        FdFlags::FD_CLOEXEC
+    } else {
+        FdFlags::empty()
+    };
+    task.fd_table().alloc_fd(memfd_file, fd_flags)
 }
 
 pub fn sys_splice(

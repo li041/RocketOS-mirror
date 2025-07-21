@@ -8,6 +8,7 @@ use crate::{
         mm::{copy_from_user, copy_to_user},
         sbi::shutdown,
     },
+    bpf::{uapi::BpfCmd, *},
     fs::{
         file::OpenFlags,
         namei::path_openat,
@@ -571,6 +572,36 @@ pub fn sys_clock_adjtime(clock_id: i32, user_timex: *mut KernelTimex) -> Syscall
         unimplemented!()
     } else {
         unimplemented!()
+    }
+}
+
+pub fn sys_bpf(cmd: i32, bpf_attr_ptr: usize, size: usize) -> SyscallRet {
+    log::error!(
+        "[sys_bpf] cmd: {}, bpf_attr: {:#x}, size: {}",
+        cmd,
+        bpf_attr_ptr as usize,
+        size
+    );
+    let cmd = BpfCmd::try_from(cmd)?;
+    match cmd {
+        BpfCmd::BpfMapCreate => bpf_map_create(bpf_attr_ptr, size),
+        BpfCmd::BpfMapLookupElem => bpf_map_lookup_elem(bpf_attr_ptr, size),
+        BpfCmd::BpfMapUpdateElem => bpf_map_update_elem(bpf_attr_ptr, size),
+        // BpfCmd::BpfMapDeleteElem => todo!(),
+        // BpfCmd::BpfMapGetNextKey => todo!(),
+        BpfCmd::BpfProgLoad => bpf_prog_load(bpf_attr_ptr, size),
+        // BpfCmd::BpfObjPin => todo!(),
+        // BpfCmd::BpfObjGet => todo!(),
+        // BpfCmd::BpfProgAttach => todo!(),
+        // BpfCmd::BpfProgDetach => todo!(),
+        // BpfCmd::BpfProcTestRun => todo!(),
+        BpfCmd::BpfBtfLoad => bpf_btf_load(bpf_attr_ptr, size),
+        BpfCmd::BpfLinkCreate => bpf_btf_link_create(bpf_attr_ptr, size),
+        BpfCmd::BpfIterCreate => bpf_iter_create(bpf_attr_ptr, size),
+        _ => {
+            log::error!("[sys_bpf] Unsupported bpf command: {:?}", cmd);
+            return Err(Errno::ENOSYS);
+        }
     }
 }
 

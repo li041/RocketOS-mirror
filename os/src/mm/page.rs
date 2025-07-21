@@ -259,7 +259,7 @@ impl Page {
     pub fn sync_with_address_space(&self, address_space: &AddressSpace) {
         match &self.page_kind {
             PageKind::Filebe(info) => {
-                let guard = info.write(); // 加写锁
+                let mut guard = info.write(); // 加写锁
                 if guard.modified {
                     // println!("[Page::modified]sync page: {:#x}", self.vaddr);
                     if let Some(block_device) = guard.block_device.upgrade() {
@@ -304,6 +304,7 @@ impl Page {
                             block_device.write_blocks(guard.start_block_id, cache);
                         }
                     }
+                    guard.modified = false; // 同步后清除修改标志
                 }
             }
             PageKind::Inline(info) => {
@@ -311,7 +312,7 @@ impl Page {
                     "[Page::sync] inline page synced directly, vaddr: {:#x}",
                     self.vaddr
                 );
-                let guard = info.write(); // 加写锁
+                let mut guard = info.write(); // 加写锁
                 let inode = guard.inode.upgrade();
                 if let Some(inode) = inode {
                     if let Some(ext4_inode) = inode.as_any().downcast_ref::<Ext4Inode>() {
@@ -333,6 +334,7 @@ impl Page {
                                 inner.inode_on_disk.block[0..inline_data.len()]
                                     .copy_from_slice(inline_data);
                                 // 注意这里不将inode_on_disk写回磁盘, 只更新了内存中的inode_on_disk
+                                guard.modified = false; // 同步后清除修改标志
                             } else {
                                 log::error!(
                                     "[Ext4Inode::drop] inline data not found in page cache"
@@ -373,6 +375,7 @@ impl Page {
                                     let page_index = guard.start_block_id & !MAX_FS_BLOCK_ID;
                                     let new_extent =
                                         Ext4Extent::new(page_index as u32, 1, new_block_num);
+                                    // 7.24 Debug 死锁了
                                     let mut inner = ext4_inode.inner.write();
                                     inner
                                         .inode_on_disk

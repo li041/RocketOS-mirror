@@ -177,7 +177,7 @@ impl Pipe {
             readable: false,
             writable: true,
             inode: inode.clone(),
-            flags: AtomicI32::new(flags.bits()),
+            flags: AtomicI32::new(flags.bits() | OpenFlags::O_WRONLY.bits()),
             is_named_pipe,
         });
         let mut buffer = inode.buffer.lock();
@@ -214,7 +214,7 @@ impl Pipe {
             readable: true,
             writable: true,
             inode: inode.clone(),
-            flags: AtomicI32::new(flags.bits()),
+            flags: AtomicI32::new(flags.bits() | OpenFlags::O_RDWR.bits()),
             is_named_pipe,
         });
         let mut buffer = inode.buffer.lock();
@@ -235,7 +235,7 @@ impl Pipe {
             readable: false,
             writable: true,
             inode: inode.clone(),
-            flags: AtomicI32::new(flags.bits()),
+            flags: AtomicI32::new(flags.bits() | OpenFlags::O_WRONLY.bits()),
             is_named_pipe: false,
         });
         let mut buffer = inode.buffer.lock();

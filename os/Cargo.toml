@@ -14,6 +14,7 @@ vf2 = ["board"]
 la2000 = ["board"]
 sdcard = []
 smp = []
+debug-symbols =[]
 
 board = []
 [dependencies]

@@ -13,7 +13,7 @@ use crate::{
         inode::InodeOp,
         kstat::Kstat,
         pipe::PipeInode,
-        uapi::{DevT, FallocFlags, RenameFlags},
+        uapi::{DevT, FallocFlags, RenameFlags, F_SEAL_SEAL, F_SEAL_WRITE, MFD_ALLOW_SEALING},
     },
     mm::Page,
     net::socket::{Domain, Protocol, Socket, SocketInode, SocketType},
@@ -37,7 +37,7 @@ use inode::{
     S_ISVTX,
 };
 
-use core::any::Any;
+use core::{any::Any, sync::atomic::Ordering};
 
 mod block_group;
 pub mod block_op;
@@ -104,6 +104,16 @@ impl InodeOp for Ext4Inode {
         self.truncate(size as u64)
     }
     fn fallocate<'a>(&'a self, mode: FallocFlags, offset: usize, len: usize) -> SyscallRet {
+        let seals = self.get_seals();
+        if mode.contains(FallocFlags::PUNCH_HOLE) && seals & F_SEAL_WRITE != 0 {
+            log::warn!(
+                "[Ext4Inode::fallocate] F_SEAL_WRITE is set, cannot fallocate: mode: {:?}, offset: {}, len: {}",
+                mode,
+                offset,
+                len
+            );
+            return Err(Errno::EPERM);
+        }
         self.fallocate(mode, offset, len)
     }
     fn fsync<'a>(&'a self) -> SyscallRet {
@@ -235,6 +245,7 @@ impl InodeOp for Ext4Inode {
             self.block_device.clone(),
             child_uid as u16,
             child_gid as u16,
+            F_SEAL_SEAL,
         );
         // 将inode写入block_cache
         write_inode(&new_inode, new_inode_num, self.block_device.clone());
@@ -385,6 +396,7 @@ impl InodeOp for Ext4Inode {
             self.block_device.clone(),
             child_uid as u16,
             child_gid as u16,
+            F_SEAL_SEAL,
         );
         // 设置符号链接目标路径
         new_inode.write_inline_data_dio(0, target.as_bytes());
@@ -425,7 +437,7 @@ impl InodeOp for Ext4Inode {
         // 2. 在父目录中删除对应项
         self.delete_entry(&dentry.get_last_name(), inode_num as u32)
     }
-    fn tmpfile<'a>(&'a self, mode: u16) -> Arc<Ext4Inode> {
+    fn tmpfile<'a>(&'a self, mode: u16, flags: i32) -> Arc<Ext4Inode> {
         // 创建临时文件, 用于临时文件系统, inode没有对应的路径, 不会分配目录项
         // 临时文件没有对应的目录项, 只能通过fd进行访问
         // 与create的唯一区别是: 1. 没有对应的目录项
@@ -458,6 +470,11 @@ impl InodeOp for Ext4Inode {
             // 否则使用当前任务的fsgid
             child_gid = task.fsgid();
         }
+        let seals = if flags & MFD_ALLOW_SEALING != 0 {
+            0
+        } else {
+            F_SEAL_SEAL
+        };
         // 2. 初始化新的inode结构
         let new_inode = Ext4Inode::new(
             (mode & S_IALLUGO) as u16 | S_IFREG,
@@ -467,6 +484,7 @@ impl InodeOp for Ext4Inode {
             self.block_device.clone(),
             child_uid as u16,
             child_gid as u16,
+            seals,
         );
         // 3. 将inode写入block_cache
         write_inode(&new_inode, new_inode_num, self.block_device.clone());
@@ -498,6 +516,7 @@ impl InodeOp for Ext4Inode {
             self.block_device.clone(),
             child_uid as u16,
             child_gid as u16,
+            F_SEAL_SEAL,
         );
         // 分配数据块
         let new_block_num = self
@@ -814,5 +833,17 @@ impl InodeOp for Ext4Inode {
     }
     fn set_mtime(&self, mtime: TimeSpec) {
         self.inner.write().inode_on_disk.set_mtime(mtime);
+    }
+    fn get_seals(&self) -> i32 {
+        self.seals.load(Ordering::Relaxed)
+    }
+    fn add_seals(&self, _seals: i32) -> SyscallRet {
+        let mut current_seals = self.seals.load(Ordering::Relaxed);
+        if current_seals & F_SEAL_SEAL != 0 {
+            return Err(Errno::EPERM);
+        }
+        current_seals |= _seals;
+        self.seals.store(current_seals, Ordering::Relaxed);
+        Ok(0)
     }
 }

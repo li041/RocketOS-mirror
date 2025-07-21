@@ -326,6 +326,11 @@ impl MapArea {
     ///     2. [xmap_start, xmap_end) : remap/unmap区域
     ///     3. [xmap_end, end) : 原有区域
     pub fn split_in3(&mut self, unmap_start: VirtPageNum, unmap_end: VirtPageNum) -> (Self, Self) {
+        log::info!(
+            "[MapArea::split_in3] unmap_start: {:#x}, unmap_end: {:#x}",
+            unmap_start.0,
+            unmap_end.0,
+        );
         debug_assert!(
             self.vpn_range.get_start().0 <= unmap_start.0
                 && unmap_end.0 <= self.vpn_range.get_end().0

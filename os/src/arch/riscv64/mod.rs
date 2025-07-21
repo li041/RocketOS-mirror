@@ -11,6 +11,7 @@ pub mod trap;
 pub mod virtio_blk;
 pub mod trampoline;
 pub mod hart;
+pub mod backtrace;
 
 pub use virtio_blk::VirtIOBlock;
 

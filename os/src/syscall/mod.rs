@@ -17,16 +17,16 @@ use fs::{
     sys_fcntl, sys_fdatasync, sys_fgetxattr, sys_flistxattr, sys_fremovexattr, sys_fsetxattr,
     sys_fstat, sys_fstatat, sys_fstatfs, sys_fsync, sys_ftruncate, sys_getcwd, sys_getdents64,
     sys_getxattr, sys_ioctl, sys_lgetxattr, sys_linkat, sys_listxattr, sys_llistxattr,
-    sys_lremovexattr, sys_lseek, sys_lsetxattr, sys_mkdirat, sys_mknodat, sys_mount, sys_msync,
-    sys_openat, sys_openat2, sys_pipe2, sys_ppoll, sys_pread, sys_preadv, sys_preadv2,
-    sys_pselect6, sys_pwrite, sys_pwritev, sys_pwritev2, sys_read, sys_readlinkat, sys_readv,
-    sys_removexattr, sys_renameat2, sys_sendfile, sys_setxattr, sys_splice, sys_statfs, sys_statx,
-    sys_symlinkat, sys_sync, sys_sync_file_range, sys_truncate, sys_umask, sys_umount2,
+    sys_lremovexattr, sys_lseek, sys_lsetxattr, sys_memfd_create, sys_mkdirat, sys_mknodat,
+    sys_mount, sys_msync, sys_openat, sys_openat2, sys_pipe2, sys_ppoll, sys_pread, sys_preadv,
+    sys_preadv2, sys_pselect6, sys_pwrite, sys_pwritev, sys_pwritev2, sys_read, sys_readlinkat,
+    sys_readv, sys_removexattr, sys_renameat2, sys_sendfile, sys_setxattr, sys_splice, sys_statfs,
+    sys_statx, sys_symlinkat, sys_sync, sys_sync_file_range, sys_truncate, sys_umask, sys_umount2,
     sys_unlinkat, sys_utimensat, sys_write, sys_writev,
 };
 use mm::{
     sys_brk, sys_get_mempolicy, sys_madvise, sys_membarrier, sys_mlock, sys_mmap, sys_mprotect,
-    sys_munmap, sys_shmat, sys_shmctl, sys_shmdt, sys_shmget,
+    sys_mremap, sys_munmap, sys_shmat, sys_shmctl, sys_shmdt, sys_shmget,
 };
 use net::{
     syscall_accept, syscall_accept4, syscall_bind, syscall_connect, syscall_getpeername,
@@ -50,8 +50,9 @@ use task::{
     sys_setresgid, sys_setresuid, sys_setreuid, sys_setsid, sys_setuid, sys_waitpid, sys_yield,
 };
 use util::{
-    sys_adjtimex, sys_clock_adjtime, sys_clock_getres, sys_clock_gettime, sys_clock_settime,
-    sys_getrusage, sys_prlimit64, sys_setitimer, sys_shutdown, sys_syslog, sys_times, sys_uname,
+    sys_adjtimex, sys_bpf, sys_clock_adjtime, sys_clock_getres, sys_clock_gettime,
+    sys_clock_settime, sys_getrusage, sys_prlimit64, sys_setitimer, sys_shutdown, sys_syslog,
+    sys_times, sys_uname,
 };
 
 use crate::{
@@ -257,6 +258,8 @@ const SYSCALL_SCHED_SETATTR: usize = 274;
 const SYSCALL_SCHED_GETATTR: usize = 275;
 const SYSCALL_RENAMEAT2: usize = 276;
 const SYSCALL_GETRANDOM: usize = 278;
+const SYSCALL_MEMFD_CREATE: usize = 279;
+const SYSCALL_BPF: usize = 280;
 const SYSCALL_EXECVEAT: usize = 281;
 const SYSCALL_MEMBARRIER: usize = 283;
 const SYSCALL_COPY_FILE_RANGE: usize = 285;
@@ -460,6 +463,7 @@ pub fn syscall(
         SYSCALL_SHMDT => sys_shmdt(a0),
         SYSCALL_BRK => sys_brk(a0),
         SYSCALL_MUNMAP => sys_munmap(a0, a1),
+        SYSCALL_MREMAP => sys_mremap(a0, a1, a2, a3 as i32, a4),
         SYSCALL_MADVISE => sys_madvise(a0, a1, a2 as i32),
         SYSCALL_MPROTECT => sys_mprotect(a0, a1, a2 as i32),
         SYSCALL_MLOCK => sys_mlock(a0, a1),
@@ -492,6 +496,8 @@ pub fn syscall(
             a4 as i32,
         ),
         SYSCALL_GETRANDOM => Ok(1), // python3.10 需要这个系统调用
+        SYSCALL_MEMFD_CREATE => sys_memfd_create(a0 as *const u8, a1 as i32),
+        SYSCALL_BPF => sys_bpf(a0 as i32, a1, a2),
         SYSCALL_EXECVEAT => sys_execveat(
             a0 as i32,
             a1 as *mut u8,

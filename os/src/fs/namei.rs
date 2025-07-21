@@ -313,7 +313,7 @@ pub fn open_last_lookups(
         }
 
         // 创建匿名 inode，不插入 dentry
-        let tmp_inode = dir_inode.tmpfile(mode as u16 & !current_task().umask());
+        let tmp_inode = dir_inode.tmpfile(mode as u16 & !current_task().umask(), 0);
         // 创建匿名dentry, 但不插入目录树
         let tmp_dentry = Dentry::tmp(nd.dentry.clone(), tmp_inode.clone());
         insert_dentry(tmp_dentry.clone());
@@ -359,6 +359,27 @@ pub fn open_last_lookups(
                         return Err(Errno::ELOOP);
                         // let path = Path::new(nd.mnt.clone(), dentry.clone());
                         // return Ok(Arc::new(File::new(path, dentry.get_inode(), flags)));
+                    }
+                    // 特殊处理/proc/pid/fd/#{num}, 提取最后的数字
+                    if nd.dentry.absolute_path.starts_with("/proc") {
+                        log::warn!(
+                            "[open_last_lookups] Resolving symlink in /proc: {:?}",
+                            nd.dentry.absolute_path
+                        );
+                        let num = nd.path_segments[nd.depth].parse::<usize>().map_err(|_| {
+                            log::error!(
+                                "[open_last_lookups] Invalid number in /proc symlink: {}",
+                                nd.path_segments[nd.depth]
+                            );
+                            Errno::EINVAL
+                        })?;
+                        let file = current_task()
+                            .fd_table()
+                            .get_file(num)
+                            .ok_or(Errno::EBADF)?;
+                        let dentry = file.get_path().dentry.clone();
+                        dentry_check_open(&dentry, flags, mode as i32)?;
+                        return Ok(file);
                     }
                     let symlink_target = dentry.get_inode().get_link();
                     log::warn!(
@@ -414,7 +435,7 @@ pub fn open_last_lookups2(
         }
 
         // 创建匿名 inode，不插入 dentry
-        let tmp_inode = dir_inode.tmpfile(mode as u16 & !current_task().umask());
+        let tmp_inode = dir_inode.tmpfile(mode as u16 & !current_task().umask(), 0);
         // 创建匿名dentry, 但不插入目录树
         let tmp_dentry = Dentry::tmp(nd.dentry.clone(), tmp_inode.clone());
         insert_dentry(tmp_dentry.clone());

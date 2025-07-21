@@ -379,6 +379,15 @@ impl FdTable {
                     return Err(Errno::EINVAL);
                 }
             }
+            FcntlOp::F_ADD_SEALS => {
+                let inode = self.get_file(fd).ok_or(Errno::EBADF)?.get_inode();
+                let seals = arg as i32;
+                inode.add_seals(seals)
+            }
+            FcntlOp::F_GET_SEALS => {
+                let inode = self.get_file(fd).ok_or(Errno::EBADF)?.get_inode();
+                Ok(inode.get_seals() as usize)
+            }
             _ => {
                 log::warn!("[fcntl] Unsupported op: {:?}", op);
                 return Err(Errno::EINVAL);

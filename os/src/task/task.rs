@@ -11,10 +11,12 @@ use super::{
 };
 use crate::{
     arch::{
-        config::USER_STACK_SIZE, mm::copy_to_user, trap::{
+        config::USER_STACK_SIZE,
+        mm::copy_to_user,
+        trap::{
             context::{get_trap_context, save_trap_context},
             TrapContext,
-        }
+        },
     },
     ext4::inode::{S_IWGRP, S_IWOTH, S_IWUSR},
     fs::{
@@ -33,9 +35,15 @@ use crate::{
     signal::{SiField, Sig, SigHandler, SigInfo, SigPending, SigSet, SigStack, UContext},
     syscall::errno::{self, Errno, SyscallRet},
     task::{
-        self, add_task, context::write_task_cx, current_task, dump_wait_queue, idle_task, manager::{
+        self, add_task,
+        context::write_task_cx,
+        current_task, dump_wait_queue, idle_task,
+        manager::{
             add_group, cancel_wait_alarm, delete_wait, new_group, register_task, remove_group,
-        }, processor::{current_hart_id, current_tp, preempte}, scheduler::{add_task_init, select_cpu, DEFAULT_PRIO}, wakeup, INITPROC, MAX_RT_PRIO, MIN_RT_PRIO, SCHED_IDLE, SCHED_OTHER
+        },
+        processor::{current_hart_id, current_tp, preempte},
+        scheduler::{add_task_init, select_cpu, DEFAULT_PRIO},
+        wakeup, INITPROC, MAX_RT_PRIO, MIN_RT_PRIO, SCHED_IDLE, SCHED_OTHER,
     },
     timer::{ITimerVal, TimeVal},
 };
@@ -123,11 +131,11 @@ pub struct Task {
 // 任务结构中修改频率较低字段（不会发生共享）
 // 由于内部字段读写次数均较少，因此在外层统一用一把大锁来管理
 pub struct TaskInner {
-    priority: u32,           // 任务的优先级 [1-99]为实时优先级，[100-139]为普通优先级 0为空闲任务
-    policy: u32,             // 任务的调度策略
+    priority: u32, // 任务的优先级 [1-99]为实时优先级，[100-139]为普通优先级 0为空闲任务
+    policy: u32,   // 任务的调度策略
     tid_address: TidAddress, // 线程id地址
-    sig_stack: SigStack,     // 额外信号栈
-    cpu_mask: CpuMask,       // CPU掩码
+    sig_stack: SigStack, // 额外信号栈
+    cpu_mask: CpuMask, // CPU掩码
 }
 
 impl TaskInner {
@@ -231,6 +239,9 @@ impl Task {
         let memory_set = RwLock::new(Arc::new(RwLock::new(memory_set)));
         let root = Arc::new(Mutex::new(root_path.clone()));
         let pwd = Arc::new(Mutex::new(root_path));
+        #[cfg(feature = "virt")]
+        let exe_path = Arc::new(RwLock::new("initproc".to_string()));
+        #[cfg(not(feature = "virt"))]
         let exe_path = Arc::new(RwLock::new(String::new()));
 
         let task = Arc::new(Task {
@@ -502,7 +513,7 @@ impl Task {
         let robust_list_head = AtomicUsize::new(0);
         let time_stat = SyncUnsafeCell::new(TimeStat::default());
         let umask = AtomicU16::new(self.umask.load(core::sync::atomic::Ordering::Relaxed));
-        let exe_path = self.exe_path.clone();
+        let exe_path = Arc::new(RwLock::new(self.exe_path().clone()));
         let task_inner = RwLock::new(TaskInner {
             priority: self.priority(),
             policy: self.policy(),
@@ -603,8 +614,16 @@ impl Task {
         log::info!("[kernel_clone] task{}-sp:\t{:x}", task.tid(), task.kstack());
         log::info!("[kernel_clone] task{}-tgid:\t{:x}", task.tid(), task.tgid());
         log::info!("[kernel_clone] task{}-pgid:\t{:x}", task.tid(), task.pgid());
-        log::info!("[kernel_clone] task{}-cpu_id:\t{}", task.tid(), task.cpu_id());
-        log::info!("[kernel_clone] task{}-priority:\t{}", task.tid(), task.priority());
+        log::info!(
+            "[kernel_clone] task{}-cpu_id:\t{}",
+            task.tid(),
+            task.cpu_id()
+        );
+        log::info!(
+            "[kernel_clone] task{}-priority:\t{}",
+            task.tid(),
+            task.priority()
+        );
         log::info!("[kernel_clone] task{} clone complete!", self.tid());
 
         Ok(task)
@@ -723,6 +742,8 @@ impl Task {
         memory_set.activate();
         // 更新exe_path
         *self.exe_path.write() = exe_path.clone();
+        // 6.11 Debug
+        log::error!("[kernel_execve] task{} exe_path: {}", self.tid(), exe_path);
 
         #[cfg(target_arch = "loongarch64")]
         memory_set.push_with_offset(
@@ -989,7 +1010,6 @@ impl Task {
         Arc::ptr_eq(&self.memory_set.read(), &task.memory_set.read())
     }
 
-    
     // 设定当前任务被信号中断
     pub fn set_interrupted(&self) {
         self.interrupted.store(true, Ordering::SeqCst);
@@ -1223,7 +1243,8 @@ impl Task {
         self.task_inner.write().policy = policy;
     }
     pub fn set_re_start(&self, re_start: bool) {
-        self.re_start.store(re_start, core::sync::atomic::Ordering::SeqCst);
+        self.re_start
+            .store(re_start, core::sync::atomic::Ordering::SeqCst);
     }
     pub fn set_restore_mask(&self, restore_mask: bool) {
         self.restore_mask
@@ -1235,7 +1256,7 @@ impl Task {
             prio += 1;
         } else if prio > MAX_RT_PRIO {
             prio -= 1;
-        } 
+        }
         self.sched_prio
             .store(prio, core::sync::atomic::Ordering::SeqCst);
     }
@@ -1780,13 +1801,13 @@ pub fn compare_task_priority(a: &Arc<Task>, b: &Arc<Task>) -> bool {
     // 先比较优先级
     let a_priority = a.sched_prio();
     let b_priority = b.sched_prio();
-    
+
     // Linux调度系统优先级规则：
     // 0: 特殊情况，无论什么情况都是最低优先级
     // 1-99: 实时优先级（RT priority），数值越大优先级越高
     // 100-139: 静态优先级（nice值），数值越小优先级越高
     // 实时优先级永远比静态优先级高
-    
+
     // 特殊处理优先级为0的情况
     match (a_priority, b_priority) {
         // 如果a是0，无论b是什么，a都是最低优先级
@@ -1798,7 +1819,7 @@ pub fn compare_task_priority(a: &Arc<Task>, b: &Arc<Task>) -> bool {
             // 判断a和b是否为实时优先级
             let a_is_rt = a_priority <= 99;
             let b_is_rt = b_priority <= 99;
-            
+
             match (a_is_rt, b_is_rt) {
                 // 如果a是实时优先级，b是静态优先级，则a优先级更高
                 (true, false) => true,
@@ -1982,7 +2003,6 @@ pub struct ThreadGroup {
 
 impl ThreadGroup {
     pub fn new() -> Self {
-        log::debug!("[ThreadGroup:new]");
         Self {
             member: BTreeMap::new(),
         }
@@ -2005,13 +2025,13 @@ impl ThreadGroup {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum TaskStatus {
     Ready,
     Running,
     // 目前用来支持waitpid的阻塞, usize是等待进程的pid
-    Interruptable,
     UnInterruptable,
+    Interruptable,
     Zombie,
 }
 

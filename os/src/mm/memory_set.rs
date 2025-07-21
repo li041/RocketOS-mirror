@@ -5,6 +5,7 @@ use super::{address::StepByOne, area::MapArea, shm::ShmSegment, VPNRange};
 use crate::drivers::block::ramdisk::{RAMDISK_BASE, RAMDISK_SIZE};
 use crate::drivers::get_dev_tree_size;
 use crate::fs::file;
+use crate::fs::uapi::{SealFlags, F_SEAL_WRITE};
 use crate::signal::Sig;
 use crate::syscall::errno;
 use crate::{
@@ -1163,6 +1164,97 @@ impl MemorySet {
     pub fn recycle_data_pages(&mut self) {
         self.areas.clear();
     }
+    // 检查seals
+    pub fn do_mprotect(
+        &mut self,
+        remap_vpn_range: VPNRange,
+        new_perm: MapPermission,
+    ) -> SyscallRet {
+        let mut found = false;
+        // 用于存放拆分出来的区域, 最后添加到areas中
+        let mut split_new_areas: Vec<MapArea> = Vec::new();
+        let remap_vpn_end = remap_vpn_range.get_end();
+        // 只检查可能与rnmap_vpn_range重叠的区域
+        for (_vpn, area) in self.areas.range_mut(..remap_vpn_end).rev() {
+            if area.vpn_range.is_intersect_with(&remap_vpn_range) {
+                // 7.24 Debug
+                log::info!(
+                    "[MemorySet::remap_area_with_overlap] area: {:?}, remap_vpn_range: {:?}, new_perm: {:?}",
+                    area,
+                    remap_vpn_range,
+                    new_perm
+                );
+                if area.backend_file.is_some() {
+                    let seals = area.backend_file.as_ref().unwrap().get_inode().get_seals();
+                    if seals & F_SEAL_WRITE != 0 && new_perm.contains(MapPermission::W) {
+                        log::error!(
+                        "[MemorySet::remap_area_with_overlap] area {:?} has F_SEAL_WRITE, cannot mprotect with prot w",
+                        area
+                        );
+                        return Err(Errno::EPERM);
+                    }
+                }
+                let old_vpn_start = area.vpn_range.get_start();
+                let old_vpn_end = area.vpn_range.get_end();
+                let remap_start = remap_vpn_range.get_start();
+                let remap_end: VirtPageNum = remap_vpn_range.get_end();
+                log::info!(
+                    "[MemorySet::remap_area_with_overlap] old_vpn_start: {:#x}, old_vpn_end: {:#x}, remap_start: {:#x}, remap_end: {:#x}",
+                    old_vpn_start.0,
+                    old_vpn_end.0,
+                    remap_start.0,
+                    remap_end.0
+                );
+                // 调整区域
+                if remap_start <= old_vpn_start && remap_end >= old_vpn_end {
+                    // `remap_vpn_range` 完全覆盖 `vpn_range`，remap `area`
+                    area.map_perm.update_rwx(new_perm);
+                    area.remap(&mut self.page_table);
+                } else if remap_start <= old_vpn_start {
+                    // `remap_vpn_range` 覆盖了前部分
+                    let new_area = area.split2(remap_end);
+                    area.map_perm.update_rwx(new_perm);
+                    area.remap(&mut self.page_table);
+                    split_new_areas.push(new_area);
+                } else if remap_end >= old_vpn_end {
+                    // `remap_vpn_range` 覆盖了后部分，调整 `vpn_end`
+                    log::error!("{:?}", area);
+                    let mut new_area = area.split2(remap_start);
+                    new_area.map_perm.update_rwx(new_perm);
+                    new_area.remap(&mut self.page_table);
+                    split_new_areas.push(new_area);
+                } else {
+                    // 区域被 `remap_vpn_range` 拆成两部分，需要拆分 `area`
+                    let (mut remap_area, new_area) = area.split_in3(remap_start, remap_end);
+                    remap_area.map_perm.update_rwx(new_perm);
+                    remap_area.remap(&mut self.page_table);
+                    split_new_areas.push(new_area);
+                    split_new_areas.push(remap_area);
+                }
+                found = true;
+            } else {
+                break;
+            }
+        }
+        // 将拆分出来的区域添加到 `area` 中
+        self.areas.extend(
+            split_new_areas
+                .into_iter()
+                .map(|area| (area.vpn_range.get_start(), area)),
+        );
+        log::info!(
+            "[MemorySet::remap_area_with_overlap] remap_vpn_range: {:?}, new_perm: {:?}, found: {}",
+            remap_vpn_range,
+            new_perm,
+            found
+        );
+        // found
+        if found == true {
+            Ok(0)
+        } else {
+            Err(Errno::ENOMEM)
+        }
+    }
     // 返回值表示是否有区域被remap
     pub fn remap_area_with_overlap(
         &mut self,
@@ -1333,6 +1425,15 @@ impl MemorySet {
 
 /// 操纵mmap_area的方法
 impl MemorySet {
+    /// 只允许要求vpn_range在单一的MapArea中使用
+    pub fn get_area_by_range(&self, vpn_range: &VPNRange) -> Option<&MapArea> {
+        if let Some((start_vpn, area)) = self.areas.range(..vpn_range.get_end()).next_back() {
+            if area.vpn_range.is_contain(vpn_range) {
+                return Some(area);
+            }
+        }
+        None
+    }
     // used by Futex
     // 共享区域:
     //    1. 匿名共享区域
@@ -1420,9 +1521,9 @@ impl MemorySet {
                             offset,
                             vpn.0
                         );
-                        if let Some(page) =
-                            area.backend_file.as_ref().unwrap().clone().get_page(offset)
-                        {
+                        let backend_file = area.backend_file.as_ref().unwrap().clone();
+                        let seals = SealFlags::from(backend_file.get_inode().get_seals());
+                        if let Some(page) = backend_file.get_page(offset) {
                             // 增加页表映射
                             // 注意这里也可以是写时复制(私有映射)
                             let pte_flags = PTEFlags::from(area.map_perm);
@@ -1434,6 +1535,10 @@ impl MemorySet {
                             return Ok(());
                         } else {
                             // 如果没有找到对应的页, 则说明文件映射的偏移不合法
+                            log::error!(
+                                "[handle_lazy_allocation_area] lazy alloc file_offset {:#x} not found",
+                                offset
+                            );
                             return Err(Sig::SIGBUS);
                         }
                     } else {
@@ -1551,11 +1656,12 @@ impl MemorySet {
                                 self.page_table.map(vpn, ppn, pte_flags);
                                 pages.insert(vpn, Arc::new(page));
                             }
-                            log::error!(
-                                "[handle_lazy_allocation_area] lazy alloc area, vpn_range: {:#x} ~ {:#x}",
-                                    start_vpn,
-                                    end_vpn,
-                            );
+                            // 7.23 Debug
+                            // log::error!(
+                            //     "[handle_lazy_allocation_area] lazy alloc area, vpn_range: {:#x} ~ {:#x}",
+                            //         start_vpn,
+                            //         end_vpn,
+                            // );
                         }
                         return Ok(());
                     }
@@ -1873,11 +1979,12 @@ impl MemorySet {
                         }
                     } else if !pte.is_valid() {
                         // === 懒分配处理 ===
-                        log::info!(
-                            "[pre_handle_cow_and_lazy_alloc] lazy allocation area, vpn: {:#x}, pte: {:#x?}",
-                            vpn.0,
-                            pte
-                        );
+                        // 7.23 先注释掉
+                        // log::info!(
+                        //     "[pre_handle_cow_and_lazy_alloc] lazy allocation area, vpn: {:#x}, pte: {:#x?}",
+                        //     vpn.0,
+                        //     pte
+                        // );
                         if let Some((_, area)) = self.areas.range_mut(..=vpn).next_back() {
                             if area.vpn_range.contains_vpn(vpn) {
                                 let offset = area.offset
@@ -2044,10 +2151,12 @@ impl MemorySet {
                 // 刷新下tlb看看
                 unsafe {
                     sfence_vma_vaddr(va.0 << PAGE_SIZE_BITS);
-                }
+                };
                 // 直接返回, 不处理
                 return Ok(());
             }
+            // 7.23 Debug
+            self.page_table.dump_all_user_mapping();
             // 页表中有对应的页表项, 但不是COW, 同时也没有写权限
             return Err(Sig::SIGSEGV);
         }
@@ -2109,5 +2218,14 @@ impl MemorySet {
     pub fn detach_shm_segment(&mut self, shmaddr: usize) {
         let shm_start_vpn = VirtAddr::from(shmaddr).floor();
         self.remove_area_with_start_vpn(shm_start_vpn);
+    }
+    // ToOptimize:
+    pub fn is_range_free(&self, range: VPNRange) -> bool {
+        for (_, area) in self.areas.iter() {
+            if area.vpn_range.is_intersect_with(&range) {
+                return false;
+            }
+        }
+        true
     }
 }
