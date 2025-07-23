@@ -1595,14 +1595,6 @@ pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
         task.tid(),
         task.exit_code()
     );
-    // 托孤
-    task.op_children_mut(|children| {
-        for child in children.values() {
-            child.set_parent(INITPROC.clone());
-            INITPROC.add_child(child.clone())
-        }
-        children.clear();
-    });
     // // 回收地址空间
     // if Arc::strong_count(&task.memory_set()) == 1 {
     //     log::warn!("[kernel_exit] Task{} memory_set recycle", task.tid());
@@ -1633,6 +1625,14 @@ pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
             "[kernel_exit] Task{} is the last in thread-group",
             task.tid()
         );
+        // 托孤
+        task.op_children_mut(|children| {
+            for child in children.values() {
+                child.set_parent(INITPROC.clone());
+                INITPROC.add_child(child.clone())
+            }
+            children.clear();
+        });
         task.op_parent(|parent| {
             if let Some(parent) = parent {
                 log::debug!("[kernel_exit] Task{} send SIGCHILD to parent", task.tid());

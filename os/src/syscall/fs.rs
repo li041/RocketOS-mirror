@@ -1180,6 +1180,10 @@ pub fn sys_renameat2(
     let mut old_nd = Nameidata::new(&oldpath, olddirfd)?;
     match filename_lookup(&mut old_nd, true) {
         Ok(old_dentry) => {
+            if old_dentry.absolute_path.contains("/proc/") {
+                log::error!("[sys_renameat2] cannot rename /proc files");
+                return Err(Errno::EPERM);
+            }
             let mut new_nd = Nameidata::new(&newpath, newdirfd)?;
             // 检查newpath是否存在, 并进行相关的类型检查
             // 解析newpath到其目录部分

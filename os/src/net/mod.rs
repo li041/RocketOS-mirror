@@ -137,6 +137,68 @@ pub fn init(net_device: Option<VirtioNetDevice<32, HalImpl, MmioTransport>>) {
     //     // LOOPBACK_DEV.init_once(Mutex::new(local_device));
     // }
 }
+
+//net 网络初始化
+#[cfg(target_arch = "riscv64")]
+#[cfg(feature = "vf2")]
+pub fn init_vf2() {
+    //初始化网卡
+    log::error!("[init_net]:begin init virtionetdevice");
+    // let ether_addr = dev.mac_address();
+    // let eth0 = InterfaceWrapper::new(
+    //     "eth0",
+    //     ether_addr,
+    //     NetDeviceWrapper {
+    //         inner: RefCell::new(Box::new(dev)),
+    //     },
+    // );
+    // let gateway_ipv4 = GATEWAY.parse().expect("invalid gateway");
+    // let gateway_ipv6 = GATEWAY_V6.parse().expect("invalid gateway");
+    // eth0.set_gatway(gateway_ipv4, gateway_ipv6);
+    // let ip_ipv4 = IP.parse().expect("invalid ip address");
+    // let ip_ipv6 = IP_V6.parse().expect("invalid ip address");
+    // eth0.set_ip_addr(ip_ipv4, 24);
+    // eth0.set_ip_addr(ip_ipv6, PREFIX_V6);
+    // ETH0.init_once(eth0);
+    let mut socket_set = SOCKET_SET.lock();
+    socket_set.get_or_init(|| {
+        // 初始化代码
+        SocketSetWrapper::new()
+    });
+    let mut listentable = LISTEN_TABLE.lock();
+    listentable.get_or_init(|| {
+        // 初始化代码
+        ListenTable::new()
+    });
+    let mut device = LoopbackDev::new(Medium::Ip);
+    let config = Config::new(smoltcp::wire::HardwareAddress::Ip);
+    let mut iface = Interface::new(
+        config,
+        &mut device,
+        SmolInstant::from_micros_const((get_time() / 1000) as i64),
+    );
+    iface.update_ip_addrs(|ip_addrs| {
+        ip_addrs
+            .push(IpCidr::new(IpAddress::v4(127, 0, 0, 1), 8))
+            .unwrap();
+    });
+    LOOPBACK.init_once(Mutex::new(iface));
+    LOOPBACK_DEV.init_once(Mutex::new(device));
+    // else {
+    //     panic!("currently not support loopback");
+    //     //loopbackdev
+    //     // let mut local_device=LoopBackDevWrapper::new(smoltcp::phy::Medium::Ip);
+    //     // let config=Config::new(smoltcp::wire::HardwareAddress::Ip);
+    //     // let mut iface=Interface::new(config, &mut local_device, SmolInstant::from_micros_const(get_time() as i64));
+    //     // iface.update_ip_addrs(|ipaddrs|{
+    //     //     ipaddrs.push(IpCidr::new(IpAddress::v4(127, 0, 0, 1), 8)).unwrap();
+    //     // });
+    //     // LOOPBACK.init_once(Mutex::new(iface));
+    //     // LOOPBACK_DEV.init_once(Mutex::new(local_device));
+    // }
+}
+
+
 #[cfg(target_arch="loongarch64")]
 pub fn init_la<T: Transport + 'static>(net_device: Option<VirtioNetDevice<32, HalImpl, T>>) {
     //初始化网卡

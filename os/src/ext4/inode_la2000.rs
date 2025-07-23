@@ -238,10 +238,15 @@ impl Ext4InodeDisk {
         inode.uid = 0;
         println!("[new_chr] after set uid");
         inode.gid = 0;
+        println!("[new_chr] after set gid");
         inode.size_lo = 0;
+        println!("[new_chr] after set size_lo");
         inode.size_hi = 0;
+        println!("[new_chr] after set size_hi");
         inode.blocks_lo = 0;
+        println!("[new_chr] after set blocks_lo");
         inode.links_count = 1;
+        println!("[new_chr] after set links_count");
         inode.flags = 0;
         println!("before set major and minor");
         // 设置主设备号和次设备号
@@ -314,10 +319,15 @@ impl Ext4InodeDisk {
         inode.uid = 0;
         println!("[new_blk] after set uid");
         inode.gid = 0;
+        println!("[new_blk] after set gid");
         inode.size_lo = 0;
+        println!("[new_blk] after set size_lo");
         inode.size_hi = 0;
+        println!("[new_blk] after set size_hi");
         inode.blocks_lo = 0;
+        println!("[new_blk] after set blocks_lo");
         inode.links_count = 1;
+        println!("[new_blk] after set links_count");
         inode.flags = 0;
         println!("before set major and minor");
         // 设置主设备号和次设备号

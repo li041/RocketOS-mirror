@@ -103,6 +103,10 @@ pub fn init_device(addr: usize) -> usize {
                     log::error!("[init_device]:the dev has built");
                     crate::net::init(Some(dev));
                 }
+                #[cfg(feature = "vf2")]
+                if node_t.name == "ethernet@16030000" {
+                    crate::net::init_vf2();
+                }
             }
         }
     }
