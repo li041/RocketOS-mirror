@@ -66,7 +66,7 @@ __trap_from_user:
     ld tp, 35*8(sp)
     # 注意要在保存上下文后设置stvec
     # 设置stvec为Mode(0~1 bits) Direct, 基地址为__trap_from_kernel
-    la t0, __trap_from_user
+    la t0, __trap_from_kernel
     csrw stvec, t0
     # 设置sstatus的SPP位为1, 表示进入内核态, 实际并没有作用
     csrs sstatus, 8
@@ -133,6 +133,8 @@ __trap_from_kernel:
     sd t0, 32*8(sp)
     sd t1, 33*8(sp)
     sd sp, 2*8(sp)
+    # 第一个参数是TrapContext在内核栈上的地址, 通过a0传递
+    mv a0, sp
     call kernel_trap_handler
     # 内核态的trap_handler返回后, 恢复内核态的上下文
     ld t0, 32*8(sp)

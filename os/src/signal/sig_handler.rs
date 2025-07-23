@@ -11,9 +11,15 @@ pub struct SigHandler {
 
 impl SigHandler {
     pub fn new() -> Self {
-        Self {
-            actions: core::array::from_fn(|signo| SigAction::new((signo + 1).into())),
+        use core::mem::MaybeUninit;
+        let mut actions: [MaybeUninit<SigAction>; MAX_SIGNUM] = unsafe {
+            MaybeUninit::uninit().assume_init()
+        };
+        for i in 0..MAX_SIGNUM {
+            actions[i] = MaybeUninit::new(SigAction::new((i + 1).into()));
         }
+        let actions = unsafe { core::mem::transmute::<_, [SigAction; MAX_SIGNUM]>(actions) };
+        Self { actions }
     }
 
     pub fn get(&self, sig: Sig) -> SigAction {
@@ -43,6 +49,7 @@ pub const SIG_IGN: usize = 1;
 
 // 处理操作
 #[derive(Copy, Clone, Debug, Default)]
+#[repr(C)]
 pub struct SigAction {
     pub sa_handler: usize,    // 信号处理函数指针
     pub flags: SigActionFlag, // 额外信息

@@ -9,12 +9,13 @@ use crate::{
         task::compare_task_priority,
     },
 };
-use alloc::{collections::vec_deque::VecDeque, sync::Arc, vec, vec::Vec};
+use alloc::{collections::{btree_map::BTreeMap, vec_deque::VecDeque}, sync::Arc, vec::{self, Vec}};
 use bitflags::bitflags;
 use core::{
     cell::SyncUnsafeCell,
     fmt::Debug,
-    sync::atomic::{AtomicUsize, Ordering},
+    mem::MaybeUninit,
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use hashbrown::HashMap;
 use lazy_static::lazy_static;
@@ -255,7 +256,7 @@ pub fn yield_current_task() {
     if let Some(next_task) = fetch_task() {
         let should_preempt = compare_task_priority(&task, &next_task);
         // 当前任务优先级小于等于下一个任务
-        if !should_preempt { 
+        if !should_preempt {
             task.set_ready();
             // 将当前任务加入就绪队列
             add_task(task);
@@ -348,7 +349,7 @@ pub struct Scheduler {
     rt_bitmap: u128,    // 99位
     normal_bitmap: u64, // 40位
     // 任务索引，快速定位任务在哪个队列
-    task_index: HashMap<Tid, (QueueType, usize)>, // tid -> (队列类型, 队列索引)
+    task_index: BTreeMap<Tid, (QueueType, usize)>, // tid -> (队列类型, 队列索引)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -366,7 +367,7 @@ impl Scheduler {
             normal_queues: [EMPTY_QUEUE; 40],
             rt_bitmap: 0,     // 99位
             normal_bitmap: 0, // 40位
-            task_index: HashMap::new(),
+            task_index: BTreeMap::new(),
         }
     }
 
@@ -596,8 +597,6 @@ impl Debug for WaitOption {
 //         }
 //     }
 // }
-
-
 
 // // 不能从自己切换到自己
 // // 注意调用者要释放原任务的锁, 否则会死锁

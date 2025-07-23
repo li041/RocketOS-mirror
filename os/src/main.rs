@@ -193,9 +193,9 @@ pub fn rust_main(hart_id: usize) -> ! {
         #[cfg(feature = "smp")]
         start_other_harts(hart_id);
         enable_timer_interrupt();
+        set_next_trigger();
         add_initproc(hart_id);
         loader::list_apps();
-        set_next_trigger();
         run_tasks(hart_id);
     } else {
         use crate::task::other_initproc;

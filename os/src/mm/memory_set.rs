@@ -626,11 +626,21 @@ impl MemorySet {
         if argv.len() > 0 {
             let file_name = &argv[0];
             // 文件后缀是.sh或者file_data是#!开头
+            #[cfg(not(feature = "la2000"))]
             if file_name.ends_with(".sh") || sh_head.starts_with(b"#!") || file_name == "/tmp/hello"
             {
                 let prepend_args = vec![String::from("/musl/busybox"), String::from("sh")];
                 argv.splice(0..0, prepend_args);
                 if let Ok(busybox) = path_openat("/musl/busybox", OpenFlags::empty(), AT_FDCWD, 0) {
+                    elf_file = busybox;
+                }
+            }
+            #[cfg(feature = "la2000")]
+            if file_name.ends_with(".sh") || sh_head.starts_with(b"#!") || file_name == "/tmp/hello"
+            {
+                let prepend_args = vec![String::from("/glibc/busybox"), String::from("sh")];
+                argv.splice(0..0, prepend_args);
+                if let Ok(busybox) = path_openat("/glibc/busybox", OpenFlags::empty(), AT_FDCWD, 0) {
                     elf_file = busybox;
                 }
             }
@@ -1820,9 +1830,9 @@ impl MemorySet {
                                 let data_frame = area.pages.get(&vpn).unwrap();
                                 if Arc::strong_count(data_frame) == 1 {
                                     log::warn!(
-                                    "[pre_handle_cow_and_lazy_alloc] arc strong count == 1, vpn: {:#x}",
-                                    vpn.0
-                                );
+                                        "[pre_handle_cow_and_lazy_alloc] arc strong count == 1, vpn: {:#x}",
+                                        vpn.0
+                                    );
                                     let mut flags = pte.flags();
                                     flags.remove(PTEFlags::COW);
                                     flags.insert(PTEFlags::W);
@@ -1831,9 +1841,9 @@ impl MemorySet {
                                     *pte = PageTableEntry::new(pte.ppn(), flags);
                                 } else {
                                     log::warn!(
-                                    "[pre_handle_cow_and_lazy_alloc] arc strong count > 1, vpn: {:#x}",
-                                    vpn.0
-                                );
+                                        "[pre_handle_cow_and_lazy_alloc] arc strong count > 1, vpn: {:#x}",
+                                        vpn.0
+                                    );
                                     let page = Page::new_framed(None);
                                     let src_frame = pte.ppn().get_bytes_array();
                                     let dst_frame = page.ppn().get_bytes_array();
@@ -1880,15 +1890,33 @@ impl MemorySet {
                                                 vpn.0,
                                                 page.ppn().0
                                             );
-                                            *pte = PageTableEntry::new(
-                                                page.ppn(),
-                                                pte_flags | PTEFlags::V,
-                                            );
+                                            #[cfg(target_arch = "riscv64")]{
+                                                *pte = PageTableEntry::new(
+                                                    page.ppn(),
+                                                    pte_flags | PTEFlags::V | PTEFlags::A | PTEFlags::D,
+                                                );
+                                            }
+                                            #[cfg(target_arch = "loongarch64")]{
+                                                *pte = PageTableEntry::new(
+                                                    page.ppn(),
+                                                    pte_flags | PTEFlags::V,
+                                                );
+                                            }
                                             area.pages.insert(vpn, page);
                                         } else {
                                             let ppn = page.ppn();
-                                            *pte =
-                                                PageTableEntry::new(ppn, pte_flags | PTEFlags::V);
+                                            #[cfg(target_arch = "riscv64")]{
+                                                *pte = PageTableEntry::new(
+                                                    page.ppn(),
+                                                    pte_flags | PTEFlags::V | PTEFlags::A | PTEFlags::D,
+                                                );
+                                            }
+                                            #[cfg(target_arch = "loongarch64")]{
+                                                *pte = PageTableEntry::new(
+                                                    page.ppn(),
+                                                    pte_flags | PTEFlags::V,
+                                                );
+                                            }
                                             area.pages.insert(vpn, page);
                                         }
                                     } else {
@@ -1902,7 +1930,12 @@ impl MemorySet {
                                     map_perm.insert(MapPermission::W);
                                     let pte_flags = PTEFlags::from(map_perm);
                                     let ppn = page.ppn();
-                                    *pte = PageTableEntry::new(ppn, pte_flags | PTEFlags::V);
+                                    #[cfg(target_arch = "riscv64")]{
+                                        *pte = PageTableEntry::new(ppn, pte_flags | PTEFlags::V | PTEFlags::A | PTEFlags::D);
+                                    }
+                                    #[cfg(target_arch = "loongarch64")]{
+                                        *pte = PageTableEntry::new(ppn, pte_flags | PTEFlags::V);
+                                    }
                                     area.pages.insert(vpn, Arc::new(page));
                                 }
                                 unsafe {

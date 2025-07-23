@@ -23,6 +23,9 @@ impl Write for Stdout {
         use crate::arch::sbi::console_flush;
         let mut i = 0;
         for c in s.chars() {
+            if c == '\n' {
+                console_putchar('\r' as usize);
+            }
             console_putchar(c as usize);
             i += 1;
             if i >= 4 {
@@ -53,6 +56,6 @@ macro_rules! print {
 /// println string macro
 macro_rules! println {
     ($fmt: literal $(, $($arg: tt)+)?) => {
-        $crate::console::print(format_args!(concat!($fmt, "\r","\n") $(, $($arg)+)?));
+        $crate::console::print(format_args!(concat!($fmt, "\r\n") $(, $($arg)+)?));
     }
 }

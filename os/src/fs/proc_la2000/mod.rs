@@ -1,9 +1,9 @@
 use crate::{
     ext4::inode::{Ext4InodeDisk, S_IFCHR, S_IFDIR, S_IFLNK, S_IFREG},
-    fs::proc::{
+    fs::{proc::{
         cpuinfo::{CPUInfoFile, CPUINFO},
         pid_max::{PidMaxFile, PIDMAX},
-    },
+    }, proc_la2000::interrupts::{InterruptsFile, INTERRUPTS}},
 };
 
 use super::{
@@ -474,6 +474,35 @@ pub fn init_procfs(root_path: Arc<Path>) {
                 OpenFlags::empty(),
             );
             CPUINFO.call_once(|| cpuinfo_file.clone());
+            insert_core_dentry(dentry.clone());
+        }
+        Err(e) => {
+            panic!("create {} failed: {:?}", mounts_path, e);
+        }
+    };
+
+    // /proc/interrupts
+    // 只读, 虚拟文件
+    let interrupts_path = "/proc/interrupts";
+    let interrupts_mode = S_IFREG as u16 | 0o444;
+    nd = Nameidata {
+        path_segments: parse_path_uncheck(interrupts_path),
+        dentry: root_path.dentry.clone(),
+        mnt: root_path.mnt.clone(),
+        depth: 0,
+    };
+    match filename_create(&mut nd, 0) {
+        Ok(dentry) => {
+            let parent_inode = nd.dentry.get_inode();
+            parent_inode.create(dentry.clone(), interrupts_mode);
+            // 现在dentry的inode指向/proc/interrupts
+            let interrupts_file = InterruptsFile::new(
+                Path::new(root_path.mnt.clone(), dentry.clone()),
+                dentry.get_inode().clone(),
+                // ReadOnly
+                OpenFlags::empty(),
+            );
+            INTERRUPTS.call_once(|| interrupts_file.clone());
             insert_core_dentry(dentry.clone());
         }
         Err(e) => {

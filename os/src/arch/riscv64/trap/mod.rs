@@ -215,7 +215,7 @@ pub fn kernel_trap_handler(cx: &mut TrapContext) {
             panic!("UserEnvCall from kernel!");
         }
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
-            log::warn!("SupervisorTimer in kernel mode")
+            panic!("SupervisorTimer in kernel mode")
         }
         _ => {
             panic!(

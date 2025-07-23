@@ -11,6 +11,8 @@ pub use sig_handler::*;
 pub use sig_stack::*;
 pub use sig_struct::*;
 
+#[cfg(target_arch = "riscv64")]
+use crate::arch::trap;
 use crate::{
     arch::{
         mm::copy_to_user,
@@ -20,6 +22,7 @@ use crate::{
         },
     },
     mm::VirtAddr,
+    syscall::errno::Errno,
     task::{current_task, get_stack_top_by_sp, kernel_exit, remove_task, schedule, Task},
 };
 
@@ -70,6 +73,22 @@ pub fn handle_signal() {
             log::warn!("[handle_signal] handle SA_RESTART");
             trap_cx.set_sepc(trap_cx.sepc - 4);
             trap_cx.restore_a0(); // 从last_a0中恢复a0
+        } 
+        // 处理ERESTARTSYS
+        else if (trap_cx.get_a0() == Errno::ERESTARTSYS as usize)
+            && action.flags.contains(SigActionFlag::SA_RESTART)
+            && action.sa_handler != SIG_DFL
+            && action.sa_handler != SIG_IGN
+        {
+            log::warn!("[handle_signal] handle ERESTARTSYS");
+            trap_cx.set_sepc(trap_cx.sepc - 4);
+            trap_cx.restore_a0();
+        } 
+        // 当返回ERESTARTSYS却未注册或不包含 SA_RESTART 时
+        else if (trap_cx.get_a0() == Errno::ERESTARTSYS as usize)
+        {
+            log::warn!("[handle_signal] handle ERESTARTNOINTR");
+            trap_cx.set_a0(Errno::EINTR as usize);
         }
 
         // 回到用户调用ecall的指令
@@ -81,7 +100,24 @@ pub fn handle_signal() {
             log::warn!("[handle_signal] handle SA_RESTART");
             trap_cx.set_sepc(trap_cx.era - 4);
             trap_cx.restore_a0(); // 从last_a0中恢复a0
+        } 
+        // 处理ERESTARTSYS
+        else if (trap_cx.get_a0() == Errno::ERESTARTSYS as usize)
+            && action.flags.contains(SigActionFlag::SA_RESTART)
+            && action.sa_handler != SIG_DFL
+            && action.sa_handler != SIG_IGN
+        {
+            log::warn!("[handle_signal] handle ERESTARTSYS");
+            trap_cx.set_sepc(trap_cx.era - 4); // 恢复到系统调用前
+            trap_cx.restore_a0();
         }
+        // 当返回ERESTARTSYS却未注册或不包含 SA_RESTART 时
+        else if (trap_cx.get_a0() == Errno::ERESTARTSYS as usize)
+        {
+            log::warn!("[handle_signal] handle ERESTARTNOINTR");
+            trap_cx.set_a0(Errno::EINTR as usize);
+        }
+
 
         if task.is_interrupted() {
             task.set_uninterrupted();
@@ -127,9 +163,9 @@ pub fn handle_signal() {
             let mut user_sp = (trap_cx.get_sp() - 15) & !0x0f; // 向下对齐到16字节
             log::info!("[handle_signal] origin user stack {:#x}", user_sp);
             if action.flags.contains(SigActionFlag::SA_ONSTACK) {
-                log::warn!("[handle_signal] handle SA_ONSTACK");
                 let mut sig_stack = task.sigstack();
                 if sig_stack.ss_flags == 0 || sig_stack.ss_flags == SS_ONSTACK {
+                    log::warn!("[handle_signal] handle SA_ONSTACK");
                     user_sp = (sig_stack.ss_sp + sig_stack.ss_size - 15) & !0x0f; // 向下对齐到16字节
                     sig_stack.ss_flags = SS_ONSTACK;
                     task.set_sigstack(sig_stack);
