@@ -16,6 +16,7 @@ bitflags = "1.2.1"
 [features]
 submit = []
 la2000 = []
+sdcard = []
 virt = []
 board = []
 smp =[]

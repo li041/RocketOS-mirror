@@ -12,6 +12,7 @@ test = []
 virt = []
 vf2 = ["board"]
 la2000 = ["board"]
+sdcard = []
 smp = []
 
 board = []
@@ -23,6 +24,7 @@ xmas-elf = "0.7.0"
 bitflags = "2.6.0"
 zerocopy = { version = "0.7.35", features = ["derive"] }
 bytemuck = { version = "1.14", features = ["derive"] }
+dw_sd = { git = "https://github.com/li041/dw_sd.git" }
 virtio-drivers = { git = "https://github.com/li041/virtio-drivers", branch = 'lxh'}
 memoffset = "0.9.1"
 hashbrown = "0.15.2"

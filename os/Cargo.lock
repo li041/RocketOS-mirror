@@ -193,6 +193,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dw_sd"
+version = "0.1.0"
+source = "git+https://github.com/li041/dw_sd.git#ecd68e4fa9250c75c7227c7e611b318379c5fbcf"
+dependencies = [
+ "bitflags 2.9.1",
+ "lego_device",
+ "log",
+]
+
+[[package]]
 name = "embedded-hal"
 version = "1.0.0-alpha.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -304,6 +314,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "17f03abfebdaaf0fad16790237a0348baf84886d3ade460db13bae59e614a180"
 
 [[package]]
+name = "lego_device"
+version = "0.1.0"
+source = "git+https://github.com/lego-os/lego_device.git?branch=main#3284a2e3d853ec9547f210a2497f5214ead8f38a"
+
+[[package]]
 name = "libc"
 version = "0.2.174"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -388,6 +403,7 @@ dependencies = [
  "buddy_system_allocator",
  "bytemuck",
  "cfg-if",
+ "dw_sd",
  "embedded-hal",
  "fdt",
  "hashbrown",

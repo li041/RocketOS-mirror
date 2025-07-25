@@ -1,6 +1,7 @@
 pub mod block_cache;
 pub mod block_dev;
 pub mod ramdisk;
+pub mod sdio;
 
 use block_dev::BlockDevice;
 
@@ -9,8 +10,10 @@ use lazy_static::*;
 
 #[cfg(feature = "virt")]
 pub type BlockDeviceImpl = crate::arch::VirtIOBlock;
-#[cfg(feature="board")]
+#[cfg(all(feature = "board", not(feature = "sdcard")))]
 pub type BlockDeviceImpl = crate::drivers::block::ramdisk::RamDisk;
+#[cfg(all(feature = "board", feature = "sdcard"))]
+pub type BlockDeviceImpl = crate::drivers::block::sdio::MmcDevice;
 
 lazy_static! {
     pub static ref BLOCK_DEVICE: Arc<dyn BlockDevice> = Arc::new(BlockDeviceImpl::new());
