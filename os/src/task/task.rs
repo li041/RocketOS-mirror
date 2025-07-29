@@ -35,7 +35,7 @@ use crate::{
     task::{
         self, add_task, context::write_task_cx, current_task, dump_wait_queue, idle_task, manager::{
             add_group, cancel_wait_alarm, delete_wait, new_group, register_task, remove_group,
-        }, processor::{current_hart_id, current_tp, preempte}, scheduler::{add_task_init, select_cpu, DEFAULT_PRIO}, wakeup, INITPROC, SCHED_IDLE, SCHED_OTHER
+        }, processor::{current_hart_id, current_tp, preempte}, scheduler::{add_task_init, select_cpu, DEFAULT_PRIO}, wakeup, INITPROC, MAX_RT_PRIO, MIN_RT_PRIO, SCHED_IDLE, SCHED_OTHER
     },
     timer::{ITimerVal, TimeVal},
 };
@@ -53,7 +53,7 @@ use core::{
     cell::SyncUnsafeCell,
     fmt::Write,
     mem,
-    sync::atomic::{AtomicI32, AtomicI8, AtomicU16, AtomicU32, AtomicUsize},
+    sync::atomic::{AtomicBool, AtomicI32, AtomicI8, AtomicU16, AtomicU32, AtomicUsize, Ordering},
 };
 use spin::{Mutex, RwLock};
 
@@ -81,6 +81,7 @@ pub struct Task {
     tgid: AtomicUsize,                              // 线程组id
     pgid: AtomicUsize,                              // 进程组id
     status: Mutex<TaskStatus>,                      // 任务状态
+    sched_prio: AtomicU32,                          // 调度优先级
     time_stat: SyncUnsafeCell<TimeStat>,            // 任务时间统计
     parent: Arc<Mutex<Option<Weak<Task>>>>,         // 父任务
     children: Arc<Mutex<BTreeMap<Tid, Arc<Task>>>>, // 子任务
@@ -99,6 +100,9 @@ pub struct Task {
     // 信号处理
     sig_pending: Mutex<SigPending>,         // 待处理信号
     sig_handler: Arc<Mutex<SigHandler>>,    // 信号处理函数
+    interrupted: AtomicBool,                // 是否被信号中断
+    re_start: AtomicBool,                   // 是否需要重启
+    restore_mask: AtomicBool,               // 是否需要恢复信号掩码(用于sigsuspend)
     itimerval: Arc<RwLock<[ITimerVal; 3]>>, // 定时器
     // 资源限制
     rlimit: Arc<RwLock<[RLimit; 16]>>,
@@ -113,7 +117,7 @@ pub struct Task {
     fsgid: AtomicU32,             // 文件系统组id
     sup_groups: RwLock<Vec<u32>>, // 附加组列表
     // 任务内部结构
-    task_inner: Mutex<TaskInner>, // 内部结构
+    task_inner: RwLock<TaskInner>, // 内部结构
 }
 
 // 任务结构中修改频率较低字段（不会发生共享）
@@ -175,6 +179,7 @@ impl Task {
             tid: RwLock::new(TidHandle(0)),
             tgid: AtomicUsize::new(0),
             status: Mutex::new(TaskStatus::Ready),
+            sched_prio: AtomicU32::new(0),
             time_stat: SyncUnsafeCell::new(TimeStat::default()),
             parent: Arc::new(Mutex::new(None)),
             children: Arc::new(Mutex::new(BTreeMap::new())),
@@ -189,6 +194,9 @@ impl Task {
             umask: AtomicU16::new(0),
             sig_pending: Mutex::new(SigPending::new()),
             sig_handler: Arc::new(Mutex::new(SigHandler::new())),
+            interrupted: AtomicBool::new(false),
+            re_start: AtomicBool::new(true),
+            restore_mask: AtomicBool::new(true),
             itimerval: Arc::new(RwLock::new([ITimerVal::default(); 3])),
             rlimit: Arc::new(RwLock::new([RLimit::default(); RLIM_NLIMITS])),
             pgid: AtomicUsize::new(0),
@@ -201,7 +209,7 @@ impl Task {
             sgid: AtomicU32::new(0),
             fsgid: AtomicU32::new(0),
             sup_groups: RwLock::new(Vec::new()),
-            task_inner: Mutex::new(TaskInner::idle_init()),
+            task_inner: RwLock::new(TaskInner::idle_init()),
         })
     }
 
@@ -232,6 +240,7 @@ impl Task {
             tgid: AtomicUsize::new(tgid),
             pgid: AtomicUsize::new(1),
             status: Mutex::new(TaskStatus::Ready),
+            sched_prio: AtomicU32::new(DEFAULT_PRIO),
             time_stat: SyncUnsafeCell::new(TimeStat::default()),
             parent: Arc::new(Mutex::new(None)),
             // 注：children结构中保留了对任务的Arc引用
@@ -247,6 +256,9 @@ impl Task {
             umask: AtomicU16::new(S_IWGRP | S_IWOTH), // 默认umask为022
             sig_pending: Mutex::new(SigPending::new()),
             sig_handler: Arc::new(Mutex::new(SigHandler::new())),
+            interrupted: AtomicBool::new(false),
+            re_start: AtomicBool::new(true),
+            restore_mask: AtomicBool::new(true),
             itimerval: Arc::new(RwLock::new([ITimerVal::default(); 3])),
             rlimit: Arc::new(RwLock::new([RLimit::default(); RLIM_NLIMITS])),
             uid: AtomicU32::new(0), // 默认为root(0)用户
@@ -258,8 +270,9 @@ impl Task {
             sgid: AtomicU32::new(0),
             fsgid: AtomicU32::new(0),
             sup_groups: RwLock::new(Vec::new()),
-            task_inner: Mutex::new(TaskInner::new()),
+            task_inner: RwLock::new(TaskInner::new()),
         });
+        log::error!("[Task::init_idle_task] task{} created", task.tid());
         // 向线程组中添加该进程
         task.thread_group
             .lock()
@@ -299,6 +312,7 @@ impl Task {
             tid: RwLock::new(tid),
             tgid: AtomicUsize::new(0),
             status: Mutex::new(TaskStatus::Ready),
+            sched_prio: AtomicU32::new(DEFAULT_PRIO),
             time_stat: SyncUnsafeCell::new(TimeStat::default()),
             parent: Arc::new(Mutex::new(None)),
             children: Arc::new(Mutex::new(BTreeMap::new())),
@@ -313,6 +327,9 @@ impl Task {
             umask: AtomicU16::new(0),
             sig_pending: Mutex::new(SigPending::new()),
             sig_handler: Arc::new(Mutex::new(SigHandler::new())),
+            interrupted: AtomicBool::new(false),
+            re_start: AtomicBool::new(true),
+            restore_mask: AtomicBool::new(true),
             itimerval: Arc::new(RwLock::new([ITimerVal::default(); 3])),
             rlimit: Arc::new(RwLock::new([RLimit::default(); RLIM_NLIMITS])),
             pgid: AtomicUsize::new(0),
@@ -325,7 +342,7 @@ impl Task {
             sgid: AtomicU32::new(0),
             fsgid: AtomicU32::new(0),
             sup_groups: RwLock::new(Vec::new()),
-            task_inner: Mutex::new(TaskInner::idle_init()),
+            task_inner: RwLock::new(TaskInner::idle_init()),
         });
         add_task_init(task.clone());
         // 令tp与kernel_tp指向主线程内核栈顶
@@ -348,6 +365,7 @@ impl Task {
         let tid = tid_alloc();
         let exit_code = AtomicI32::new(0);
         let status = Mutex::new(TaskStatus::Ready);
+        let mut sched_prio;
         let tgid;
         let mut kstack;
         let mut parent;
@@ -393,6 +411,7 @@ impl Task {
 
         // 继承父进程
         pgid = AtomicUsize::new(self.pgid());
+        sched_prio = AtomicU32::new(self.sched_prio());
         uid = AtomicU32::new(self.uid());
         euid = AtomicU32::new(self.euid());
         suid = AtomicU32::new(self.suid());
@@ -476,12 +495,15 @@ impl Task {
 
         // 初始化其他未初始化属性
         sig_pending = Mutex::new(SigPending::new());
+        let interrupted = AtomicBool::new(false);
+        let re_start = AtomicBool::new(true);
+        let restore_mask = AtomicBool::new(true);
         let tid = RwLock::new(tid);
         let robust_list_head = AtomicUsize::new(0);
         let time_stat = SyncUnsafeCell::new(TimeStat::default());
         let umask = AtomicU16::new(self.umask.load(core::sync::atomic::Ordering::Relaxed));
         let exe_path = self.exe_path.clone();
-        let task_inner = Mutex::new(TaskInner {
+        let task_inner = RwLock::new(TaskInner {
             priority: self.priority(),
             policy: self.policy(),
             tid_address: TidAddress::new(),
@@ -496,6 +518,7 @@ impl Task {
             tgid,
             pgid,
             status,
+            sched_prio,
             time_stat,
             parent,
             children,
@@ -510,6 +533,9 @@ impl Task {
             umask,
             sig_handler,
             sig_pending,
+            interrupted,
+            re_start,
+            restore_mask,
             itimerval,
             rlimit,
             uid,
@@ -963,6 +989,48 @@ impl Task {
         Arc::ptr_eq(&self.memory_set.read(), &task.memory_set.read())
     }
 
+    
+    // 设定当前任务被信号中断
+    pub fn set_interrupted(&self) {
+        self.interrupted.store(true, Ordering::SeqCst);
+    }
+
+    // 设定当前任务没有被信号中断
+    pub fn set_uninterrupted(&self) {
+        self.interrupted.store(false, Ordering::SeqCst);
+    }
+
+    // 检查当前任务是否被信号中断
+    pub fn is_interrupted(&self) -> bool {
+        self.interrupted.load(Ordering::SeqCst)
+    }
+
+    // 阻止当前任务进行重启
+    pub fn cancel_restart(&self) {
+        self.re_start.store(false, Ordering::SeqCst);
+    }
+
+    // 判断当前任务是否需要重启
+    pub fn need_restart(&self) -> bool {
+        if !self.re_start() {
+            self.set_re_start(true); // 如果之前是取消重启的状态，则恢复重启
+            return false;
+        }
+        self.re_start()
+    }
+
+    pub fn cancel_restore_mask(&self) {
+        self.set_restore_mask(false);
+    }
+
+    pub fn need_restore_mask(&self) -> bool {
+        if !self.restore_mask() {
+            self.set_restore_mask(true);
+            return false;
+        }
+        self.restore_mask()
+    }
+
     /*********************************** getter *************************************/
 
     pub fn kstack(&self) -> usize {
@@ -1005,17 +1073,17 @@ impl Task {
         self.sig_pending.lock().mask
     }
     pub fn sigstack(&self) -> SigStack {
-        self.task_inner.lock().sig_stack
+        self.task_inner.read().sig_stack
     }
     pub fn tac(&self) -> Option<usize> {
-        self.task_inner.lock().tid_address.clear_child_tid
+        self.task_inner.read().tid_address.clear_child_tid
     }
     pub fn robust_list_head(&self) -> usize {
         self.robust_list_head
             .load(core::sync::atomic::Ordering::SeqCst)
     }
     pub fn cpu_mask(&self) -> CpuMask {
-        self.task_inner.lock().cpu_mask
+        self.task_inner.read().cpu_mask
     }
 
     pub fn pgid(&self) -> usize {
@@ -1059,11 +1127,27 @@ impl Task {
     }
 
     pub fn priority(&self) -> u32 {
-        self.task_inner.lock().priority
+        self.task_inner.read().priority
     }
 
     pub fn policy(&self) -> u32 {
-        self.task_inner.lock().policy
+        self.task_inner.read().policy
+    }
+
+    pub fn interrupted(&self) -> bool {
+        self.interrupted.load(core::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn re_start(&self) -> bool {
+        self.re_start.load(core::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn restore_mask(&self) -> bool {
+        self.restore_mask.load(core::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn sched_prio(&self) -> u32 {
+        self.sched_prio.load(core::sync::atomic::Ordering::SeqCst)
     }
     /*********************************** setter *************************************/
     pub fn set_root(&self, root: Arc<Path>) {
@@ -1084,15 +1168,15 @@ impl Task {
         *self.parent.lock() = Some(Arc::downgrade(&parent));
     }
     pub fn set_sigstack(&self, sigstack: SigStack) {
-        self.task_inner.lock().sig_stack = sigstack
+        self.task_inner.write().sig_stack = sigstack
     }
     // tid_address 中的 set_child_tid
     pub fn set_tas(&self, tas: usize) {
-        self.task_inner.lock().tid_address.set_child_tid = Some(tas);
+        self.task_inner.write().tid_address.set_child_tid = Some(tas);
     }
     // tid_address 中的 clear_child_tid
     pub fn set_tac(&self, tac: usize) {
-        self.task_inner.lock().tid_address.clear_child_tid = Some(tac);
+        self.task_inner.write().tid_address.clear_child_tid = Some(tac);
     }
     pub fn set_robust_list_head(&self, head: usize) {
         self.robust_list_head
@@ -1128,13 +1212,36 @@ impl Task {
             .store(fsgid, core::sync::atomic::Ordering::SeqCst);
     }
     pub fn set_priority(&self, priority: u32) {
-        self.task_inner.lock().priority = priority;
+        self.task_inner.write().priority = priority;
+        self.sched_prio
+            .store(priority, core::sync::atomic::Ordering::SeqCst);
     }
     pub fn set_cpu_mask(&self, cpu_mask: CpuMask) {
-        self.task_inner.lock().cpu_mask = cpu_mask;
+        self.task_inner.write().cpu_mask = cpu_mask;
     }
     pub fn set_policy(&self, policy: u32) {
-        self.task_inner.lock().policy = policy;
+        self.task_inner.write().policy = policy;
+    }
+    pub fn set_re_start(&self, re_start: bool) {
+        self.re_start.store(re_start, core::sync::atomic::Ordering::SeqCst);
+    }
+    pub fn set_restore_mask(&self, restore_mask: bool) {
+        self.restore_mask
+            .store(restore_mask, core::sync::atomic::Ordering::SeqCst);
+    }
+    pub fn raise_sched_prio(&self) {
+        let mut prio = self.sched_prio.load(core::sync::atomic::Ordering::SeqCst);
+        if MIN_RT_PRIO < prio && prio <= MAX_RT_PRIO {
+            prio += 1;
+        } else if prio > MAX_RT_PRIO {
+            prio -= 1;
+        } 
+        self.sched_prio
+            .store(prio, core::sync::atomic::Ordering::SeqCst);
+    }
+    pub fn restore_sched_prio(&self) {
+        self.sched_prio
+            .store(self.priority(), core::sync::atomic::Ordering::SeqCst);
     }
     /*********************************** operator *************************************/
     pub fn op_parent<T>(&self, f: impl FnOnce(&Option<Weak<Task>>) -> T) -> T {
@@ -1668,10 +1775,11 @@ pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
 
 /// 比较两个任务的优先级
 /// 如果a > b, 返回true, 反之返回false
+/// 注：这里比较的是任务的调度优先级
 pub fn compare_task_priority(a: &Arc<Task>, b: &Arc<Task>) -> bool {
     // 先比较优先级
-    let a_priority = a.priority();
-    let b_priority = b.priority();
+    let a_priority = a.sched_prio();
+    let b_priority = b.sched_prio();
     
     // Linux调度系统优先级规则：
     // 0: 特殊情况，无论什么情况都是最低优先级

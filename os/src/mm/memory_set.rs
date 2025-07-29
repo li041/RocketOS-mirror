@@ -634,7 +634,17 @@ impl MemorySet {
                 if let Ok(busybox) = path_openat("/musl/busybox", OpenFlags::empty(), AT_FDCWD, 0) {
                     elf_file = busybox;
                 }
+            } 
+            // 处理py文件
+            else if file_name.ends_with(".py")
+            {
+                let prepend_args = vec![String::from("/python/bin/python3.10")];
+                argv.splice(0..0, prepend_args);
+                if let Ok(python) = path_openat("/python/bin/python3.10", OpenFlags::empty(), AT_FDCWD, 0) {
+                    elf_file = python;
+                }
             }
+            
             #[cfg(feature = "la2000")]
             if file_name.ends_with(".sh") || sh_head.starts_with(b"#!") || file_name == "/tmp/hello"
             {

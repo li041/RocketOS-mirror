@@ -1,4 +1,4 @@
-use core::fmt::Debug;
+use core::{fmt::Debug, mem::MaybeUninit};
 
 use alloc::{collections::btree_map::BTreeMap, vec::Vec};
 use bitflags::bitflags;
@@ -13,27 +13,17 @@ pub struct SigPending {
     pub pending: SigSet,              // 接收信号位图
     pub mask: SigSet,                 // 信号掩码
     pub info: BTreeMap<i32, SigInfo>, // 记录信息 key：信号值， value：信号信息
-    pub interrupted: bool,            // 是否被信号中断
-    pub re_start: bool,               // 是否需要重启
-    pub restore_mask: bool,           // 是否需要恢复信号掩码(用于sigsuspend)
 }
 
 impl SigPending {
     pub fn new() -> Self {
-        #[cfg(feature = "la2000")]
-        println!("[SigPending::new] enter");
         let pending = SigSet::default();
         let info = BTreeMap::new();
         let mask = SigSet::default();
-        #[cfg(feature = "la2000")]
-        println!("[SigPending::new] mask: {:?}", mask);
         let sig_pending = Self {
             pending: pending,
             mask: mask,
             info: info,
-            interrupted: false,
-            re_start: true,     // 默认需要重启
-            restore_mask: true, // 默认需要恢复信号掩码
         };
         sig_pending
     }
@@ -106,47 +96,6 @@ impl SigPending {
         let old_mask = self.mask;
         self.mask = mask;
         old_mask
-    }
-
-    // 设定当前任务被信号中断
-    pub fn set_interrupted(&mut self) {
-        self.interrupted = true;
-    }
-
-    // 设定当前任务没有被信号中断
-    pub fn set_uninterrupted(&mut self) {
-        self.interrupted = false;
-    }
-
-    // 检查当前任务是否被信号中断
-    pub fn is_interrupted(&self) -> bool {
-        self.interrupted
-    }
-
-    // 阻止当前任务进行重启
-    pub fn cancel_restart(&mut self) {
-        self.re_start = false; // 设置为取消重启状态
-    }
-
-    // 判断当前任务是否需要重启
-    pub fn need_restart(&mut self) -> bool {
-        if !self.re_start {
-            self.re_start = true; // 如果之前是取消重启的状态，则恢复重启
-            return false;
-        }
-        self.re_start
-    }
-
-    pub fn cancel_restore_mask(&mut self) {
-        self.restore_mask = false; // 设置为不恢复信号掩码状态
-    }
-
-    pub fn need_restore_mask(&mut self) -> bool {
-        if !self.restore_mask {
-            self.restore_mask = true; // 如果之前是不恢复信号掩码的状态，则恢复
-            return false;
-        }
-        self.restore_mask
     }
 }
 

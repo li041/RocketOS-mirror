@@ -225,9 +225,9 @@ pub fn sys_rt_sigsuspend(mask: usize) -> SyscallRet {
         task.op_sig_pending_mut(|pending| {
             log::warn!("[sys_rt_sigsuspend] Force mask setting");
             pending.change_mask(origin_mask);
-            log::error!("[sys_rt_sigsuspend] restore mask: {:?}", pending.mask);
-            pending.cancel_restore_mask();
         });
+        task.cancel_restore_mask();
+
         drop(task);
         unsafe {
             asm!(
@@ -255,9 +255,8 @@ pub fn sys_rt_sigsuspend(mask: usize) -> SyscallRet {
         task.op_sig_pending_mut(|pending| {
             log::warn!("[sys_rt_sigsuspend] Force mask setting");
             pending.change_mask(origin_mask);
-            log::error!("[sys_rt_sigsuspend] restore mask: {:?}", pending.mask);
-            pending.cancel_restore_mask();
         });
+        task.cancel_restore_mask();
 
         drop(task);
 
@@ -693,11 +692,12 @@ pub fn sys_rt_sigreturn() -> SyscallRet {
         sig_context = sig_frame.sigcontext;
 
         // 恢复mask
-        task.op_sig_pending_mut(|pending| {
-            if pending.need_restore_mask() {
+        if task.need_restore_mask() {
+            task.op_sig_pending_mut(|pending| {
+                log::warn!("[sys_rt_sigreturn] Force mask setting");
                 pending.change_mask(sig_context.mask);
-            }
-        })
+            });
+        }
     }
     // 包含SIGINFO
     else if frame_flag.is_rt() {
@@ -713,11 +713,12 @@ pub fn sys_rt_sigreturn() -> SyscallRet {
         sig_context = sig_rt_frame.ucontext.uc_mcontext;
 
         // 恢复mask
-        task.op_sig_pending_mut(|pending| {
-            if pending.need_restore_mask() {
+        if task.need_restore_mask() {
+            task.op_sig_pending_mut(|pending| {
+                log::warn!("[sys_rt_sigreturn] Force mask setting");
                 pending.change_mask(mask);
-            }
-        })
+            });
+        }
     } else {
         log::error!("[sys_rt_sigreturn] invalid frame flag");
         panic!();

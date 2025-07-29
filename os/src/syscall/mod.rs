@@ -491,7 +491,7 @@ pub fn syscall(
             a3 as *const u8,
             a4 as i32,
         ),
-        SYSCALL_GETRANDOM => Ok(0),
+        SYSCALL_GETRANDOM => Ok(1), // python3.10 需要这个系统调用
         SYSCALL_EXECVEAT => sys_execveat(
             a0 as i32,
             a1 as *mut u8,

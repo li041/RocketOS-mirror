@@ -23,9 +23,7 @@ impl Task {
                     pending.add_signal(siginfo);
                 });
                 if self.check_interrupt() {
-                    self.op_sig_pending_mut(|pending| {
-                        pending.set_interrupted();
-                    });
+                    self.set_interrupted();
                     delete_wait(self.tid());
                     self.set_ready();
                     add_task(self.clone());
@@ -40,9 +38,8 @@ impl Task {
                             pending.add_signal(siginfo);
                         });
                         if task.check_interrupt() {
-                            task.op_sig_pending_mut(|pending| {
-                                pending.set_interrupted();
-                            });
+                            task.set_interrupted();
+
                             delete_wait(task.tid());
                             task.set_ready();
                             add_task(task.clone());
@@ -53,13 +50,13 @@ impl Task {
         }
     }
 
-    pub fn is_interrupted(&self) -> bool {
-        self.op_sig_pending_mut(|sig_pending| sig_pending.is_interrupted())
-    }
+    // pub fn is_interrupted(&self) -> bool {
+    //     self.interrupted()
+    // }
 
-    pub fn set_uninterrupted(&self) {
-        self.op_sig_pending_mut(|sig_pending| sig_pending.set_uninterrupted());
-    }
+    // pub fn set_uninterrupted(&self) {
+    //     self.op_sig_pending_mut(|sig_pending| sig_pending.set_uninterrupted());
+    // }
     pub fn have_signals(&self) -> bool {
         !self.op_sig_pending_mut(|sig_pending| sig_pending.pending.is_empty())
     }
@@ -86,13 +83,13 @@ impl Task {
         false
     }
 
-    pub fn cancel_restart(&self) {
-        self.op_sig_pending_mut(|pending| {
-            pending.cancel_restart();
-        });
-    }
+    // pub fn cancel_restart(&self) {
+    //     self.op_sig_pending_mut(|pending| {
+    //         pending.cancel_restart();
+    //     });
+    // }
 
-    pub fn can_restart(&self) -> bool {
-        self.op_sig_pending_mut(|pending| pending.need_restart())
-    }
+    // pub fn can_restart(&self) -> bool {
+    //     self.op_sig_pending_mut(|pending| pending.need_restart())
+    // }
 }

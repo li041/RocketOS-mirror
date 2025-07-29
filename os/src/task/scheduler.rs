@@ -2,14 +2,19 @@ use super::{current_task, Task, Tid};
 use crate::{
     arch::{config::MAX_HARTS, switch},
     task::{
-        dump_wait_queue, get_task, handle_timeout,
+        self, dump_wait_queue, get_task, handle_timeout,
         manager::dump_time_manager,
         processor::{current_hart_id, current_tp, preempte, Processor, PROCESSOR},
         scheduler,
         task::compare_task_priority,
     },
+    timer::TimeVal,
 };
-use alloc::{collections::{btree_map::BTreeMap, vec_deque::VecDeque}, sync::Arc, vec::{self, Vec}};
+use alloc::{
+    collections::{btree_map::BTreeMap, vec_deque::VecDeque},
+    sync::Arc,
+    vec::{self, Vec},
+};
 use bitflags::bitflags;
 use core::{
     cell::SyncUnsafeCell,
@@ -73,8 +78,8 @@ pub fn add_task(next_task: Arc<Task>) {
     //     scheduler.add(cur_task);
     //     preempte(next_task, hart_id);
     // } else {
-        // 正常添加
-        scheduler.add(next_task);
+    // 正常添加
+    scheduler.add(next_task);
     // }
 }
 
@@ -90,7 +95,9 @@ pub fn add_task_init(next_task: Arc<Task>) {
 pub fn fetch_task() -> Option<Arc<Task>> {
     let hart_id = current_hart_id();
     let scheduler = unsafe { &mut *SCHEDULER[hart_id].get() };
-    scheduler.fetch()
+    let target_task = scheduler.fetch();
+    // check_and_promote_task_priority();
+    target_task
 }
 
 /// 从就绪队列中取出空闲任务
@@ -125,11 +132,17 @@ pub fn remove_task(tid: Tid) {
 /// 打印调度器中任务信息
 pub fn dump_scheduler() {
     for i in 0..MAX_HARTS {
-        println!("**************************** dump scheduler {} ****************************", i);
+        println!(
+            "**************************** dump scheduler {} ****************************",
+            i
+        );
         let scheduler = unsafe { &mut *SCHEDULER[i].get() };
         scheduler.dump();
         println!("current task: {:?}", PROCESSOR[i].read().current_task());
-        println!("**************************** dump scheduler {} ****************************", i);
+        println!(
+            "**************************** dump scheduler {} ****************************",
+            i
+        );
     }
     dump_wait_queue();
 }
@@ -166,6 +179,9 @@ pub fn schedule() {
     log::trace!("[schedule]");
     let hart_id = current_task().cpu_id();
     if let Some(next_task) = fetch_task() {
+        // 取出任务即认为不再等待并恢复其原始优先级
+        // next_task.time_stat().wait_time_clear();
+        // next_task.restore_sched_prio();
         let next_task_kernel_stack = next_task.kstack();
         {
             log::debug!(
@@ -190,6 +206,8 @@ pub fn schedule() {
         loop {
             log::trace!("[schedule] no next task, waiting for timeout");
             if let Some(next_task) = fetch_task() {
+                // next_task.time_stat().wait_time_clear();
+                // next_task.restore_sched_prio();
                 let next_task_kernel_stack = next_task.kstack();
                 {
                     log::debug!(
@@ -212,6 +230,8 @@ pub fn schedule() {
             if !handle_timeout().is_empty() {
                 // 计时器超时
                 if let Some(next_task) = fetch_task() {
+                    // next_task.time_stat().wait_time_clear();
+                    // next_task.restore_sched_prio();
                     let next_task_kernel_stack = next_task.kstack();
                     {
                         log::debug!(
@@ -257,6 +277,8 @@ pub fn yield_current_task() {
         let should_preempt = compare_task_priority(&task, &next_task);
         // 当前任务优先级小于等于下一个任务
         if !should_preempt {
+            // next_task.time_stat().wait_time_clear();
+            // next_task.restore_sched_prio();
             task.set_ready();
             // 将当前任务加入就绪队列
             add_task(task);
@@ -287,8 +309,11 @@ pub fn yield_current_task() {
         if !handle_timeout().is_empty() {
             // 超时任务已唤醒
             if let Some(next_task) = fetch_task() {
-                let next_task_kernel_stack = next_task.kstack();
-                {
+                let should_preempt = compare_task_priority(&task, &next_task);
+                if !should_preempt {
+                    let next_task_kernel_stack = next_task.kstack();
+                    // next_task.time_stat().wait_time_clear();
+                    // next_task.restore_sched_prio();
                     task.set_ready();
                     // 将当前任务加入就绪队列
                     add_task(task);
@@ -309,9 +334,11 @@ pub fn yield_current_task() {
                     crate::task::processor::PROCESSOR[hart_id]
                         .write()
                         .switch_to(next_task);
-                }
-                unsafe {
-                    switch::__switch(next_task_kernel_stack);
+                    unsafe {
+                        switch::__switch(next_task_kernel_stack);
+                    }
+                } else {
+                    add_task(next_task);
                 }
             }
         }
@@ -337,6 +364,42 @@ pub fn nice_to_rlimit(nice: i32) -> u32 {
 
 pub fn rlimit_to_nice(rlimit: u32) -> i32 {
     (20 - rlimit) as i32
+}
+
+/// 检查低优先级任务的等待时间决定是否提升其优先级
+fn check_and_promote_task_priority() {
+    const UPDATE_TASK_COUNT: usize = 3;
+    const WAIT_THRESHOLD_TICKS: usize = 3;
+
+    let mut task_vec: Vec<Arc<Task>> = Vec::new();
+    let mut task_count = 0;
+    let hart_id = current_hart_id();
+    let scheduler = unsafe { &mut *SCHEDULER[hart_id].get() };
+    while task_count < UPDATE_TASK_COUNT {
+        let lowest_priority_task = scheduler.fetch_lowest_priority();
+        // 在最低优先级队列中选取最多UPDATE_TASK_COUNT个任务来验证等待时间
+        if let Some(task) = lowest_priority_task {
+            task_count += 1;
+            task.time_stat().record_wait_end();
+            // 若等待时间超过阈值, 则提升优先级
+            // 此处采用ticks当作阈值，1ticks为10ms
+            if task.time_stat().wait_time().timespec_to_ticks() > WAIT_THRESHOLD_TICKS {
+                log::error!(
+                    "task{} raise priority from {}",
+                    task.tid(),
+                    task.sched_prio()
+                );
+                task.raise_sched_prio();
+            }
+            task_vec.push(task);
+        } else {
+            break;
+        }
+    }
+    for task in task_vec {
+        // 将任务重新加入调度器
+        scheduler.add(task);
+    }
 }
 
 // FIFO Task scheduler
@@ -373,8 +436,9 @@ impl Scheduler {
 
     /// 添加任务到调度器
     pub fn add(&mut self, task: Arc<Task>) {
-        let priority = task.priority();
+        let priority = task.sched_prio();
         let tid = task.tid();
+        //task.time_stat().record_wait_start();
         match priority {
             // 空闲任务
             0 => {
@@ -427,6 +491,37 @@ impl Scheduler {
                 }
             }
         }
+        None
+    }
+
+    pub fn fetch_lowest_priority(&mut self) -> Option<Arc<Task>> {
+        // 1. 普通任务（高nice值优先，即低优先级）
+        if self.normal_bitmap != 0 {
+            let lowest_normal_idx = 63 - self.normal_bitmap.leading_zeros() as usize;
+            if lowest_normal_idx < 40 {
+                if let Some(task) = self.normal_queues[lowest_normal_idx].pop_front() {
+                    if self.normal_queues[lowest_normal_idx].is_empty() {
+                        self.normal_bitmap &= !(1u64 << lowest_normal_idx);
+                    }
+                    return Some(task);
+                }
+            }
+        }
+
+        // 2. 实时任务（低优先级优先）
+        if self.rt_bitmap != 0 {
+            let lowest_rt_bit = self.rt_bitmap.trailing_zeros() as usize;
+            if lowest_rt_bit < 99 {
+                let queue_index = lowest_rt_bit + 1;
+                if let Some(task) = self.rt_queues[queue_index].pop_front() {
+                    if self.rt_queues[queue_index].is_empty() {
+                        self.rt_bitmap &= !(1u128 << lowest_rt_bit);
+                    }
+                    return Some(task);
+                }
+            }
+        }
+
         None
     }
 

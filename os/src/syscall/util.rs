@@ -11,6 +11,7 @@ use crate::{
     fs::{
         file::OpenFlags,
         namei::path_openat,
+        proc::tainted,
         uapi::{RLimit, Resource},
     },
     syscall::errno::Errno,
@@ -268,16 +269,22 @@ pub const CLOCK_MONOTONIC_RAW: usize = 4;
 pub const CLOCK_REALTIME_COARSE: usize = 5;
 pub const CLOCK_MONOTONIC_COARSE: usize = 6;
 pub const CLOCK_BOOTTIME: usize = 7;
+
+pub const CPUCLOCK_PROF: usize = 0; // 000 - 进程总CPU时间(用户+内核)
+pub const CPUCLOCK_VIRT: usize = 1; // 001 - 进程用户态CPU时间
+pub const CPUCLOCK_SCHED: usize = 2; // 010 - 调度器时钟
+pub const CPUCLOCK_MAX: usize = 3; // 011 - 最大时钟ID
+
 pub fn sys_clock_gettime(clock_id: usize, timespec: *mut TimeSpec) -> SyscallRet {
     //如果tp是NULL, 函数不会存储时间值, 但仍然会执行其他检查（如 `clockid` 是否有效）。
     if timespec.is_null() {
         return Ok(0);
     }
-    // log::error!(
-    //     "[sys_clock_gettime] clock_id is {:?},timespec {:?}",
-    //     clock_id,
-    //     timespec
-    // );
+    log::error!(
+        "[sys_clock_gettime] clock_id is {:#b},timespec {:?}",
+        clock_id,
+        timespec
+    );
     match clock_id {
         CLOCK_REALTIME | CLOCK_REALTIME_COARSE => {
             let time = TimeSpec::new_wall_time();
@@ -298,8 +305,31 @@ pub fn sys_clock_gettime(clock_id: usize, timespec: *mut TimeSpec) -> SyscallRet
             copy_to_user(timespec, &time as *const TimeSpec, 1)?;
         }
         _ => {
-            log::error!("[sys_clock_gettime] Unsupported clock_id: {}", clock_id);
-            return Err(Errno::EINVAL);
+            // 解析 Dynamic clocks
+            let tid = (!(clock_id) >> 3);
+            let dyn_clock_id = clock_id & 0b11;
+            if let Some(task) = get_task(tid) {
+                match dyn_clock_id {
+                    CPUCLOCK_PROF | CPUCLOCK_SCHED => {
+                        let time: TimeSpec = task.time_stat().cpu_time().into();
+                        copy_to_user(timespec, &time as *const TimeSpec, 1)?;
+                    }
+                    CPUCLOCK_VIRT => {
+                        let time: TimeSpec = task.time_stat().user_time().into();
+                        copy_to_user(timespec, &time as *const TimeSpec, 1)?;
+                    }
+                    _ => {
+                        log::error!(
+                            "[sys_clock_gettime] Unsupported dynamic clock_id: {}",
+                            dyn_clock_id
+                        );
+                        return Err(Errno::EINVAL);
+                    }
+                }
+            } else {
+                log::error!("[sys_clock_gettime] task {:#b} not found", tid);
+                return Err(Errno::EINVAL);
+            }
         }
     }
     Ok(0)
@@ -316,14 +346,17 @@ pub fn sys_clock_settime(clock_id: usize, timespec: *const TimeSpec) -> SyscallR
         return Err(Errno::EINVAL);
     }
     match clock_id {
-        CLOCK_MONOTONIC | CLOCK_MONOTONIC_RAW | CLOCK_REALTIME_COARSE | CLOCK_PROCESS_CPUTIME_ID=> {
+        CLOCK_MONOTONIC
+        | CLOCK_MONOTONIC_RAW
+        | CLOCK_REALTIME_COARSE
+        | CLOCK_PROCESS_CPUTIME_ID => {
             return Err(Errno::EINVAL);
         }
 
         CLOCK_REALTIME => {
             return Ok(0);
         }
-        
+
         _ => {
             // panic!("[sys_clock_gettime] invalid clock_id: {}", clock_id);
             return Err(Errno::EINVAL);

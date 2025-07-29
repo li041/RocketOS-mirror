@@ -25,9 +25,11 @@ pub struct RUsage {
 pub struct TimeStat {
     user_time: TimeVal,
     system_time: TimeVal,
+    wait_time: TimeVal,
 
     system_time_start: TimeVal,
     user_time_start: TimeVal,
+    wait_time_start: TimeVal,
 
     child_user_time: TimeVal,
     child_system_stime: TimeVal,
@@ -52,6 +54,10 @@ impl TimeStat {
 
     pub fn cpu_time(&self) -> TimeVal {
         self.user_time + self.system_time
+    }
+
+    pub fn wait_time(&self) -> TimeVal {
+        self.wait_time
     }
 
     pub fn update_child_time(&mut self, (utime, stime): (TimeVal, TimeVal)) {
@@ -84,5 +90,20 @@ impl TimeStat {
         self.system_time = self.system_time + stime_slice;
 
         self.user_time_start = current_time;
+    }
+
+    pub fn record_wait_start(&mut self) {
+        let current_time = TimeVal::new_machine_time();
+        self.wait_time_start = current_time;
+    }
+
+    pub fn record_wait_end(&mut self) {
+        let slice = TimeVal::new_machine_time() - self.wait_time_start;
+        self.wait_time = self.wait_time + slice;
+    }
+
+    pub fn wait_time_clear(&mut self) {
+        self.wait_time = TimeVal::default();
+        self.wait_time_start = TimeVal::new_machine_time();
     }
 }
