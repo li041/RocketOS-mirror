@@ -31,7 +31,7 @@ pub const WMULT_SHIFT: i32 = 32;
  * If a task goes up by ~10% and another task goes down by ~10% then
  * the relative distance between them is ~25%.)
  */
-pub const SCHED_PRIO_TO_WEIGHT : [i32; 40] = [
+pub const SCHED_PRIO_TO_WEIGHT : [u64; 40] = [
  /* -20 */     88761,     71755,     56483,     46273,     36291,
  /* -15 */     29154,     23254,     18705,     14949,     11916,
  /* -10 */      9548,      7620,      6100,      4904,      3906,
@@ -50,7 +50,7 @@ pub const SCHED_PRIO_TO_WEIGHT : [i32; 40] = [
  * precalculated inverse to speed up arithmetics by turning divisions
  * into multiplications:
  */
-pub const SCHED_PRIO_TO_WMULT: [u32; 40] = [
+pub const SCHED_PRIO_TO_WMULT: [u64; 40] = [
  /* -20 */     48388,     59856,     76040,     92818,    118348,
  /* -15 */    147320,    184698,    229616,    287308,    360437,
  /* -10 */    449829,    563644,    704093,    875809,   1099582,

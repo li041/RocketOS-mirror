@@ -265,6 +265,12 @@ pub fn wait_timeout(dur: timer::TimeSpec, clock_id: i32) -> isize {
 /// wait_timeout的回调函数
 pub fn wakeup(tid: Tid) {
     if let Ok(task) = WAIT_MANAGER.remove(tid) {
+        #[cfg(feature = "cfs")]
+        {
+            // 保证任务在阻塞期间vruntime不变
+            let se = task.sched_entity();
+            se.update_exec_start(TimeSpec::new_machine_time());
+        }
         task.set_ready();
         add_task(task);
     }

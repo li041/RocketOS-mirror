@@ -91,6 +91,9 @@ impl TimeSpec {
         }
         true
     }
+    pub fn to_nanos(&self) -> usize {
+        self.sec * 1_000_000_000 + self.nsec
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -130,6 +133,10 @@ impl TimeVal {
 
     pub fn as_us(&self) -> usize {
         self.sec * USEC_PER_SEC + self.usec
+    }
+
+    pub fn as_ns(&self) -> usize {
+        self.sec * 1_000_000_000 + self.usec * 1_000
     }
 }
 

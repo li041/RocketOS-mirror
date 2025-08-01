@@ -28,6 +28,7 @@ mod arch;
 mod drivers;
 mod net;
 mod signal;
+mod sched;
 
 mod ext4;
 
@@ -143,12 +144,14 @@ pub fn rust_main(hart_id: usize, dtb_address: usize) -> ! {
         boot_initproc(hart_id);
         run_tasks(hart_id);
     } else {
+        use crate::task::other_run_tasks;
+
         mm::kernel_init();
         trap::init();
         trap::enable_timer_interrupt();
         arch::timer::set_next_trigger();
-        other_initproc(hart_id);
-        run_tasks(hart_id);
+        // other_initproc(hart_id);
+        other_run_tasks(hart_id);
     }
     panic!("shutdown machine");
 }
@@ -199,14 +202,14 @@ pub fn rust_main(hart_id: usize) -> ! {
         loader::list_apps();
         run_tasks(hart_id);
     } else {
-        use crate::task::other_initproc;
+        use crate::task::{other_initproc, other_run_tasks};
         bootstrap_init();
         mm::kernel_init();
         trap::init();
         enable_timer_interrupt();
         set_next_trigger();
-        other_initproc(hart_id);
-        run_tasks(hart_id);
+        // other_initproc(hart_id);
+        other_run_tasks(hart_id);
     }
     panic!("shutdown machine");
     // shutdown();

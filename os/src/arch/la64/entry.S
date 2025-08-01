@@ -61,7 +61,7 @@ _start:
     # li.d  $t0, 0x800000001fe20000  # 加载 uart_addr 到临时寄存器 $t0
     # li.w $t2, 0x48 # 加载字符'H'到临时寄存器 $t2
     # st.b $t2, $t0, 0 # 将字符'H'写入串口
-    la.global $sp, boot_stack_top
+    # la.global $sp, boot_stack_top
     bl rust_main
 
     .section .bss.stack

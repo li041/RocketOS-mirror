@@ -37,13 +37,15 @@ pub use manager::{
     handle_timeout, new_group, remove_timer, unregister_task, update_real_timer, wait,
     wait_timeout, wakeup, ITIMER_PROF, ITIMER_REAL, ITIMER_VIRTUAL,
 };
-pub use processor::{current_task, run_tasks};
+pub use processor::{current_task, run_tasks, other_run_tasks};
 pub use scheduler::{
-    add_task, dump_scheduler, idle_task, nice_to_priority, nice_to_rlimit, priority_to_nice,
+    add_task, dump_scheduler, nice_to_priority, nice_to_rlimit, priority_to_nice,
     remove_task, schedule, yield_current_task, SchedAttr, WaitOption, MAX_NICE, MAX_PRIO,
     MAX_RT_PRIO, MIN_NICE, MIN_RT_PRIO, PRIO_PGRP, PRIO_PROCESS, PRIO_USER, SCHED_BATCH,
     SCHED_DEADLINE, SCHED_EXT, SCHED_FIFO, SCHED_IDLE, SCHED_OTHER, SCHED_RR,
 };
+#[cfg(feature = "cfs")]
+pub use scheduler::{change_task};
 pub use task::kernel_exit;
 pub use task::CloneFlags;
 pub use task::{CpuMask, Task, TaskStatus, INIT_PROC_PID};

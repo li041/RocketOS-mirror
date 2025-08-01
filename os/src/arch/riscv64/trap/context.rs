@@ -5,7 +5,8 @@ use alloc::vec::Vec;
 use riscv::register::sstatus::{self, Sstatus, SPP};
 
 use crate::mm::frame_alloc;
-use crate::task::{get_stack_top_by_sp, idle_task, Task};
+use crate::sched::idle_task;
+use crate::task::{get_stack_top_by_sp, Task};
 use crate::{arch::config::PAGE_SIZE_BITS, arch::mm::map_temp};
 
 /// Trap Context

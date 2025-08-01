@@ -34,7 +34,7 @@ impl TaskContext {
     }
 
     pub fn idle_init_task_context(tp: usize) -> Self {
-        use crate::{mm::KERNEL_SATP, task::idle_task};
+        use crate::{mm::KERNEL_SATP, sched::idle_task};
 
         Self {
             ra: idle_task as usize,
@@ -86,7 +86,7 @@ impl TaskContext {
     }
 
     pub fn idle_init_task_context(tp: usize) -> Self {
-        use crate::{mm::KERNEL_SATP, task::idle_task};
+        use crate::{mm::KERNEL_SATP, sched::idle_task};
 
         Self {
             ra: idle_task as usize,

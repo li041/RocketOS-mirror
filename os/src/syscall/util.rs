@@ -281,11 +281,6 @@ pub fn sys_clock_gettime(clock_id: usize, timespec: *mut TimeSpec) -> SyscallRet
     if timespec.is_null() {
         return Ok(0);
     }
-    log::error!(
-        "[sys_clock_gettime] clock_id is {:#b},timespec {:?}",
-        clock_id,
-        timespec
-    );
     match clock_id {
         CLOCK_REALTIME | CLOCK_REALTIME_COARSE => {
             let time = TimeSpec::new_wall_time();
@@ -312,7 +307,7 @@ pub fn sys_clock_gettime(clock_id: usize, timespec: *mut TimeSpec) -> SyscallRet
             if let Some(task) = get_task(tid) {
                 match dyn_clock_id {
                     CPUCLOCK_PROF | CPUCLOCK_SCHED => {
-                        let time: TimeSpec = task.time_stat().cpu_time().into();
+                        let time: TimeSpec = task.time_stat().user_time().into();
                         copy_to_user(timespec, &time as *const TimeSpec, 1)?;
                     }
                     CPUCLOCK_VIRT => {

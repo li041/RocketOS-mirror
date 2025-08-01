@@ -59,6 +59,7 @@ impl From<Trap> for PageFaultCause {
 pub fn trap_handler(cx: &mut TrapContext) {
     let cause = register::EStat::read().cause();
     let badi = register::BadI::read().get_inst();
+    current_task().time_stat().record_ecall();
     match cause {
         Trap::Exception(Exception::Syscall) => {
             cx.era += 4;
@@ -204,6 +205,12 @@ pub fn trap_handler(cx: &mut TrapContext) {
         }
     }
     handle_signal();
+    #[cfg(feature = "cfs")]
+    {
+        use crate::sched::check_slice;
+        check_slice();
+    }
+    current_task().time_stat().record_sret();
     return;
 }
 

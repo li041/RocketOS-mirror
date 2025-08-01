@@ -36,6 +36,20 @@ pub struct TimeStat {
 }
 
 impl TimeStat {
+    pub fn new() -> Self {
+        let current_time = TimeVal::new_machine_time();
+        Self {
+            user_time: TimeVal::default(),
+            system_time: TimeVal::default(),
+            wait_time: TimeVal::default(),
+            system_time_start: current_time,
+            user_time_start: current_time,
+            wait_time_start: current_time,
+            child_user_time: TimeVal::default(),
+            child_system_stime: TimeVal::default(),
+        }
+    }
+
     pub fn thread_us_time(&self) -> (TimeVal, TimeVal) {
         (self.user_time, self.system_time)
     }
@@ -58,6 +72,10 @@ impl TimeStat {
 
     pub fn wait_time(&self) -> TimeVal {
         self.wait_time
+    }
+
+    pub fn user_start_time(&self) -> TimeVal {
+        self.user_time_start
     }
 
     pub fn update_child_time(&mut self, (utime, stime): (TimeVal, TimeVal)) {
@@ -86,7 +104,7 @@ impl TimeStat {
     pub fn record_sret(&mut self) {
         let current_time = TimeVal::new_machine_time();
 
-        let stime_slice = current_time - self.user_time_start;
+        let stime_slice = current_time - self.system_time_start;
         self.system_time = self.system_time + stime_slice;
 
         self.user_time_start = current_time;

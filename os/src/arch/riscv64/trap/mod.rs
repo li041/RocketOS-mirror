@@ -72,9 +72,9 @@ impl From<scause::Trap> for PageFaultCause {
 #[no_mangle]
 /// handle an interrupt, exception, or system call from user space
 pub fn trap_handler(cx: &mut TrapContext) {
-    current_task().time_stat().record_ecall();
     let scause = scause::read(); // get trap cause
     let stval = stval::read(); // get extra value
+    current_task().time_stat().record_ecall();
     match scause.cause() {
         Trap::Exception(Exception::UserEnvCall) => {
             cx.sepc += 4;
@@ -179,6 +179,11 @@ pub fn trap_handler(cx: &mut TrapContext) {
         }
     }
     handle_signal();
+    #[cfg(feature = "cfs")]
+    {
+        use crate::sched::check_slice;
+        check_slice();
+    }
     current_task().time_stat().record_sret();
     return;
 }

@@ -20,6 +20,7 @@ sdcard = []
 virt = []
 board = []
 smp =[]
+cfs = []
 
 [profile.release]
 panic = "abort"

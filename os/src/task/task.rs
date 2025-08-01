@@ -37,7 +37,7 @@ use crate::{
     task::{
         self, add_task,
         context::write_task_cx,
-        current_task, dump_wait_queue, idle_task,
+        current_task, dump_wait_queue,
         manager::{
             add_group, cancel_wait_alarm, delete_wait, new_group, register_task, remove_group,
         },
@@ -46,6 +46,12 @@ use crate::{
         wakeup, INITPROC, MAX_RT_PRIO, MIN_RT_PRIO, SCHED_IDLE, SCHED_OTHER,
     },
     timer::{ITimerVal, TimeVal},
+};
+#[cfg(feature = "cfs")]
+use crate::{
+    sched::{CFSSchedEntity, LoadWeight},
+    task::priority_to_nice,
+    timer::TimeSpec,
 };
 use alloc::{
     collections::btree_map::BTreeMap,
@@ -56,6 +62,8 @@ use alloc::{
     vec::Vec,
 };
 use bitflags::bitflags;
+#[cfg(feature = "cfs")]
+use core::sync::atomic::AtomicU64;
 use core::{
     assert_ne,
     cell::SyncUnsafeCell,
@@ -124,6 +132,9 @@ pub struct Task {
     sgid: AtomicU32,              // 保存组id
     fsgid: AtomicU32,             // 文件系统组id
     sup_groups: RwLock<Vec<u32>>, // 附加组列表
+    // CFS调度字段
+    #[cfg(feature = "cfs")]
+    sched_entity: Arc<CFSSchedEntity>, // CFS调度实体(内部结构为原子属性)
     // 任务内部结构
     task_inner: RwLock<TaskInner>, // 内部结构
 }
@@ -177,18 +188,18 @@ impl Drop for Task {
 
 impl Task {
     // used by idle task
-    pub fn zero_init() -> Arc<Self> {
+    pub fn zero_init() -> Self {
         println!("[Task::zero_init] create idle task");
         let sig_handler = Arc::new(Mutex::new(SigHandler::new()));
         println!("after sig_handler init");
-        Arc::new(Self {
+        let task = Self {
             kstack: KernelStack(0),
             cpu_id: 0,
             tid: RwLock::new(TidHandle(0)),
             tgid: AtomicUsize::new(0),
             status: Mutex::new(TaskStatus::Ready),
             sched_prio: AtomicU32::new(0),
-            time_stat: SyncUnsafeCell::new(TimeStat::default()),
+            time_stat: SyncUnsafeCell::new(TimeStat::new()),
             parent: Arc::new(Mutex::new(None)),
             children: Arc::new(Mutex::new(BTreeMap::new())),
             thread_group: Arc::new(Mutex::new(ThreadGroup::new())),
@@ -201,7 +212,7 @@ impl Task {
             pwd: Arc::new(Mutex::new(Path::zero_init())),
             umask: AtomicU16::new(0),
             sig_pending: Mutex::new(SigPending::new()),
-            sig_handler: Arc::new(Mutex::new(SigHandler::new())),
+            sig_handler,
             interrupted: AtomicBool::new(false),
             re_start: AtomicBool::new(true),
             restore_mask: AtomicBool::new(true),
@@ -218,7 +229,11 @@ impl Task {
             fsgid: AtomicU32::new(0),
             sup_groups: RwLock::new(Vec::new()),
             task_inner: RwLock::new(TaskInner::idle_init()),
-        })
+            #[cfg(feature = "cfs")]
+            sched_entity: Arc::new(CFSSchedEntity::zero_init()),
+        };
+        log::error!("[Task::zero_init] idle task created");
+        task
     }
 
     /// 初始化地址空间, 将 `TrapContext` 与 `TaskContext` 压入内核栈中
@@ -282,6 +297,8 @@ impl Task {
             fsgid: AtomicU32::new(0),
             sup_groups: RwLock::new(Vec::new()),
             task_inner: RwLock::new(TaskInner::new()),
+            #[cfg(feature = "cfs")]
+            sched_entity: Arc::new(CFSSchedEntity::new(tgid, priority_to_nice(DEFAULT_PRIO), 0)),
         });
         log::error!("[Task::init_idle_task] task{} created", task.tid());
         // 向线程组中添加该进程
@@ -324,7 +341,7 @@ impl Task {
             tgid: AtomicUsize::new(0),
             status: Mutex::new(TaskStatus::Ready),
             sched_prio: AtomicU32::new(DEFAULT_PRIO),
-            time_stat: SyncUnsafeCell::new(TimeStat::default()),
+            time_stat: SyncUnsafeCell::new(TimeStat::new()),
             parent: Arc::new(Mutex::new(None)),
             children: Arc::new(Mutex::new(BTreeMap::new())),
             thread_group: Arc::new(Mutex::new(ThreadGroup::new())),
@@ -354,8 +371,9 @@ impl Task {
             fsgid: AtomicU32::new(0),
             sup_groups: RwLock::new(Vec::new()),
             task_inner: RwLock::new(TaskInner::idle_init()),
+            #[cfg(feature = "cfs")]
+            sched_entity: Arc::new(CFSSchedEntity::zero_init()),
         });
-        add_task_init(task.clone());
         // 令tp与kernel_tp指向主线程内核栈顶
         let task_ptr = Arc::as_ptr(&task) as usize;
         let task_context = TaskContext::idle_init_task_context(task_ptr);
@@ -503,6 +521,13 @@ impl Task {
         // 更新task_cx
         kstack -= core::mem::size_of::<TaskContext>();
         let kstack = KernelStack(kstack);
+        // CFS调度实体
+        #[cfg(feature = "cfs")]
+        let sched_entity = Arc::new(CFSSchedEntity::new(
+            tid.0,
+            priority_to_nice(self.priority()),
+            self.sched_entity().vruntime(),
+        ));
 
         // 初始化其他未初始化属性
         sig_pending = Mutex::new(SigPending::new());
@@ -511,7 +536,7 @@ impl Task {
         let restore_mask = AtomicBool::new(true);
         let tid = RwLock::new(tid);
         let robust_list_head = AtomicUsize::new(0);
-        let time_stat = SyncUnsafeCell::new(TimeStat::default());
+        let time_stat = SyncUnsafeCell::new(TimeStat::new());
         let umask = AtomicU16::new(self.umask.load(core::sync::atomic::Ordering::Relaxed));
         let exe_path = Arc::new(RwLock::new(self.exe_path().clone()));
         let task_inner = RwLock::new(TaskInner {
@@ -559,6 +584,8 @@ impl Task {
             fsgid,
             sup_groups,
             task_inner,
+            #[cfg(feature = "cfs")]
+            sched_entity,
         });
         log::trace!("[kernel_clone] child task{} created", task.tid());
 
@@ -1051,6 +1078,11 @@ impl Task {
         self.restore_mask()
     }
 
+    pub fn is_rt(&self) -> bool {
+        self.task_inner
+            .read().priority <= MAX_RT_PRIO
+    }
+
     /*********************************** getter *************************************/
 
     pub fn kstack(&self) -> usize {
@@ -1169,6 +1201,11 @@ impl Task {
     pub fn sched_prio(&self) -> u32 {
         self.sched_prio.load(core::sync::atomic::Ordering::SeqCst)
     }
+
+    #[cfg(feature = "cfs")]
+    pub fn sched_entity(&self) -> Arc<CFSSchedEntity> {
+        self.sched_entity.clone()
+    }
     /*********************************** setter *************************************/
     pub fn set_root(&self, root: Arc<Path>) {
         *self.root.lock() = root;
@@ -1235,6 +1272,13 @@ impl Task {
         self.task_inner.write().priority = priority;
         self.sched_prio
             .store(priority, core::sync::atomic::Ordering::SeqCst);
+        #[cfg(feature = "cfs")]
+        {
+            if priority > MAX_RT_PRIO {
+                let se = self.sched_entity();
+                se.load.set_weight( priority_to_nice(priority));
+            }
+        }
     }
     pub fn set_cpu_mask(&self, cpu_mask: CpuMask) {
         self.task_inner.write().cpu_mask = cpu_mask;

@@ -101,6 +101,11 @@ pub fn set_next_trigger() {
     set_timer(get_time() + CLOCK_FREQ / TICKS_PER_SEC);
 }
 
+pub fn set_next_trigger_ns(ns: usize) {
+    let ticks = ns * CLOCK_FREQ / 1_000_000_000;
+    set_timer(get_time() + ticks);
+}
+
 // const GOLDFISH_RTC_BASE: usize = 0x10_1000;
 const TIME_LOW: usize = 0x00;
 const TIME_HIGH: usize = 0x04;
