@@ -33,11 +33,11 @@ impl RamDisk {
 
 impl BlockDevice for RamDisk {
     fn read_blocks(&self, start_block_id: usize, buf: &mut [u8]) {
-        log::info!(
-            "[RamDisk::read_blocks] start_block_id: {}, buf_len: {}",
-            start_block_id,
-            buf.len()
-        );
+        // log::info!(
+        //     "[RamDisk::read_blocks] start_block_id: {}, buf_len: {}",
+        //     start_block_id,
+        //     buf.len()
+        // );
         let num_blocks = buf.len() / BLOCK_SIZE;
         assert_eq!(
             buf.len() % BLOCK_SIZE,

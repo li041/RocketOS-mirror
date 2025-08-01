@@ -20,7 +20,7 @@ pub const KSTACK_PG_NUM_SHIFT: usize = 2usize.trailing_zeros() as usize;
 /// mm
 pub const KERNEL_STACK_SIZE: usize = PAGE_SIZE << KSTACK_PG_NUM_SHIFT;
 #[cfg(feature = "board")]
-pub const KERNEL_HEAP_SIZE: usize = PAGE_SIZE * 0x8000;
+pub const KERNEL_HEAP_SIZE: usize = PAGE_SIZE * 0x4000;
 #[cfg(feature = "virt")]
 pub const KERNEL_HEAP_SIZE: usize = PAGE_SIZE * 0x8000;
 pub const USER_MAX_VA: usize = 0x0000_003f_ffff_ffff; // 256GB

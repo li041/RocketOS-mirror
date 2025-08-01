@@ -1,5 +1,6 @@
 #![allow(unused)]
 use core::ptr;
+use core::sync::atomic::AtomicI32;
 
 use alloc::boxed::Box;
 use alloc::collections::btree_map::BTreeMap;
@@ -14,7 +15,7 @@ use crate::arch::config::EXT4_MAX_INLINE_DATA;
 use crate::drivers::block::VIRTIO_BLOCK_SIZE;
 use crate::fs::inode::InodeOp;
 use crate::fs::kstat::Kstat;
-use crate::fs::uapi::{FallocFlags, SetXattrFlags};
+use crate::fs::uapi::{FallocFlags, SetXattrFlags, F_SEAL_SEAL};
 use crate::fs::FS_BLOCK_SIZE;
 use crate::syscall::errno::{Errno, SyscallRet};
 use crate::task::current_task;
@@ -873,7 +874,7 @@ pub struct Ext4Inode {
     #[cfg(feature = "board")]
     pub xattrs: RwLock<BTreeMap<String, Vec<u8>>>, // 扩展属性
     // 仅当inode对应memfd时有效
-    pub seals: i32,
+    pub seals: AtomicI32,
 }
 
 impl Drop for Ext4Inode {
@@ -962,6 +963,7 @@ impl Ext4Inode {
         block_device: Arc<dyn BlockDevice>,
         uid: u16,
         gid: u16,
+        seals: i32,
     ) -> Arc<Self> {
         // Todo: 1. init_owner(): 设置mode, uid, gid
         // Todo: 2. 时间戳: atime, mtime, ctime
@@ -1000,6 +1002,7 @@ impl Ext4Inode {
             xattrs: RwLock::new(HashMap::new()),
             #[cfg(feature = "board")]
             xattrs: RwLock::new(BTreeMap::new()),
+            seals: AtomicI32::new(seals),
         })
     }
     pub fn new_root(
@@ -1022,6 +1025,7 @@ impl Ext4Inode {
             xattrs: RwLock::new(HashMap::new()),
             #[cfg(feature = "board")]
             xattrs: RwLock::new(BTreeMap::new()),
+            seals: AtomicI32::new(F_SEAL_SEAL),
         })
     }
     // 所有的读/写都是基于Ext4Inode::read/write, 通过页缓存和extent tree来读写
@@ -2305,6 +2309,7 @@ pub fn load_inode(
         xattrs: RwLock::new(HashMap::new()),
         #[cfg(feature = "board")]
         xattrs: RwLock::new(BTreeMap::new()),
+        seals: AtomicI32::new(F_SEAL_SEAL),
     })
 }
 

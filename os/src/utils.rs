@@ -302,3 +302,47 @@ fn days_in_month(year: u64, month: usize) -> u8 {
         DAYS[month - 1]
     }
 }
+
+pub fn print_hexdump(data: &[u8]) {
+    let mut offset = 0;
+
+    while offset < data.len() {
+        // 每行最多 16 字节
+        let line = &data[offset..data.len().min(offset + 16)];
+
+        // 打印偏移量
+        print!("{:08x}  ", offset);
+
+        // 打印 hex
+        for (i, byte) in line.iter().enumerate() {
+            print!("{:02x} ", byte);
+            // 在第 8 个字节后加额外空格
+            if i == 7 {
+                print!(" ");
+            }
+        }
+
+        // 填充空格 (不足16字节)
+        for i in line.len()..16 {
+            print!("   ");
+            if i == 7 {
+                print!(" ");
+            }
+        }
+
+        // 打印 ASCII 视图
+        print!(" |");
+        for byte in line {
+            let ch = *byte;
+            let display = if ch.is_ascii_graphic() || ch == b' ' {
+                ch as char
+            } else {
+                '.'
+            };
+            print!("{}", display);
+        }
+        println!("|");
+
+        offset += 16;
+    }
+}

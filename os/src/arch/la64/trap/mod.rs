@@ -152,6 +152,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
             let op = op.unwrap();
             let addr = BadV::read().get_vaddr();
             let sz = op.get_size();
+            log::info!("[trap_handler::AddressNotAligned] pc: {:#x}, op: {:?}, addr: {:#x}, sz: {}", pc, op, addr, sz);
             let is_aligned: bool = addr % sz == 0;
             if !is_aligned {
                 assert!([2, 4, 8].contains(&sz));
@@ -169,7 +170,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
                     for i in (0..sz).rev() {
                         rd <<= 8;
                         let mut read_byte = 0u8;
-                        copy_from_user((addr + 1) as *const u8, &mut read_byte as *mut u8, 1);
+                        copy_from_user((addr + i) as *const u8, &mut read_byte as *mut u8, 1);
                         rd |= read_byte as usize;
                         //debug!("{:#x}, {:#x}", rd, read_byte);
                     }
@@ -181,6 +182,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
                             _ => unreachable!(),
                         }
                     }
+                    cx.r[ins.get_rd_num()] = rd;
                 }
                 cx.era += 4;
             }
@@ -233,6 +235,7 @@ pub fn kernel_trap_handler(cx: &mut TrapContext) {
             loop {
                 let ins = Instruction::from(pc as *const Instruction);
                 let op = ins.get_op_code();
+                log::info!("[trap_handler::AddressNotAligned] pc: {:#x}, op: {:?}", pc, op);
                 // 解析op_code
                 if op.is_err() {
                     break;

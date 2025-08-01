@@ -260,24 +260,32 @@ pub fn sys_writev(fd: usize, iov_ptr: *const IoVec, iovcnt: usize) -> SyscallRet
             return Err(Errno::EINVAL);
         }
         let mut ker_buf = vec![0u8; iovec.len];
-        match copy_from_user(iovec.base as *const u8, ker_buf.as_mut_ptr(), iovec.len) {
-            Ok(_) => {}
-            Err(e) => {
-                log::error!("[sys_writev] copy_from_user failed: {:?}", e);
-                // 如果部分写入成功, 则返回已经写入的字节数
-                if total_written > 0 {
-                    return Ok(total_written);
+        let write_bytes =
+            match copy_from_user(iovec.base as *const u8, ker_buf.as_mut_ptr(), iovec.len) {
+                Ok(write_bytes) => write_bytes,
+                Err(e) => {
+                    log::error!("[sys_writev] copy_from_user failed: {:?}", e);
+                    // 如果部分写入成功, 则返回已经写入的字节数
+                    if total_written > 0 {
+                        return Ok(total_written);
+                    }
+                    return Err(e);
                 }
-                return Err(e);
-            }
-        }
+            };
+        // 7.31 Debug
+        log::info!(
+            "[sys_writev] copy from user, write_bytes: {}, iovec.base: {:#x}, iovec.len: {}",
+            write_bytes,
+            iovec.base,
+            iovec.len
+        );
         // log::warn!(
-        //     "[sys_writev] iovec.base: {:#x}, iovec.len: {}, ker_buf: {:?}",
+        //     "\n[sys_writev] iovec.base: {:#x}, iovec.len: {}, write_bytes: {}",
         //     iovec.base,
         //     iovec.len,
-        //     ker_buf
+        //     write_bytes,
         // );
-        let written = file.write(&ker_buf)?;
+        let written = file.write(&ker_buf[..write_bytes])?;
         total_written += written;
     }
     Ok(total_written)
