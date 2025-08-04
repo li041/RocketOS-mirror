@@ -389,3 +389,10 @@ pub const F_SEAL_SEAL: i32 = 0x0001; // 禁止设置更多的密封标志
 pub const F_SEAL_SHRINK: i32 = 0x0002; // 禁止文件缩小
 pub const F_SEAL_GROW: i32 = 0x0004; // 禁
 pub const F_SEAL_WRITE: i32 = 0x0008; // 禁止写入
+
+// flock
+pub enum FlockOp {
+    LockSh,
+    LockEx,
+    Unlock,
+}

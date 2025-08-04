@@ -73,7 +73,7 @@ pub fn handle_signal() {
             log::warn!("[handle_signal] handle SA_RESTART");
             trap_cx.set_sepc(trap_cx.sepc - 4);
             trap_cx.restore_a0(); // 从last_a0中恢复a0
-        } 
+        }
         // 处理ERESTARTSYS
         else if (trap_cx.get_a0() == Errno::ERESTARTSYS as usize)
             && action.flags.contains(SigActionFlag::SA_RESTART)
@@ -83,10 +83,9 @@ pub fn handle_signal() {
             log::warn!("[handle_signal] handle ERESTARTSYS");
             trap_cx.set_sepc(trap_cx.sepc - 4);
             trap_cx.restore_a0();
-        } 
+        }
         // 当返回ERESTARTSYS却未注册或不包含 SA_RESTART 时
-        else if (trap_cx.get_a0() == Errno::ERESTARTSYS as usize)
-        {
+        else if (trap_cx.get_a0() == Errno::ERESTARTSYS as usize) {
             log::warn!("[handle_signal] handle ERESTARTNOINTR");
             trap_cx.set_a0(Errno::EINTR as usize);
         }
@@ -100,7 +99,7 @@ pub fn handle_signal() {
             log::warn!("[handle_signal] handle SA_RESTART");
             trap_cx.set_sepc(trap_cx.era - 4);
             trap_cx.restore_a0(); // 从last_a0中恢复a0
-        } 
+        }
         // 处理ERESTARTSYS
         else if (trap_cx.get_a0() == Errno::ERESTARTSYS as usize)
             && action.flags.contains(SigActionFlag::SA_RESTART)
@@ -112,12 +111,10 @@ pub fn handle_signal() {
             trap_cx.restore_a0();
         }
         // 当返回ERESTARTSYS却未注册或不包含 SA_RESTART 时
-        else if (trap_cx.get_a0() == Errno::ERESTARTSYS as usize)
-        {
+        else if (trap_cx.get_a0() == Errno::ERESTARTSYS as usize) {
             log::warn!("[handle_signal] handle ERESTARTNOINTR");
             trap_cx.set_a0(Errno::EINTR as usize);
         }
-
 
         if task.is_interrupted() {
             task.set_uninterrupted();
@@ -249,7 +246,7 @@ fn core(task: Arc<Task>, sig: Sig) {
     task.close_thread();
     // 将信号放入低7位 (第8位是core dump标志,在gdb调试崩溃程序中用到)
     kernel_exit(task, sig.raw() as i32 & 0x7F | 0x80);
-    panic!("core dump: {:?}", sig);
-    // log::error!("[core] core dump: {:?}", sig);
+    // panic!("core dump: {:?}", sig);
+    log::error!("[core] core dump: {:?}", sig);
     schedule();
 }

@@ -1,5 +1,4 @@
-use crate::arch::mm::sfence_vma_vaddr;
-use core::{fmt::Debug, ops::Range};
+use core::fmt::Debug;
 
 use alloc::{collections::btree_map::BTreeMap, sync::Arc};
 use bitflags::bitflags;
@@ -13,7 +12,7 @@ use crate::{
     mm::address::StepByOne,
 };
 
-use super::{shm::ShmAtFlags, Page, PhysPageNum, VPNRange, VirtAddr, VirtPageNum};
+use super::{shm::ShmAtFlags, Page, PhysPageNum, VPNRange, VirtPageNum};
 
 bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq)]

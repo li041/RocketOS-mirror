@@ -33,6 +33,7 @@ pub fn main() -> i32 {
     let mut line: String = String::new();
     let mut history: Vec<String> = Vec::new(); // 存储历史命令
     let mut history_index: usize = 0; // 当前显示的历史命令索引
+    let mut env = shell::environment::Environment::new(); // 初始化环境变量
     print_prompt();
 
     loop {
@@ -65,12 +66,13 @@ pub fn main() -> i32 {
                         }
                         line.clear();
                     } else {
-                        let cmds = parse_pipeline(line.as_str());
+                        let expanded_line = env.expand_variables(&line);
+                        let cmds = parse_pipeline(expanded_line.as_str());
                         if cmds.len() == 1 {
                             let cmd = &cmds[0];
                             let pid = fork();
                             if pid == 0 {
-                                cmd.exec();
+                                cmd.exec(&env);
                             } else {
                                 let mut exit_code: i32 = 0;
                                 let exit_pid = waitpid(pid, &mut exit_code);
@@ -105,7 +107,7 @@ pub fn main() -> i32 {
                                         close(fds[1] as usize);
                                     }
 
-                                    cmd.exec(); // exec 会自动 exit
+                                    cmd.exec(&env); // exec 会自动 exit
                                 }
 
                                 // 父进程：关闭已用的 pipe 文件描述符

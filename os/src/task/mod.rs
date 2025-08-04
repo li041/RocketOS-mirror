@@ -8,6 +8,7 @@ pub mod rusage;
 mod scheduler;
 mod signal;
 mod task;
+mod timer;
 mod wait;
 
 #[cfg(target_arch = "riscv64")]
@@ -33,9 +34,10 @@ pub use context::TaskContext;
 pub use id::{info_allocator, IdAllocator};
 pub use kstack::{get_stack_top_by_sp, KSTACK_SIZE};
 pub use manager::{
-    add_group, add_real_timer, dump_wait_queue, for_each_task, get_all_tasks, get_group, get_task,
-    handle_timeout, new_group, remove_timer, unregister_task, update_real_timer, wait,
-    wait_timeout, wakeup, ITIMER_PROF, ITIMER_REAL, ITIMER_VIRTUAL,
+    add_common_timer, add_group, add_posix_timer, dump_wait_queue, for_each_task, get_all_tasks,
+    get_group, get_task, handle_timeout, new_group, remove_timer, unregister_task,
+    update_common_timer, update_posix_timer, wait, wait_timeout, wakeup, ITIMER_PROF, ITIMER_REAL,
+    ITIMER_VIRTUAL,
 };
 pub use processor::{current_task, run_tasks, other_run_tasks};
 pub use scheduler::{
@@ -49,6 +51,10 @@ pub use scheduler::{change_task};
 pub use task::kernel_exit;
 pub use task::CloneFlags;
 pub use task::{CpuMask, Task, TaskStatus, INIT_PROC_PID};
+pub use timer::{
+    ClockId, PosixTimer, Sigevent, TimerFd, MAX_POSIX_TIMER_COUNT, SIGEV_COUNT, SIGEV_NONE,
+    SIGEV_SIGNAL, SIGEV_THREAD, SIGEV_THREAD_ID, TFD_CLOEXEC, TFD_NONBLOCK,
+};
 
 pub type Tid = usize;
 

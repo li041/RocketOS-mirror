@@ -20,8 +20,8 @@ use crate::{
     },
     syscall::errno::Errno,
     task::{
-        current_task, dump_wait_queue, for_each_task, get_group,
-        get_stack_top_by_sp, get_task, wait, wait_timeout, yield_current_task, Task, INIT_PROC_PID,
+        current_task, dump_wait_queue, for_each_task, get_group, get_stack_top_by_sp, get_task,
+        wait, wait_timeout, yield_current_task, Task, INIT_PROC_PID,
     },
     timer::TimeSpec,
 };
@@ -321,7 +321,7 @@ pub fn sys_rt_sigaction(signum: i32, act: usize, oldact: usize, sigsetsize: usiz
         let mut new_action: SigAction = SigAction::default();
         copy_from_user(act_ptr, &mut new_action as *mut SigAction, 1)?;
         new_action.mask.remove(SigSet::SIGKILL | SigSet::SIGSTOP);
-        log::error!("{:?}", new_action);
+        log::debug!("{:?}", new_action);
         task.op_sig_handler_mut(|handler| {
             handler.update(sig, new_action);
         });

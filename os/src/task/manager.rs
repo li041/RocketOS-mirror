@@ -3,11 +3,7 @@ use crate::{
     clear_bss,
     signal::{SiField, Sig, SigInfo},
     syscall::errno::SyscallRet,
-    task::{
-        add_task, current_task,
-        processor::current_tp,
-        schedule,
-    },
+    task::{add_task, current_task, processor::current_tp, schedule, TimerFd},
     timer::{self, ITimerVal, TimeSpec},
 };
 use alloc::{
@@ -20,9 +16,13 @@ use alloc::{
 use alloc::{task, vec};
 use hashbrown::HashMap;
 use lazy_static::lazy_static;
+use rand::distributions::Alphanumeric;
 use spin::Mutex;
 
-use super::{task::Task, wait::WaitQueue, Tid};
+use super::{
+    task::Task, wait::WaitQueue, Tid, MAX_POSIX_TIMER_COUNT, SIGEV_COUNT, SIGEV_NONE, SIGEV_SIGNAL,
+    SIGEV_THREAD, SIGEV_THREAD_ID,
+};
 
 // 任务管理器
 lazy_static! {
@@ -454,11 +454,34 @@ impl TimeManager {
         deadline
     }
 
-    // 取消指定tid的所有闹钟
+    // 取消指定tid的clock_id闹钟
     fn remove_timer(&self, tid: Tid, clock_id: ClockId) {
         let mut alarm = self.alarms.lock();
         alarm.retain(|_, vec| {
             vec.retain(|(t, c, _)| *t != tid || *c != clock_id);
+            !vec.is_empty()
+        });
+    }
+    fn remove_all_timer(&self, tid: Tid) {
+        let mut alarm = self.alarms.lock();
+        // 先移除所有与tid相关的闹钟
+        alarm.retain(|_, vec| {
+            vec.retain(|(t, _, _)| *t != tid);
+            !vec.is_empty()
+        });
+    }
+
+    // 取消指定pid的clock_id闹钟
+    fn remove_pid_timers(&self, pid: usize, clock_id: ClockId) {
+        let mut alarm = self.alarms.lock();
+        alarm.retain(|_, vec| {
+            vec.retain(|(t, c, _)| {
+                if let Some(task) = get_task(*t) {
+                    task.tgid() != pid || *c != clock_id
+                } else {
+                    true // 如果任务不存在，则保留该闹钟
+                }
+            });
             !vec.is_empty()
         });
     }
@@ -467,6 +490,7 @@ impl TimeManager {
     fn split_off(&self) -> vec::Vec<Tid> {
         let now = TimeSpec::new_machine_time();
         let mut tids = vec![];
+        let mut callbacks = vec![];
         // 第一步：先锁一次并记录所有要移除的键
         let mut guard = self.alarms.lock();
         // dump_time_manager();
@@ -485,10 +509,13 @@ impl TimeManager {
             if let Some(entry) = guard.remove(&key) {
                 for (tid, _clock_id, callback) in entry {
                     tids.push(tid);
-                    // 执行回调
-                    callback();
+                    callbacks.push(callback); // 收集回调函数, 释放self.alarms后调用
                 }
             }
+        }
+        drop(guard); // 释放锁
+        for cb in callbacks {
+            cb(); // 执行回调函数
         }
         if tids.len() > 0 {
             log::warn!("[wakeup_timeout] task {:?} timeout", tids);
@@ -505,26 +532,47 @@ pub fn remove_timer(tid: Tid, clock_id: ClockId) {
     TIME_MANAGER.remove_timer(tid, clock_id);
 }
 
-pub fn add_real_timer(tid: Tid, dur: TimeSpec) {
-    TIME_MANAGER.add_timer(dur, tid, ITIMER_REAL, move || {
+/// 移除tid的所有计时器
+pub fn remove_all_timer(tid: Tid) {
+    TIME_MANAGER.remove_all_timer(tid);
+}
+
+pub fn add_common_timer(tid: Tid, dur: TimeSpec, clock_id: ClockId, signo: i32) {
+    TIME_MANAGER.add_timer(dur, tid, clock_id, move || {
         // 触发定时器
-        real_timer_callback(tid);
+        common_timer_callback(tid, signo, clock_id);
     });
 }
 
-pub fn update_real_timer(tid: Tid, dur: TimeSpec) {
-    TIME_MANAGER.update_timer(tid, ITIMER_REAL, dur, move || {
+pub fn update_common_timer(tid: Tid, dur: TimeSpec, clock_id: ClockId, signo: i32) {
+    TIME_MANAGER.update_timer(tid, clock_id, dur, move || {
         // 触发定时器
-        real_timer_callback(tid);
+        common_timer_callback(tid, signo, clock_id);
+    });
+}
+
+/// 注意clock_id + 3, 为了区分sys_settimer的三个定时器
+pub fn add_posix_timer(tid: Tid, dur: TimeSpec, mut timerid: usize) {
+    let clock_id = (timerid + 3) as ClockId; // 0-2是setitimer的定时器
+    TIME_MANAGER.add_timer(dur, tid, clock_id, move || {
+        posix_timer_callback(tid, timerid);
+    });
+}
+
+// 由调用者确保该定时器存在
+pub fn update_posix_timer(tid: Tid, timerid: usize, dur: TimeSpec) {
+    let clock_id = (timerid + 3) as ClockId; // 0-2是setitimer的定时器
+    TIME_MANAGER.update_timer(tid, clock_id, dur, move || {
+        posix_timer_callback(tid, timerid);
     });
 }
 
 /// setitimer的回调函数
-pub fn real_timer_callback(tid: Tid) {
+pub fn common_timer_callback(tid: Tid, signo: i32, clock_id: ClockId) {
     if let Some(task) = get_task(tid) {
         task.receive_siginfo(
             SigInfo {
-                signo: Sig::SIGALRM.raw(),
+                signo,
                 code: SigInfo::TIMER,
                 fields: SiField::Kill {
                     tid: current_task().tid() as i32,
@@ -534,19 +582,153 @@ pub fn real_timer_callback(tid: Tid) {
             true,
         );
         task.op_itimerval(|itimerval| {
-            let itimerval = &itimerval[0];
+            let itimerval = &itimerval[clock_id as usize];
             if itimerval.it_interval.is_zero() {
                 // 不再设置定时器
                 return;
             } else {
                 // 重新设置定时器
                 let dur = itimerval.it_interval;
-                add_real_timer(tid, dur.into());
+                add_common_timer(tid, dur.into(), clock_id, signo);
             }
         })
     }
 }
 
+pub fn posix_timer_callback(tid: Tid, timerid: usize) {
+    if let Some(task) = get_task(tid) {
+        task.op_timers_mut(|timers| {
+            if timerid >= MAX_POSIX_TIMER_COUNT {
+                return;
+            }
+            let timer = &mut timers[timerid];
+            match timer.event.sigev_notify {
+                SIGEV_SIGNAL => {
+                    log::info!(
+                        "[posix_timer_callback] sending signal {} to task {}",
+                        timer.event.sigev_signo,
+                        tid
+                    );
+                    let unhandle_before = task.op_sig_pending_mut(|pending| {
+                        pending
+                            .pending
+                            .contain_signal(Sig::from(timer.event.sigev_signo))
+                    });
+                    if unhandle_before {
+                        timer.overrun += 1;
+                    }
+                    task.receive_siginfo(
+                        SigInfo {
+                            signo: timer.event.sigev_signo,
+                            code: SigInfo::TIMER,
+                            fields: SiField::Rt {
+                                tid: current_task().tid() as i32,
+                                uid: current_task().uid() as u32,
+                                sival_int: timer.event.sigev_value as i32,
+                                sival_ptr: timer.event.sigev_value as usize,
+                            },
+                        },
+                        true,
+                    );
+                }
+                SIGEV_NONE => {
+                    // 不发送信号
+                }
+                SIGEV_THREAD => {
+                    // Todo: 线程通知
+                    unimplemented!("SIGEV_THREAD is not implemented yet");
+                }
+                SIGEV_THREAD_ID => {
+                    // 线程ID通知, 这里可以实现线程ID通知逻辑
+                    let task = get_task(timer.event.sigev_notify_thread_id as Tid);
+                    if let Some(task) = task {
+                        log::info!(
+                            "[posix_timer_callback] sending signal {} to thread {}",
+                            timer.event.sigev_signo,
+                            timer.event.sigev_notify_thread_id
+                        );
+                        let unhandle_before = task.op_sig_pending_mut(|pending| {
+                            pending
+                                .pending
+                                .contain_signal(Sig::from(timer.event.sigev_signo))
+                        });
+                        if unhandle_before {
+                            timer.overrun += 1;
+                        }
+                        task.receive_siginfo(
+                            SigInfo {
+                                signo: timer.event.sigev_signo,
+                                code: SigInfo::TIMER,
+                                fields: SiField::Rt {
+                                    tid: current_task().tid() as i32,
+                                    uid: current_task().uid() as u32,
+                                    sival_int: timer.event.sigev_value as i32,
+                                    sival_ptr: timer.event.sigev_value as usize,
+                                },
+                            },
+                            true,
+                        );
+                    } else {
+                        log::warn!("[posix_timer_callback] task not found for sigev_thread_id");
+                    }
+                }
+                SIGEV_COUNT => {
+                    // 记录超时次数
+                    log::info!(
+                        "[posix_timer_callback] timer {} for task {} overrun: {}",
+                        timerid,
+                        tid,
+                        timer.overrun + 1
+                    );
+                    timer.overrun += 1;
+                    // 唤醒waiter
+                    let timer_fd = task.fd_table().get_file(timer.event.sigev_value as usize);
+                    if let Some(timer_fd) = timer_fd {
+                        if let Some(timer_fd) = timer_fd.as_any().downcast_ref::<TimerFd>() {
+                            // 唤醒等待该定时器的任务
+                            timer_fd.wakeup_waiters();
+                        } else {
+                            log::error!("[posix_timer_callback] timer_fd is not a TimerFd",);
+                        }
+                    } else {
+                        log::error!(
+                            "[posix_timer_callback] timer_fd not found for fd {}",
+                            timer.event.sigev_value
+                        );
+                    }
+                }
+                _ => {
+                    log::error!(
+                        "[posix_timer_callback] unknown sigev_notify type: {}",
+                        timer.event.sigev_notify
+                    );
+                }
+            }
+
+            // 如果是周期性定时器，重新注册
+            if !timer.itimer_sepc.it_interval.is_zero() {
+                log::info!(
+                    "[posix_timer_callback] re-registering timer {} for task {}, interval: {:?}",
+                    timerid,
+                    tid,
+                    timer.itimer_sepc.it_interval
+                );
+                TIME_MANAGER.add_timer(
+                    timer.itimer_sepc.it_interval,
+                    tid,
+                    (timerid + 3) as ClockId,
+                    move || {
+                        posix_timer_callback(tid, timerid);
+                    },
+                );
+            } else {
+                return; // 如果是单次定时器，不再设置
+            }
+        });
+    }
+}
+
+#[allow(unused)]
 pub fn dump_time_manager() {
     let alarms = TIME_MANAGER.alarms.lock();
     log::info!("[TimeManager] dump alarms:");

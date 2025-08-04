@@ -5,23 +5,28 @@ use spin::Mutex;
 use super::errno::SyscallRet;
 use crate::{
     arch::{
+        config::PAGE_SIZE,
         mm::{copy_from_user, copy_to_user},
         sbi::shutdown,
     },
     bpf::{uapi::BpfCmd, *},
     fs::{
+        fdtable::FdFlags,
         file::OpenFlags,
         namei::path_openat,
         proc::tainted,
         uapi::{RLimit, Resource},
     },
+    signal::Sig,
     syscall::errno::Errno,
     task::{
-        add_real_timer, current_task, get_task, remove_timer, rusage::RUsage, update_real_timer,
-        ITIMER_PROF, ITIMER_REAL, ITIMER_VIRTUAL,
+        add_common_timer, add_posix_timer, current_task, get_all_tasks, get_task, remove_timer,
+        rusage::RUsage, update_common_timer, update_posix_timer, ClockId, PosixTimer, Sigevent,
+        TimerFd, ITIMER_PROF, ITIMER_REAL, ITIMER_VIRTUAL, MAX_POSIX_TIMER_COUNT, TFD_CLOEXEC,
+        TFD_NONBLOCK,
     },
     time::{config::ClockIdFlags, do_adjtimex, KernelTimex, LAST_TIMEX},
-    timer::{ITimerVal, TimeSpec, TimeVal},
+    timer::{ITimerSpec, ITimerVal, TimeSpec, TimeVal},
 };
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -270,6 +275,10 @@ pub const CLOCK_MONOTONIC_RAW: usize = 4;
 pub const CLOCK_REALTIME_COARSE: usize = 5;
 pub const CLOCK_MONOTONIC_COARSE: usize = 6;
 pub const CLOCK_BOOTTIME: usize = 7;
+pub const CLOCK_REALTIME_ALARM: usize = 8;
+pub const CLOCK_BOOTTIME_ALARM: usize = 9;
+pub const CLOCK_SGI_CYCLE: usize = 10; // SGI Cycle Counter
+pub const CLOCK_TAI: usize = 11; // TAI时钟
 
 pub const CPUCLOCK_PROF: usize = 0; // 000 - 进程总CPU时间(用户+内核)
 pub const CPUCLOCK_VIRT: usize = 1; // 001 - 进程用户态CPU时间
@@ -282,12 +291,17 @@ pub fn sys_clock_gettime(clock_id: usize, timespec: *mut TimeSpec) -> SyscallRet
         return Ok(0);
     }
     match clock_id {
-        CLOCK_REALTIME | CLOCK_REALTIME_COARSE => {
+        CLOCK_REALTIME | CLOCK_REALTIME_COARSE | CLOCK_REALTIME_ALARM | CLOCK_TAI => {
             let time = TimeSpec::new_wall_time();
-            // log::info!("[sys_clock_gettime] CLOCK_REALTIME: {:?}", time);
+            // 8.4 Debug
+            log::info!("[sys_clock_gettime] CLOCK_REALTIME: {:?}", time);
             copy_to_user(timespec, &time as *const TimeSpec, 1)?;
         }
-        CLOCK_MONOTONIC | CLOCK_MONOTONIC_RAW | CLOCK_MONOTONIC_COARSE | CLOCK_BOOTTIME => {
+        CLOCK_MONOTONIC
+        | CLOCK_MONOTONIC_RAW
+        | CLOCK_MONOTONIC_COARSE
+        | CLOCK_BOOTTIME
+        | CLOCK_BOOTTIME_ALARM => {
             let time = TimeSpec::new_machine_time();
             // log::info!("[sys_clock_gettime] CLOCK_MONOTONIC: {:?}", time);
             copy_to_user(timespec, &time as *const TimeSpec, 1)?;
@@ -361,6 +375,79 @@ pub fn sys_clock_settime(clock_id: usize, timespec: *const TimeSpec) -> SyscallR
     Ok(0)
 }
 
+pub fn sys_getitimer(which: i32, value_ptr: *mut ITimerVal) -> SyscallRet {
+    if which > 2 {
+        return Err(Errno::EINVAL);
+    }
+    let task = current_task();
+    match which {
+        ITIMER_REAL => task.op_itimerval_mut(|itimerval| {
+            let real_itimeval = &itimerval[which as usize];
+            log::info!(
+                "[sys_getitimer] it_value: {:?}, it_interval: {:?}",
+                real_itimeval.it_value,
+                real_itimeval.it_interval
+            );
+            let current_time = TimeVal::new_wall_time();
+            let old_it_value = if real_itimeval.it_value < current_time {
+                TimeVal { sec: 0, usec: 0 }
+            } else {
+                real_itimeval.it_value - current_time
+            };
+            let old = ITimerVal {
+                it_value: old_it_value,
+                it_interval: real_itimeval.it_interval,
+            };
+            copy_to_user(value_ptr, &old as *const ITimerVal, 1)?;
+            Ok(0)
+        }),
+        ITIMER_VIRTUAL => task.op_itimerval_mut(|itimerval| {
+            let real_itimeval = &itimerval[which as usize];
+            log::info!(
+                "[sys_getitimer] it_value: {:?}, it_interval: {:?}",
+                real_itimeval.it_value,
+                real_itimeval.it_interval
+            );
+            let current_time = TimeVal::new_wall_time();
+            let old_it_value = if real_itimeval.it_value < current_time {
+                TimeVal { sec: 0, usec: 0 }
+            } else {
+                real_itimeval.it_value - current_time
+            };
+            let old = ITimerVal {
+                it_value: old_it_value,
+                it_interval: real_itimeval.it_interval,
+            };
+            copy_to_user(value_ptr, &old as *const ITimerVal, 1)?;
+            Ok(0)
+        }),
+        ITIMER_PROF => task.op_itimerval_mut(|itimerval| {
+            let real_itimeval = &itimerval[which as usize];
+            log::info!(
+                "[sys_getitimer] it_value: {:?}, it_interval: {:?}",
+                real_itimeval.it_value,
+                real_itimeval.it_interval
+            );
+            let current_time = TimeVal::new_wall_time();
+            let old_it_value = if real_itimeval.it_value < current_time {
+                TimeVal { sec: 0, usec: 0 }
+            } else {
+                real_itimeval.it_value - current_time
+            };
+            let old = ITimerVal {
+                it_value: old_it_value,
+                it_interval: real_itimeval.it_interval,
+            };
+            copy_to_user(value_ptr, &old as *const ITimerVal, 1)?;
+            Ok(0)
+        }),
+        _ => {
+            log::error!("Unexpected which");
+            return Err(Errno::EINVAL);
+        }
+    }
+}
+
 pub fn sys_setitimer(
     which: i32,
     value_ptr: *const ITimerVal,
@@ -418,26 +505,688 @@ pub fn sys_setitimer(
             // 设置或更新已有定时器
             if should_update {
                 log::warn!("[sys_setitimer] update timer");
-                update_real_timer(task.tid(), new.it_value.into());
+                update_common_timer(
+                    task.tid(),
+                    new.it_value.into(),
+                    ITIMER_REAL,
+                    Sig::SIGALRM.raw(),
+                );
             } else {
-                add_real_timer(task.tid(), new.it_value.into());
+                add_common_timer(
+                    task.tid(),
+                    new.it_value.into(),
+                    ITIMER_REAL,
+                    Sig::SIGALRM.raw(),
+                );
             }
             return Ok(0);
         }
         ITIMER_VIRTUAL => {
-            log::warn!("[sys_setitimer] ITIMER_VIRTUAL is not implemented");
-            return Err(Errno::ENOSYS);
+            // return Err(Errno::ENOSYS);
+            // Todo:
+            log::warn!("[sys_setitimer] ITIMER_VIRTUAL Unimplemented");
+            let task = current_task();
+            // 启用定时器
+            let (should_update, old) = task.op_itimerval_mut(|itimerval| {
+                let real_itimeval = &mut itimerval[which as usize];
+                let should_update =
+                    !real_itimeval.it_value.is_zero() || !real_itimeval.it_interval.is_zero();
+                // 计算旧的定时器值(it_value)剩余时间
+                let current_time = TimeVal::new_wall_time();
+                let old_it_value = if real_itimeval.it_value < current_time {
+                    TimeVal { sec: 0, usec: 0 }
+                } else {
+                    real_itimeval.it_value - current_time
+                };
+                let old = ITimerVal {
+                    it_value: old_it_value,
+                    it_interval: real_itimeval.it_interval,
+                };
+                log::warn!("old_value: {:?}", old);
+                // 设定新的定时器值
+                real_itimeval.it_value = current_time + new.it_value;
+                real_itimeval.it_interval = new.it_interval;
+                (should_update, old)
+            });
+            // 将旧的定时器值写入ovalue_ptr
+            if !ovalue_ptr.is_null() {
+                copy_to_user(ovalue_ptr, &old as *const ITimerVal, 1)?;
+            }
+            // 禁用定时器
+            if new.it_value.is_zero() {
+                log::info!("[sys_setitimer] disable timer");
+                remove_timer(task.tid(), ITIMER_VIRTUAL);
+                return Ok(0);
+            }
+            // 设置或更新已有定时器
+            if should_update {
+                log::warn!("[sys_setitimer] update timer");
+                update_common_timer(
+                    task.tid(),
+                    new.it_value.into(),
+                    ITIMER_VIRTUAL,
+                    Sig::SIGVTALRM.raw(),
+                );
+            } else {
+                add_common_timer(
+                    task.tid(),
+                    new.it_value.into(),
+                    ITIMER_VIRTUAL,
+                    Sig::SIGVTALRM.raw(),
+                );
+            }
+            return Ok(0);
         }
         ITIMER_PROF => {
-            log::warn!("[sys_setitimer] ITIMER_PROF is not implemented");
-            return Err(Errno::ENOSYS);
+            // return Err(Errno::ENOSYS);
+            //     // Todo:
+            log::warn!("[sys_setitimer] ITIMER_PROF Unimplemented");
+            let task = current_task();
+            // 启用定时器
+            let (should_update, old) = task.op_itimerval_mut(|itimerval| {
+                let real_itimeval = &mut itimerval[which as usize];
+                let should_update =
+                    !real_itimeval.it_value.is_zero() || !real_itimeval.it_interval.is_zero();
+                // 计算旧的定时器值(it_value)剩余时间
+                let current_time = TimeVal::new_wall_time();
+                let old_it_value = if real_itimeval.it_value < current_time {
+                    TimeVal { sec: 0, usec: 0 }
+                } else {
+                    real_itimeval.it_value - current_time
+                };
+                let old = ITimerVal {
+                    it_value: old_it_value,
+                    it_interval: real_itimeval.it_interval,
+                };
+                log::warn!("old_value: {:?}", old);
+                // 设定新的定时器值
+                real_itimeval.it_value = current_time + new.it_value;
+                real_itimeval.it_interval = new.it_interval;
+                (should_update, old)
+            });
+            // 将旧的定时器值写入ovalue_ptr
+            if !ovalue_ptr.is_null() {
+                copy_to_user(ovalue_ptr, &old as *const ITimerVal, 1)?;
+            }
+            // 禁用定时器
+            if new.it_value.is_zero() {
+                log::info!("[sys_setitimer] disable timer");
+                remove_timer(task.tid(), ITIMER_PROF);
+                return Ok(0);
+            }
+            // 设置或更新已有定时器
+            if should_update {
+                log::warn!("[sys_setitimer] update timer");
+                update_common_timer(
+                    task.tid(),
+                    new.it_value.into(),
+                    ITIMER_PROF,
+                    Sig::SIGPROF.raw(),
+                );
+            } else {
+                add_common_timer(
+                    task.tid(),
+                    new.it_value.into(),
+                    ITIMER_PROF,
+                    Sig::SIGPROF.raw(),
+                );
+            }
+            return Ok(0);
         }
         _ => {
-            // 已进行参数检查, 不会进入这里
-            panic!("[sys_setitimer] invalid which: {}", which);
+            log::error!("Unexpected which");
+            return Err(Errno::EINVAL);
         }
     };
 }
+
+pub fn sys_timerfd_create(clock_id: usize, flags: i32) -> SyscallRet {
+    let clock_id = ClockId::try_from(clock_id)?;
+    // 检查flags是否合法
+    if flags & !(TFD_CLOEXEC | TFD_NONBLOCK) != 0 {
+        return Err(Errno::EINVAL);
+    }
+    let fd_flags = if flags & TFD_CLOEXEC != 0 {
+        FdFlags::FD_CLOEXEC
+    } else {
+        FdFlags::empty()
+    };
+    let task = current_task();
+    let timer_fd = TimerFd::new(clock_id, flags)?;
+    let timerid = timer_fd.id;
+    let fd = task.fd_table().alloc_fd(timer_fd, fd_flags)?;
+    // 更新定时器posix_timer.event的sigev_value记录对应的fd
+    task.op_timers_mut(|timers| {
+        // 设置定时器的sigevent
+        timers[timerid].event = Sigevent::fd_event(fd);
+    });
+    Ok(fd)
+}
+
+const TFD_TIMER_ABSTIME: i32 = 0x1; // 绝对时间
+const TFD_TIMER_CANCEL_ON_SET: i32 = 0x2; // 设置时取消定时器
+
+// pub fn sys_timerfd_gettime(
+pub fn sys_timerfd_settime(
+    fd: usize,
+    flags: i32,
+    new_value_ptr: *const ITimerSpec,
+    old_value_ptr: *mut ITimerSpec,
+) -> SyscallRet {
+    log::error!(
+        "[sys_timerfd_settime] fd: {}, flags: {}, new_value_ptr: {:#x}, old_value_ptr: {:#x}",
+        fd,
+        flags,
+        new_value_ptr as usize,
+        old_value_ptr as usize
+    );
+    // 检查flags是否合法
+    if flags & !(TFD_TIMER_ABSTIME | TFD_TIMER_CANCEL_ON_SET) != 0 {
+        return Err(Errno::EINVAL);
+    }
+    let task = current_task();
+    let timer_fd = task.fd_table().get_file(fd).ok_or(Errno::EBADF)?;
+    let timer_fd = timer_fd
+        .as_any()
+        .downcast_ref::<TimerFd>()
+        .ok_or(Errno::EINVAL)?;
+    let mut new_value = ITimerSpec::default();
+    if !new_value_ptr.is_null() {
+        copy_from_user(new_value_ptr, &mut new_value as *mut ITimerSpec, 1)?;
+        if !new_value.is_valid() {
+            return Err(Errno::EINVAL);
+        }
+    }
+    // 8.4 Debug
+    log::info!("[sys_timerfd_settime] new_value: {:?}", new_value);
+    // 获取旧的定时器值
+    let old = task.op_timers_mut(|timers| {
+        let timerid = timer_fd.id;
+        let timer = &mut timers[timerid];
+        match timer.clock_id {
+            ClockId::Monotonic | ClockId::BootTime | ClockId::BootTimeAlarm => {
+                // Todo: flags: ClockIdFlags::TIMER_ABSTIME,
+                let should_update = !timer.itimer_sepc.it_value.is_zero()
+                    || !timer.itimer_sepc.it_interval.is_zero();
+                let current_time = TimeSpec::new_machine_time();
+                let old_it_spec = if timer.itimer_sepc.it_value < current_time {
+                    TimeSpec { sec: 0, nsec: 0 }
+                } else {
+                    timer.itimer_sepc.it_value - current_time
+                };
+                let old = ITimerSpec {
+                    it_value: old_it_spec,
+                    it_interval: timer.itimer_sepc.it_interval,
+                };
+                log::warn!("old_value: {:?}", old);
+                let mut dur;
+                // 更新定时器的值
+                if flags & TIMER_ABSTIME != 0 {
+                    // 如果设置了TIMER_ABSTIME, 则it_value是绝对时间
+                    timer.itimer_sepc.it_value = new_value.it_value;
+                    dur = if new_value.it_value < current_time {
+                        TimeSpec { sec: 0, nsec: 0 }
+                    } else {
+                        timer.itimer_sepc.it_value - current_time
+                    };
+                } else {
+                    // 否则, it_value是相对时间
+                    timer.itimer_sepc.it_value = new_value.it_value + current_time;
+                    dur = new_value.it_value;
+                }
+                timer.itimer_sepc.it_interval = new_value.it_interval;
+                // 将旧的定时器值写入old_value_ptr
+                if !old_value_ptr.is_null() {
+                    copy_to_user(old_value_ptr, &old as *const ITimerSpec, 1)?;
+                }
+                // 禁用定时器
+                if new_value.it_value.is_zero() {
+                    log::info!("[sys_timer_settimer] disable timer");
+                    let clock_id = (timerid + 3) as i32;
+                    remove_timer(task.tid(), clock_id);
+                    return Ok(0);
+                }
+                // 设置或更新已有定时器
+                if should_update {
+                    log::warn!("[sys_timer_settimer] update timer");
+                    update_posix_timer(task.tid(), timerid, dur);
+                } else {
+                    log::info!("[sys_timer_settimer] add timer");
+                    add_posix_timer(task.tid(), dur, timerid);
+                }
+                return Ok(0);
+            }
+            ClockId::RealTime
+            | ClockId::RealTimeAlarm
+            | ClockId::Tai
+            | ClockId::ProcessCpuTimeId
+            | ClockId::ThreadCpuTimeId => {
+                // Todo: flags: ClockIdFlags::TIMER_ABSTIME,
+                let should_update = !timer.itimer_sepc.it_value.is_zero()
+                    || !timer.itimer_sepc.it_interval.is_zero();
+                let current_time = TimeSpec::new_wall_time();
+                let old_it_spec = if timer.itimer_sepc.it_value < current_time {
+                    TimeSpec { sec: 0, nsec: 0 }
+                } else {
+                    timer.itimer_sepc.it_value - current_time
+                };
+                let old = ITimerSpec {
+                    it_value: old_it_spec,
+                    it_interval: timer.itimer_sepc.it_interval,
+                };
+
+                log::warn!("old_value: {:?}", old);
+                let mut dur;
+                // 更新定时器的值
+                if flags & TIMER_ABSTIME != 0 {
+                    // 如果设置了TIMER_ABSTIME, 则it_value是绝对时间
+                    timer.itimer_sepc.it_value = new_value.it_value;
+                    dur = if new_value.it_value < current_time {
+                        TimeSpec { sec: 0, nsec: 0 }
+                    } else {
+                        timer.itimer_sepc.it_value - current_time
+                    };
+                } else {
+                    // 否则, it_value是相对时间
+                    timer.itimer_sepc.it_value = new_value.it_value + current_time;
+                    dur = new_value.it_value;
+                }
+                timer.itimer_sepc.it_interval = new_value.it_interval;
+                // 将旧的定时器值写入old_value_ptr
+                if !old_value_ptr.is_null() {
+                    copy_to_user(old_value_ptr, &old as *const ITimerSpec, 1)?;
+                }
+                // 禁用定时器
+                if new_value.it_value.is_zero() {
+                    log::info!("[sys_timer_settimer] disable timer");
+                    let clock_id = (timerid + 3) as i32;
+                    remove_timer(task.tid(), clock_id);
+                    return Ok(0);
+                }
+                // 设置或更新已有定时器
+                if should_update {
+                    log::warn!("[sys_timer_settimer] update timer");
+                    update_posix_timer(task.tid(), timerid, dur);
+                } else {
+                    add_posix_timer(task.tid(), dur, timerid);
+                }
+                return Ok(0);
+            }
+            ClockId::IDLE => {
+                log::error!("[sys_timer_settimer] timer not created: {}", timerid);
+                return Err(Errno::EINVAL); // 定时器未创建
+            }
+            _ => {
+                log::warn!(
+                    "[sys_timer_settimer] timer {} clock_id: {:?}, Unimplemented",
+                    timerid,
+                    timer.clock_id
+                );
+                return Err(Errno::ENOSYS);
+            }
+        }
+    })?;
+    Ok(0)
+}
+
+pub fn sys_timerfd_gettime(fd: usize, curr_value_ptr: *mut ITimerSpec) -> SyscallRet {
+    log::error!(
+        "[sys_timerfd_gettime] fd: {}, curr_value_ptr: {:#x}",
+        fd,
+        curr_value_ptr as usize
+    );
+    let task = current_task();
+    let timer_fd = task.fd_table().get_file(fd).ok_or(Errno::EBADF)?;
+    let timer_fd = timer_fd
+        .as_any()
+        .downcast_ref::<TimerFd>()
+        .ok_or(Errno::EINVAL)?;
+    // 获取当前定时器值
+    let timerid = timer_fd.id;
+    task.op_timers_mut(|timers| {
+        let timer = &timers[timerid];
+        if timer.clock_id == ClockId::IDLE {
+            log::error!("[sys_tiemr_gettimer] timer not created: {}", timerid);
+            return Err(Errno::EINVAL); // 定时器未创建
+        }
+        match timer.clock_id {
+            ClockId::Monotonic | ClockId::BootTime | ClockId::BootTimeAlarm => {
+                let current_time = TimeSpec::new_machine_time();
+                let curr_it_spec = if timer.itimer_sepc.it_value < current_time {
+                    TimeSpec { sec: 0, nsec: 0 }
+                } else {
+                    timer.itimer_sepc.it_value - current_time
+                };
+                let curr_value = ITimerSpec {
+                    it_value: curr_it_spec,
+                    it_interval: timer.itimer_sepc.it_interval,
+                };
+                copy_to_user(curr_value_ptr, &curr_value as *const ITimerSpec, 1)?;
+            }
+            ClockId::RealTime
+            | ClockId::RealTimeAlarm
+            | ClockId::Tai
+            | ClockId::ProcessCpuTimeId
+            | ClockId::ThreadCpuTimeId => {
+                let current_time = TimeSpec::new_wall_time();
+                let curr_it_spec = if timer.itimer_sepc.it_value < current_time {
+                    TimeSpec { sec: 0, nsec: 0 }
+                } else {
+                    timer.itimer_sepc.it_value - current_time
+                };
+                let curr_value = ITimerSpec {
+                    it_value: curr_it_spec,
+                    it_interval: timer.itimer_sepc.it_interval,
+                };
+                copy_to_user(curr_value_ptr, &curr_value as *const ITimerSpec, 1)?;
+            }
+            _ => {
+                log::warn!(
+                    "[sys_timer_gettimer] timer {} clock_id: {:?}, Unimplemented",
+                    timerid,
+                    timer.clock_id
+                );
+                return Err(Errno::ENOSYS); // 目前只实现了CLOCK_MONOTONIC
+            }
+        }
+        Ok(0)
+    })
+}
+
+pub fn sys_timer_create(clock_id: usize, sigevent_ptr: usize, timerid_ptr: usize) -> SyscallRet {
+    log::error!(
+        "[sys_timer_create] clock_id: {}, sigp: {:#x}, timerid_ptr: {:#x}",
+        clock_id,
+        sigevent_ptr,
+        timerid_ptr
+    );
+    let clock_id = ClockId::try_from(clock_id)?;
+    let mut sigevent = Sigevent::default();
+    // 若为0, 使用Sigevent默认值
+    if sigevent_ptr != 0 {
+        copy_from_user(
+            sigevent_ptr as *const Sigevent,
+            &mut sigevent as *mut Sigevent,
+            1,
+        )?;
+    }
+    log::info!("[sys_timer_create] sigevent: {:?}", sigevent);
+    current_task().op_timers_mut(|timers| {
+        // 查找空闲的PosixTimer
+        for (i, timer) in timers.iter_mut().enumerate() {
+            if timer.clock_id == ClockId::IDLE {
+                timer.id = i; // 分配一个唯一的ID
+                timer.clock_id = clock_id;
+                if sigevent_ptr == 0 {
+                    sigevent.sigev_value = i as u64; // 默认值, sigev_value.sival_int = timer ID
+                }
+                timer.event = sigevent;
+                copy_to_user(timerid_ptr as *mut usize, &timer.id as *const usize, 1)?;
+                return Ok(0);
+            }
+        }
+        Err(Errno::ENOSPC) // 没有空闲的PosixTimer
+    })
+}
+
+const TIMER_ABSTIME: i32 = 0x01; // 定时器使用绝对时间
+
+// new_value->it_value默认是相对时间, 除非flags设置了TIMER_ABSTIME
+pub fn sys_timer_settimer(
+    timerid: usize,
+    flags: i32,
+    new_value_ptr: *const ITimerSpec,
+    old_value_ptr: *mut ITimerSpec,
+) -> SyscallRet {
+    log::error!(
+        "[sys_timer_settimer] timerid: {}, flags: {}, new_value_ptr: {:#x}, old_value_ptr: {:#x}",
+        timerid,
+        flags,
+        new_value_ptr as usize,
+        old_value_ptr as usize
+    );
+    let task = current_task();
+    let mut new_value = ITimerSpec::default();
+    if new_value_ptr.is_null() {
+        log::error!("[sys_timer_settimer] new_value_ptr is null");
+        return Err(Errno::EINVAL);
+    }
+    copy_from_user(new_value_ptr, &mut new_value as *mut ITimerSpec, 1)?;
+    if !new_value.is_valid() {
+        log::error!("[sys_timer_settimer] new_value is invalid: {:?}", new_value);
+        return Err(Errno::EINVAL);
+    }
+    if timerid >= MAX_POSIX_TIMER_COUNT {
+        log::error!("[sys_timer_settimer] invalid timerid: {}", timerid);
+        return Err(Errno::EINVAL);
+    }
+    // 8.4 Debug
+    log::info!("[sys_timer_settimer] new_value: {:?}", new_value);
+    task.op_timers_mut(|timers| {
+        let timer = &mut timers[timerid];
+        match timer.clock_id {
+            ClockId::Monotonic | ClockId::BootTime | ClockId::BootTimeAlarm => {
+                // Todo: flags: ClockIdFlags::TIMER_ABSTIME,
+                let should_update = !timer.itimer_sepc.it_value.is_zero()
+                    || !timer.itimer_sepc.it_interval.is_zero();
+                let current_time = TimeSpec::new_machine_time();
+                let old_it_spec = if timer.itimer_sepc.it_value < current_time {
+                    TimeSpec { sec: 0, nsec: 0 }
+                } else {
+                    timer.itimer_sepc.it_value - current_time
+                };
+                let old = ITimerSpec {
+                    it_value: old_it_spec,
+                    it_interval: timer.itimer_sepc.it_interval,
+                };
+                log::warn!("old_value: {:?}", old);
+                let mut dur;
+                // 更新定时器的值
+                if flags & TIMER_ABSTIME != 0 {
+                    // 如果设置了TIMER_ABSTIME, 则it_value是绝对时间
+                    timer.itimer_sepc.it_value = new_value.it_value;
+                    dur = if new_value.it_value < current_time {
+                        TimeSpec { sec: 0, nsec: 0 }
+                    } else {
+                        timer.itimer_sepc.it_value - current_time
+                    };
+                } else {
+                    // 否则, it_value是相对时间
+                    timer.itimer_sepc.it_value = new_value.it_value + current_time;
+                    dur = new_value.it_value;
+                }
+                timer.itimer_sepc.it_interval = new_value.it_interval;
+                // 将旧的定时器值写入old_value_ptr
+                if !old_value_ptr.is_null() {
+                    copy_to_user(old_value_ptr, &old as *const ITimerSpec, 1)?;
+                }
+                // 禁用定时器
+                if new_value.it_value.is_zero() {
+                    log::info!("[sys_timer_settimer] disable timer");
+                    let clock_id = (timerid + 3) as i32;
+                    remove_timer(task.tid(), clock_id);
+                    return Ok(0);
+                }
+                // 设置或更新已有定时器
+                if should_update {
+                    log::warn!("[sys_timer_settimer] update timer");
+                    update_posix_timer(task.tid(), timerid, dur);
+                } else {
+                    log::info!("[sys_timer_settimer] add timer");
+                    add_posix_timer(task.tid(), dur, timerid);
+                }
+                return Ok(0);
+            }
+            ClockId::RealTime
+            | ClockId::RealTimeAlarm
+            | ClockId::Tai
+            | ClockId::ProcessCpuTimeId
+            | ClockId::ThreadCpuTimeId => {
+                // Todo: flags: ClockIdFlags::TIMER_ABSTIME,
+                let should_update = !timer.itimer_sepc.it_value.is_zero()
+                    || !timer.itimer_sepc.it_interval.is_zero();
+                let current_time = TimeSpec::new_wall_time();
+                let old_it_spec = if timer.itimer_sepc.it_value < current_time {
+                    TimeSpec { sec: 0, nsec: 0 }
+                } else {
+                    timer.itimer_sepc.it_value - current_time
+                };
+                let old = ITimerSpec {
+                    it_value: old_it_spec,
+                    it_interval: timer.itimer_sepc.it_interval,
+                };
+
+                log::warn!("old_value: {:?}", old);
+                let mut dur;
+                // 更新定时器的值
+                if flags & TIMER_ABSTIME != 0 {
+                    // 如果设置了TIMER_ABSTIME, 则it_value是绝对时间
+                    timer.itimer_sepc.it_value = new_value.it_value;
+                    dur = if new_value.it_value < current_time {
+                        TimeSpec { sec: 0, nsec: 0 }
+                    } else {
+                        timer.itimer_sepc.it_value - current_time
+                    };
+                } else {
+                    // 否则, it_value是相对时间
+                    timer.itimer_sepc.it_value = new_value.it_value + current_time;
+                    dur = new_value.it_value;
+                }
+                timer.itimer_sepc.it_interval = new_value.it_interval;
+                // 将旧的定时器值写入old_value_ptr
+                if !old_value_ptr.is_null() {
+                    copy_to_user(old_value_ptr, &old as *const ITimerSpec, 1)?;
+                }
+                // 禁用定时器
+                if new_value.it_value.is_zero() {
+                    log::info!("[sys_timer_settimer] disable timer");
+                    let clock_id = (timerid + 3) as i32;
+                    remove_timer(task.tid(), clock_id);
+                    return Ok(0);
+                }
+                // 设置或更新已有定时器
+                if should_update {
+                    log::warn!("[sys_timer_settimer] update timer");
+                    update_posix_timer(task.tid(), timerid, dur);
+                } else {
+                    add_posix_timer(task.tid(), dur, timerid);
+                }
+                return Ok(0);
+            }
+            ClockId::IDLE => {
+                log::error!("[sys_timer_settimer] timer not created: {}", timerid);
+                return Err(Errno::EINVAL); // 定时器未创建
+            }
+            _ => {
+                log::warn!(
+                    "[sys_timer_settimer] timer {} clock_id: {:?}, Unimplemented",
+                    timerid,
+                    timer.clock_id
+                );
+                return Err(Errno::ENOSYS); // 目前只实现了CLOCK_MONOTONIC
+            }
+        }
+    })
+}
+
+pub fn sys_timer_gettimer(timerid: usize, curr_value_ptr: *mut ITimerSpec) -> SyscallRet {
+    log::error!(
+        "[sys_timer_gettimer] timerid: {}, curr_value_ptr: {:#x}",
+        timerid,
+        curr_value_ptr as usize
+    );
+    if timerid >= MAX_POSIX_TIMER_COUNT {
+        log::error!("[sys_timer_gettimer] timerid out of range: {}", timerid);
+        return Err(Errno::EINVAL); // 定时器ID超出范围
+    }
+
+    let task = current_task();
+    task.op_timers_mut(|timers| {
+        let timer = &timers[timerid];
+        if timer.clock_id == ClockId::IDLE {
+            log::error!("[sys_tiemr_gettimer] timer not created: {}", timerid);
+            return Err(Errno::EINVAL); // 定时器未创建
+        }
+        match timer.clock_id {
+            ClockId::Monotonic | ClockId::BootTime | ClockId::BootTimeAlarm => {
+                let current_time = TimeSpec::new_machine_time();
+                let curr_it_spec = if timer.itimer_sepc.it_value < current_time {
+                    TimeSpec { sec: 0, nsec: 0 }
+                } else {
+                    timer.itimer_sepc.it_value - current_time
+                };
+                let curr_value = ITimerSpec {
+                    it_value: curr_it_spec,
+                    it_interval: timer.itimer_sepc.it_interval,
+                };
+                copy_to_user(curr_value_ptr, &curr_value as *const ITimerSpec, 1)?;
+            }
+            ClockId::RealTime
+            | ClockId::RealTimeAlarm
+            | ClockId::Tai
+            | ClockId::ProcessCpuTimeId
+            | ClockId::ThreadCpuTimeId => {
+                let current_time = TimeSpec::new_wall_time();
+                let curr_it_spec = if timer.itimer_sepc.it_value < current_time {
+                    TimeSpec { sec: 0, nsec: 0 }
+                } else {
+                    timer.itimer_sepc.it_value - current_time
+                };
+                let curr_value = ITimerSpec {
+                    it_value: curr_it_spec,
+                    it_interval: timer.itimer_sepc.it_interval,
+                };
+                copy_to_user(curr_value_ptr, &curr_value as *const ITimerSpec, 1)?;
+            }
+            _ => {
+                log::warn!(
+                    "[sys_timer_gettimer] timer {} clock_id: {:?}, Unimplemented",
+                    timerid,
+                    timer.clock_id
+                );
+                return Err(Errno::ENOSYS); // 目前只实现了CLOCK_MONOTONIC
+            }
+        }
+        Ok(0)
+    })
+}
+
+pub fn sys_timer_getoverrun(timerid: usize) -> SyscallRet {
+    log::error!("[sys_timer_getoverrun] timerid: {}", timerid);
+    if timerid >= MAX_POSIX_TIMER_COUNT {
+        log::error!("[sys_timer_getoverrun] timerid out of range: {}", timerid);
+        return Err(Errno::EINVAL); // 定时器ID超出范围
+    }
+    let task = current_task();
+    task.op_timers_mut(|timers| {
+        let timer = &timers[timerid];
+        if timer.clock_id == ClockId::IDLE {
+            log::error!("[sys_timer_getoverrun] timer not created: {}", timerid);
+            return Err(Errno::EINVAL); // 定时器未创建
+        }
+        Ok(timer.overrun)
+    })
+}
+
+pub fn sys_timer_delete(timerid: usize) -> SyscallRet {
+    log::error!("[sys_timer_delete] timerid: {}", timerid);
+    if timerid >= MAX_POSIX_TIMER_COUNT {
+        log::error!("[sys_timer_delete] timerid out of range: {}", timerid);
+        return Err(Errno::EINVAL); // 定时器ID超出范围
+    }
+    let task = current_task();
+    task.op_timers_mut(|timers| {
+        let timer = &mut timers[timerid];
+        if timer.clock_id == ClockId::IDLE {
+            log::error!("[sys_timer_delete] timer not created: {}", timerid);
+            return Err(Errno::EINVAL); // 定时器未创建
+        }
+        remove_timer(task.tid(), (timerid + 3) as i32);
+        *timer = PosixTimer::idle(); // 重置为idle状态
+        Ok(0)
+    })
+}
+
 /// 调用进程的资源使用情况。
 pub const RUSAGE_SELF: i32 = 0;
 /// 已终止并被等待的所有子进程的资源使用情况
@@ -602,4 +1351,62 @@ pub fn sys_bpf(cmd: i32, bpf_attr_ptr: usize, size: usize) -> SyscallRet {
 
 pub fn sys_shutdown() -> SyscallRet {
     shutdown(false);
+}
+
+#[repr(C)]
+#[derive(Default, Debug, Copy, Clone)]
+pub struct SysInfo {
+    pub uptime: i64,
+    pub loads: [u64; 3],
+    pub totalram: u64,
+    pub freeram: u64,
+    pub sharedram: u64,
+    pub bufferram: u64,
+    pub totalswap: u64,
+    pub freeswap: u64,
+    pub procs: u16,
+    pub totalhigh: u64,
+    pub freehigh: u64,
+    pub mem_unit: u32,
+    pub _f: [u8; 20 - 2 * core::mem::size_of::<u64>() - core::mem::size_of::<u32>()],
+}
+
+pub fn sys_sysinfo(user_ptr: *mut SysInfo) -> SyscallRet {
+    if user_ptr.is_null() {
+        return Err(Errno::EFAULT);
+    }
+
+    let uptime = TimeSpec::new_machine_time().sec as u64; // 系统运行时间，单位为秒
+    let (load1, load5, load15) = (0, 0, 0); // 1、5、15 分钟负载，按 Linux 的 "fixed point" 处理
+    let mem_unit = PAGE_SIZE as u32;
+
+    let (totalram, freeram, sharedram, bufferram) = (
+        12345, // 总内存大小
+        10000, // 可用内存大小
+        1000,  // 共享内存大小
+        1000,  // 缓冲区内存大小
+    );
+    let (totalswap, freeswap) = (0, 0);
+    let (totalhigh, freehigh) = (0, 0);
+    let procs = get_all_tasks().len();
+
+    let info = SysInfo {
+        uptime: uptime as i64,
+        loads: [load1, load5, load15],
+        totalram: totalram / mem_unit as u64,
+        freeram: freeram / mem_unit as u64,
+        sharedram: sharedram / mem_unit as u64,
+        bufferram: bufferram / mem_unit as u64,
+        totalswap: totalswap / mem_unit as u64,
+        freeswap: freeswap / mem_unit as u64,
+        procs: procs as u16,
+        totalhigh: totalhigh / mem_unit as u64,
+        freehigh: freehigh / mem_unit as u64,
+        mem_unit,
+        _f: [0u8; 20 - 2 * core::mem::size_of::<u64>() - core::mem::size_of::<u32>()],
+    };
+
+    copy_to_user(user_ptr, &info as *const SysInfo, 1)?;
+
+    Ok(0)
 }

@@ -14,15 +14,15 @@ use errno::{Errno, SyscallRet};
 use fs::{
     sys_chdir, sys_chroot, sys_close, sys_copy_file_range, sys_dup, sys_dup3, sys_faccessat,
     sys_fadvise64, sys_fallocate, sys_fchdir, sys_fchmod, sys_fchmodat, sys_fchown, sys_fchownat,
-    sys_fcntl, sys_fdatasync, sys_fgetxattr, sys_flistxattr, sys_fremovexattr, sys_fsetxattr,
-    sys_fstat, sys_fstatat, sys_fstatfs, sys_fsync, sys_ftruncate, sys_getcwd, sys_getdents64,
-    sys_getxattr, sys_ioctl, sys_lgetxattr, sys_linkat, sys_listxattr, sys_llistxattr,
-    sys_lremovexattr, sys_lseek, sys_lsetxattr, sys_memfd_create, sys_mkdirat, sys_mknodat,
-    sys_mount, sys_msync, sys_openat, sys_openat2, sys_pipe2, sys_ppoll, sys_pread, sys_preadv,
-    sys_preadv2, sys_pselect6, sys_pwrite, sys_pwritev, sys_pwritev2, sys_read, sys_readlinkat,
-    sys_readv, sys_removexattr, sys_renameat2, sys_sendfile, sys_setxattr, sys_splice, sys_statfs,
-    sys_statx, sys_symlinkat, sys_sync, sys_sync_file_range, sys_truncate, sys_umask, sys_umount2,
-    sys_unlinkat, sys_utimensat, sys_write, sys_writev,
+    sys_fcntl, sys_fdatasync, sys_fgetxattr, sys_flistxattr, sys_flock, sys_fremovexattr,
+    sys_fsetxattr, sys_fstat, sys_fstatat, sys_fstatfs, sys_fsync, sys_ftruncate, sys_getcwd,
+    sys_getdents64, sys_getxattr, sys_ioctl, sys_lgetxattr, sys_linkat, sys_listxattr,
+    sys_llistxattr, sys_lremovexattr, sys_lseek, sys_lsetxattr, sys_memfd_create, sys_mkdirat,
+    sys_mknodat, sys_mount, sys_msync, sys_openat, sys_openat2, sys_pipe2, sys_ppoll, sys_pread,
+    sys_preadv, sys_preadv2, sys_pselect6, sys_pwrite, sys_pwritev, sys_pwritev2, sys_read,
+    sys_readlinkat, sys_readv, sys_removexattr, sys_renameat2, sys_sendfile, sys_setxattr,
+    sys_splice, sys_statfs, sys_statx, sys_symlinkat, sys_sync, sys_sync_file_range, sys_truncate,
+    sys_umask, sys_umount2, sys_unlinkat, sys_utimensat, sys_write, sys_writev,
 };
 use mm::{
     sys_brk, sys_get_mempolicy, sys_madvise, sys_membarrier, sys_mlock, sys_mmap, sys_mprotect,
@@ -51,8 +51,10 @@ use task::{
 };
 use util::{
     sys_adjtimex, sys_bpf, sys_clock_adjtime, sys_clock_getres, sys_clock_gettime,
-    sys_clock_settime, sys_getrusage, sys_prlimit64, sys_setitimer, sys_shutdown, sys_syslog,
-    sys_times, sys_uname,
+    sys_clock_settime, sys_getitimer, sys_getrusage, sys_prlimit64, sys_setitimer, sys_shutdown,
+    sys_sysinfo, sys_syslog, sys_timer_create, sys_timer_delete, sys_timer_getoverrun,
+    sys_timer_gettimer, sys_timer_settimer, sys_timerfd_create, sys_timerfd_gettime,
+    sys_timerfd_settime, sys_times, sys_uname, SysInfo,
 };
 
 use crate::{
@@ -74,7 +76,7 @@ use crate::{
     },
     task::rusage::RUsage,
     time::KernelTimex,
-    timer::{ITimerVal, TimeSpec},
+    timer::{ITimerSpec, ITimerVal, TimeSpec},
 };
 pub use fs::FcntlOp;
 pub use fs::{AT_SYMLINK_NOFOLLOW, NAME_MAX};
@@ -106,6 +108,7 @@ const SYSCALL_DUP: usize = 23;
 const SYSCALL_DUP3: usize = 24;
 const SYSCALL_FCNTL: usize = 25;
 const SYSCALL_IOCTL: usize = 29;
+const SYSCALL_FLOCK: usize = 32;
 const SYSCALL_MKNODAT: usize = 33;
 const SYSCALL_MKDIRAT: usize = 34;
 const SYSCALL_UNLINKAT: usize = 35;
@@ -150,6 +153,9 @@ const SYSCALL_SYNC: usize = 81;
 const SYSCALL_FSYNC: usize = 82;
 const SYSCALL_FDATASYNC: usize = 83;
 const SYSCALL_SYNC_FILE_RANGE: usize = 84;
+const SYSCALL_TIMERFD_CREATE: usize = 85;
+const SYSCALL_TIMERFD_SETTIME: usize = 86;
+const SYSCALL_TIMERFD_GETTIME: usize = 87;
 const SYSCALL_UTIMENSAT: usize = 88;
 const SYSCALL_ACCT: usize = 89;
 const SYSCALL_CAPGET: usize = 90;
@@ -161,7 +167,13 @@ const SYSCALL_FUTEX: usize = 98;
 const SYSCALL_SET_ROBUST_LIST: usize = 99;
 const SYSCALL_GET_ROBUST_LIST: usize = 100;
 const SYSCALL_NANOSLEEP: usize = 101;
+const SYSCALL_GETITIMER: usize = 102;
 const SYSCALL_SETITIMER: usize = 103;
+const SYSCALL_TIMER_CREATE: usize = 107;
+const SYSCALL_TIMER_GETTIME: usize = 108;
+const SYSCALL_TIMER_GETOVERRUN: usize = 109;
+const SYSCALL_TIMER_SETTIME: usize = 110;
+const SYSCALL_TIMER_DELETE: usize = 111;
 const SYSCALL_CLOCK_SETTIME: usize = 112;
 const SYSCALL_CLOCK_GETTIME: usize = 113;
 const SYSCALL_CLOCK_GETRES: usize = 114;
@@ -219,6 +231,7 @@ const SYSCALL_GETEUID: usize = 175;
 const SYSCALL_GETGID: usize = 176;
 const SYSCALL_GETEGID: usize = 177;
 const SYSCALL_GETTID: usize = 178;
+const SYSCALL_SYSINFO: usize = 179;
 const SYCALL_SHMGET: usize = 194;
 const SYSCALL_SHMCTL: usize = 195;
 const SYSCALL_SHMAT: usize = 196;
@@ -329,6 +342,7 @@ pub fn syscall(
         SYSCALL_DUP3 => sys_dup3(a0, a1, a2 as i32),
         SYSCALL_FCNTL => sys_fcntl(a0 as i32, a1 as i32, a2),
         SYSCALL_IOCTL => sys_ioctl(a0, a1, a2),
+        SYSCALL_FLOCK => sys_flock(a0, a1 as i32),
         SYSCALL_MKNODAT => sys_mknodat(a0 as i32, a1 as *const u8, a2, a3 as u64),
         SYSCALL_MKDIRAT => sys_mkdirat(a0 as isize, a1 as *const u8, a2),
         SYSCALL_UNLINKAT => sys_unlinkat(a0 as i32, a1 as *const u8, a2 as i32),
@@ -388,6 +402,14 @@ pub fn syscall(
         SYSCALL_FSYNC => sys_fsync(a0),
         SYSCALL_FDATASYNC => sys_fdatasync(a0),
         SYSCALL_SYNC_FILE_RANGE => sys_sync_file_range(a0, a1 as isize, a2 as isize, a3 as i32),
+        SYSCALL_TIMERFD_CREATE => sys_timerfd_create(a0, a1 as i32),
+        SYSCALL_TIMERFD_SETTIME => sys_timerfd_settime(
+            a0,
+            a1 as i32,
+            a2 as *const ITimerSpec,
+            a3 as *mut ITimerSpec,
+        ),
+        SYSCALL_TIMERFD_GETTIME => sys_timerfd_gettime(a0, a1 as *mut ITimerSpec),
         SYSCALL_UTIMENSAT => {
             sys_utimensat(a0 as i32, a1 as *const u8, a2 as *const TimeSpec, a3 as i32)
         }
@@ -401,7 +423,18 @@ pub fn syscall(
         SYSCALL_FUTEX => sys_futex(a0, a1 as i32, a2 as u32, a3, a4, a5 as u32),
         SYSCALL_GET_ROBUST_LIST => sys_get_robust_list(a0, a1, a2),
         SYSCALL_NANOSLEEP => sys_nanosleep(a0, a1),
+        SYSCALL_GETITIMER => sys_getitimer(a0 as i32, a1 as *mut ITimerVal),
         SYSCALL_SETITIMER => sys_setitimer(a0 as i32, a1 as *const ITimerVal, a2 as *mut ITimerVal),
+        SYSCALL_TIMER_CREATE => sys_timer_create(a0, a1, a2),
+        SYSCALL_TIMER_GETTIME => sys_timer_gettimer(a0, a1 as *mut ITimerSpec),
+        SYSCALL_TIMER_GETOVERRUN => sys_timer_getoverrun(a0),
+        SYSCALL_TIMER_SETTIME => sys_timer_settimer(
+            a0,
+            a1 as i32,
+            a2 as *const ITimerSpec,
+            a3 as *mut ITimerSpec,
+        ),
+        SYSCALL_TIMER_DELETE => sys_timer_delete(a0),
         SYSCALL_CLOCK_SETTIME => sys_clock_settime(a0, a1 as *const TimeSpec),
         SYSCALL_CLOCK_GETTIME => sys_clock_gettime(a0, a1 as *mut TimeSpec),
         SYSCALL_CLOCK_GETRES => sys_clock_getres(a0, a1),
@@ -457,6 +490,7 @@ pub fn syscall(
         SYSCALL_GETGID => sys_getgid(),
         SYSCALL_GETEGID => sys_getegid(),
         SYSCALL_GETTID => sys_gettid(),
+        SYSCALL_SYSINFO => sys_sysinfo(a0 as *mut SysInfo),
         SYCALL_SHMGET => sys_shmget(a0, a1, a2 as i32),
         SYSCALL_SHMCTL => sys_shmctl(a0, a1 as i32, a3 as *mut ShmId),
         SYSCALL_SHMAT => sys_shmat(a0, a1, a2 as i32),

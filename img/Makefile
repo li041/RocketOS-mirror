@@ -45,6 +45,7 @@ all:
 	mkdir -p mnt
 	mount disk.img mnt
 	cp -r ./custom/* mnt
+	sudo cp ./custom/.vimrc mnt
 	umount mnt
 	dd if=/dev/zero of=disk-la.img count=$(COUNT) bs=1M
 	mkfs.ext4 disk-la.img 
@@ -100,6 +101,8 @@ custom:
 	mkdir -p mnt
 	sudo mount $(EXT4_OUT) mnt
 	sudo cp -r ./$(CUSTOM)/* mnt
+	sudo cp ./custom/.vimrc mnt
+	sudo cp ./custom/.viminfo mnt
 	sudo umount mnt
 
 compile_custom:

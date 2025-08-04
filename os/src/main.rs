@@ -7,10 +7,10 @@
 #![feature(trait_upcasting)]
 #![feature(ip_from)]
 #![feature(allocator_api)]
-#![allow(static_mut_refs)]
-#![allow(non_snake_case)]
-#![allow(non_camel_case_types)]
-#![allow(unused)]
+// #![allow(static_mut_refs)]
+// #![allow(non_snake_case)]
+// #![allow(non_camel_case_types)]
+// #![allow(unused)]
 
 extern crate alloc;
 

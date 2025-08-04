@@ -98,6 +98,13 @@ impl<'a> Ext4DirContentRO<'a> {
             )
             .unwrap();
             let dentry_name = String::from_utf8_lossy(&dentry.name[..dentry.name_len as usize]);
+            // 8.3 Debug
+            // log::info!(
+            //     "[Ext4DirContentRO::find] rec_len_total: {}, rec_len: {}, dentry_name: {}",
+            //     rec_len_total,
+            //     rec_len,
+            //     dentry_name
+            // );
             if dentry_name == name {
                 return Some(dentry);
             }

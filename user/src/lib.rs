@@ -122,6 +122,7 @@ pub fn execve(path: &str, argv: &[&str], envp: &[&str]) -> isize {
     let mut argv: Vec<*const u8> = argv.iter().map(|s| s.as_ptr() as *const u8).collect();
     argv.push(null());
     let mut envp: Vec<*const u8> = envp.iter().map(|s| s.as_ptr() as *const u8).collect();
+    // 添加 NULL 终止符
     envp.push(null());
     sys_execve(path, &argv, &envp)
 }

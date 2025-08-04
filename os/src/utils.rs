@@ -38,58 +38,129 @@ pub fn c_str_to_string(ptr: *const u8) -> Result<String, Errno> {
     Ok(ret)
 }
 
+// #[cfg(target_arch = "loongarch64")]
+/// 由caller保证ptr的合法性
+/// Convert C-style string(end with '\0') to rust string
+// pub fn c_str_to_string(ptr: *const u8) -> Result<String, Errno> {
+//     use core::{iter::Map, ptr};
+
+//     use crate::{
+//         mm::{MapPermission, VPNRange, VirtAddr},
+//         syscall::errno::Errno,
+//         task::current_task,
+//     };
+//     if ptr as usize >= USER_MAX_VA || ptr as usize == 0 {
+//         return Err(Errno::EFAULT);
+//     }
+//     let start_vpn = VirtAddr::from(ptr as usize).floor();
+//     let end_vpn = VirtAddr::from(ptr as usize + 1).ceil();
+//     let vpn_range = VPNRange::new(start_vpn, end_vpn);
+//     let mut ptr = current_task().op_memory_set_mut(|memory_set| {
+//         match memory_set.translate_va_to_pa(VirtAddr::from(ptr as usize)) {
+//             Some(pa) => {
+//                 return Ok(pa);
+//             }
+//             None => {}
+//         };
+//         memory_set.check_valid_user_vpn_range(vpn_range, MapPermission::R)?;
+//         log::trace!("[c_str_to_string]");
+//         memory_set
+//             .handle_lazy_allocation_area(
+//                 VirtAddr::from(ptr as usize),
+//                 crate::arch::trap::PageFaultCause::LOAD,
+//             )
+//             .map_err(|_sig| Errno::EFAULT)?;
+//         match memory_set.translate_va_to_pa(VirtAddr::from(ptr as usize)) {
+//             Some(pa) => return Ok(pa),
+//             None => return Err(Errno::EFAULT),
+//         };
+//     })?;
+//     let mut ret = String::new();
+//     log::trace!("[c_str_to_string] convert ptr at {:#x} to string", ptr);
+//     loop {
+//         // let ch: u8 = unsafe { *(ptr as *const u8) };
+//         let ch: u8 = unsafe { ptr::read_volatile(ptr as *const u8) };
+
+//         if ch == 0 {
+//             break;
+//         }
+//         ret.push(ch as char);
+//         ptr += 1;
+//     }
+//     Ok(ret)
+// }
+
 #[cfg(target_arch = "loongarch64")]
 /// 由caller保证ptr的合法性
 /// Convert C-style string(end with '\0') to rust string
 pub fn c_str_to_string(ptr: *const u8) -> Result<String, Errno> {
-    use core::{iter::Map, ptr};
-
     use crate::{
         mm::{MapPermission, VPNRange, VirtAddr},
         syscall::errno::Errno,
         task::current_task,
     };
+    use core::ptr;
+
     if ptr as usize >= USER_MAX_VA || ptr as usize == 0 {
         return Err(Errno::EFAULT);
     }
-    let start_vpn = VirtAddr::from(ptr as usize).floor();
-    let end_vpn = VirtAddr::from(ptr as usize + 1).ceil();
-    let vpn_range = VPNRange::new(start_vpn, end_vpn);
-    let mut ptr = current_task().op_memory_set_mut(|memory_set| {
-        match memory_set.translate_va_to_pa(VirtAddr::from(ptr as usize)) {
-            Some(pa) => {
+
+    let mut current_ptr = ptr as usize;
+    let mut ret = String::new();
+
+    loop {
+        // 获取当前页的信息
+        let current_va = VirtAddr::from(current_ptr);
+        let start_vpn = current_va.floor();
+        let end_vpn = current_va.ceil();
+        let vpn_range = VPNRange::new(start_vpn, end_vpn);
+
+        // 检查并处理页映射
+        let pa = current_task().op_memory_set_mut(|memory_set| {
+            // 先尝试直接翻译
+            if let Some(pa) = memory_set.translate_va_to_pa(current_va) {
                 return Ok(pa);
             }
-            None => {}
-        };
-        memory_set.check_valid_user_vpn_range(vpn_range, MapPermission::R)?;
-        log::trace!("[c_str_to_string]");
-        memory_set
-            .handle_lazy_allocation_area(
-                VirtAddr::from(ptr as usize),
-                crate::arch::trap::PageFaultCause::LOAD,
-            )
-            .map_err(|_sig| Errno::EFAULT)?;
-        match memory_set.translate_va_to_pa(VirtAddr::from(ptr as usize)) {
-            Some(pa) => return Ok(pa),
-            None => return Err(Errno::EFAULT),
-        };
-    })?;
-    let mut ret = String::new();
-    log::trace!("[c_str_to_string] convert ptr at {:#x} to string", ptr);
-    loop {
-        // let ch: u8 = unsafe { *(ptr as *const u8) };
-        let ch: u8 = unsafe { ptr::read_volatile(ptr as *const u8) };
 
-        if ch == 0 {
+            // 检查权限
+            memory_set.check_valid_user_vpn_range(vpn_range, MapPermission::R)?;
+
+            // 处理延迟分配
+            memory_set
+                .handle_lazy_allocation_area(current_va, crate::arch::trap::PageFaultCause::LOAD)
+                .map_err(|_sig| Errno::EFAULT)?;
+
+            // 再次尝试翻译
+            memory_set
+                .translate_va_to_pa(current_va)
+                .ok_or(Errno::EFAULT)
+        })?;
+
+        // 计算当前页剩余可读字节数
+        let page_offset = current_ptr % PAGE_SIZE;
+        let bytes_remaining_in_page = PAGE_SIZE - page_offset;
+
+        // 读取当前页的数据直到遇到\0或页结束
+        let mut found_null = false;
+        for offset in 0..bytes_remaining_in_page {
+            let ch: u8 = unsafe { ptr::read_volatile((pa + offset) as *const u8) };
+            if ch == 0 {
+                found_null = true;
+                break;
+            }
+            ret.push(ch as char);
+        }
+
+        if found_null {
             break;
         }
-        ret.push(ch as char);
-        ptr += 1;
+
+        // 移动到下一页
+        current_ptr += bytes_remaining_in_page;
     }
+
     Ok(ret)
 }
-
 /// 由caller保证ptr的合法性
 /// Convert C-style strings(end with '\0') to rust strings
 /// used by sys_exec: 提取args和envs

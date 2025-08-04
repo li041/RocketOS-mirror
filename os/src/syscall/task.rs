@@ -845,13 +845,14 @@ pub fn sys_nanosleep(time_val_ptr: usize, rem: usize) -> SyscallRet {
 
 pub const TIMER_ABSTIME: i32 = 0x01;
 pub fn sys_clock_nanosleep(clock_id: usize, flags: i32, req: usize, remain: usize) -> SyscallRet {
-    log::info!(
-        "[sys_clock_nanosleep] clock_id: {}, flags: {}, req: {:x}, rem: {:x}",
-        clock_id,
-        flags,
-        req,
-        remain
-    );
+    // 8.3 Debug
+    // log::info!(
+    //     "[sys_clock_nanosleep] clock_id: {}, flags: {}, req: {:x}, rem: {:x}",
+    //     clock_id,
+    //     flags,
+    //     req,
+    //     remain
+    // );
     // let t = copy_from_user(t as *const TimeSpec, 1)?[0];
     let mut t_buf: TimeSpec = TimeSpec::default();
     copy_from_user(req as *const TimeSpec, &mut t_buf as *mut TimeSpec, 1)?;

@@ -7,6 +7,7 @@ pub const TICKS_PER_SEC: usize = 100;
 pub const MSEC_PER_SEC: usize = 1000;
 pub const USEC_PER_SEC: usize = 1_000_000;
 
+#[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TimeSpec {
     // 秒数
@@ -97,6 +98,7 @@ impl TimeSpec {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
+#[repr(C)]
 pub struct TimeVal {
     /// 绝对时间, 表示从UNIX time以来的秒数
     pub sec: usize,
@@ -198,6 +200,23 @@ pub struct ITimerVal {
 impl ITimerVal {
     pub fn is_valid(&self) -> bool {
         self.it_interval.usec < 1_000_000 && self.it_value.usec < 1_000_000
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+#[repr(C)]
+pub struct ITimerSpec {
+    /// 每次定时器触发之后, 重新设置的时间间隔
+    /// 如果设置为0, 则定时器只触发一次
+    pub it_interval: TimeSpec,
+    /// 相对时间, 表示从现在开始, 多少时间后第一次触发定时器
+    /// 当这个值为0, 表示禁用定时器
+    pub it_value: TimeSpec,
+}
+
+impl ITimerSpec {
+    pub fn is_valid(&self) -> bool {
+        self.it_interval.nsec < 1_000_000_000 && self.it_value.nsec < 1_000_000_000
     }
 }
 

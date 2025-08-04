@@ -1,5 +1,6 @@
 #![allow(unused)]
 pub mod command;
+pub mod environment;
 
 pub const LF: u8 = 0x0au8;
 pub const CR: u8 = 0x0du8;

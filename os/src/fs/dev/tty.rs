@@ -1,4 +1,4 @@
-use core::{any::Any, u8};
+use core::{any::Any, str::from_utf8_unchecked, u8};
 use spin::Once;
 
 use alloc::sync::Arc;
@@ -148,6 +148,7 @@ enum TtyIoctlCmd {
     /// is zero, then send a break (a stream of zero bits) for between 0.25
     /// and 0.5 seconds.
     TCSBRK = 0x5409,
+    TCFLSH = 0x540b,
     /// Get the process group ID of the foreground process group on this
     /// terminal.
     TIOCGPGRP = 0x540F,
@@ -280,14 +281,16 @@ impl FileOp for TtyFile {
     fn read<'a>(&'a self, buf: &'a mut [u8]) -> SyscallRet {
         // let mut c: usize;
         let mut inner = self.inner.write();
-        loop {
-            inner.last_char = console_getchar() as u8;
-            // opensbi returns usize::MAX if no char available
-            if inner.last_char == u8::MAX {
-                yield_current_task();
-                continue;
-            } else {
-                break;
+        if inner.last_char == u8::MAX {
+            loop {
+                inner.last_char = console_getchar() as u8;
+                // opensbi returns usize::MAX if no char available
+                if inner.last_char == u8::MAX {
+                    yield_current_task();
+                    continue;
+                } else {
+                    break;
+                }
             }
         }
         let mut ch = inner.last_char as u8;
@@ -295,10 +298,10 @@ impl FileOp for TtyFile {
             log::info!("[TtyFile::read] got CR");
             ch = b'\n';
         }
-        drop(inner);
         unsafe {
             buf.as_mut_ptr().write_volatile(ch);
         }
+        inner.last_char = u8::MAX; // Reset last_char for next read
         Ok(1)
     }
     // #[cfg(target_arch = "riscv64")]
@@ -306,13 +309,15 @@ impl FileOp for TtyFile {
         let mut _inner = self.inner.write();
         // print!("{}", core::str::from_utf8(buf).unwrap());
         // 处理非utf-8字符
-        let str = match core::str::from_utf8(buf) {
-            Ok(s) => s,
-            Err(_) => {
-                log::error!("[TtyFile::write] Invalid UTF-8 sequence");
-                return Err(Errno::EINVAL);
-            }
-        };
+        // let str = match core::str::from_utf8(buf) {
+        //     Ok(s) => s,
+        //     Err(_) => {
+        //         log::error!("[TtyFile::write] Invalid UTF-8 sequence");
+        //         return Err(Errno::EINVAL);
+        //     }
+        // };
+        // 8.3 Debug
+        let str = unsafe { from_utf8_unchecked(buf) };
         print!("{}", str);
         Ok(buf.len())
     }
@@ -373,6 +378,11 @@ impl FileOp for TtyFile {
                 Ok(0)
             }
             TtyIoctlCmd::TCSBRK => Ok(0),
+            TtyIoctlCmd::TCFLSH => {
+                // 清除终端的输入缓冲区
+                self.inner.write().last_char = u8::MAX;
+                Ok(0)
+            }
             _ => {
                 panic!("[TtyFile::ioctl] Unsupported ioctl cmd: {:?}", op);
             }
@@ -394,7 +404,13 @@ impl FileOp for TtyFile {
     }
     fn r_ready(&self) -> bool {
         let mut inner = self.inner.write();
+        // 8.3 Debug, vim好像是提前返回了r_ready, last_char是13, /r
+        // if inner.last_char != u8::MAX && inner.last_char != b'\r' {
         if inner.last_char != u8::MAX {
+            log::warn!(
+                "[TtyFile::r_ready] last_char is not MAX: {}, ready to read",
+                inner.last_char
+            );
             return true;
         } else {
             // 尝试读取下一个字符

@@ -7,7 +7,8 @@ use super::{
     manager::unregister_task,
     remove_task,
     rusage::TimeStat,
-    String, Tid,
+    timer::PosixTimer,
+    String, Tid, MAX_POSIX_TIMER_COUNT,
 };
 use crate::{
     arch::{
@@ -39,9 +40,11 @@ use crate::{
         context::write_task_cx,
         current_task, dump_wait_queue,
         manager::{
-            add_group, cancel_wait_alarm, delete_wait, new_group, register_task, remove_group,
+            add_group, cancel_wait_alarm, delete_wait, new_group, register_task, remove_all_timer,
+            remove_group,
         },
         processor::{current_hart_id, current_tp, preempte},
+        remove_timer,
         scheduler::{add_task_init, select_cpu, DEFAULT_PRIO},
         wakeup, INITPROC, MAX_RT_PRIO, MIN_RT_PRIO, SCHED_IDLE, SCHED_OTHER,
     },
@@ -120,6 +123,7 @@ pub struct Task {
     re_start: AtomicBool,                   // 是否需要重启
     restore_mask: AtomicBool,               // 是否需要恢复信号掩码(用于sigsuspend)
     itimerval: Arc<RwLock<[ITimerVal; 3]>>, // 定时器
+    timers: Arc<Mutex<[PosixTimer; MAX_POSIX_TIMER_COUNT]>>, // POSIX定时器
     // 资源限制
     rlimit: Arc<RwLock<[RLimit; 16]>>,
     // 权限设置
@@ -217,6 +221,7 @@ impl Task {
             re_start: AtomicBool::new(true),
             restore_mask: AtomicBool::new(true),
             itimerval: Arc::new(RwLock::new([ITimerVal::default(); 3])),
+            timers: Arc::new(Mutex::new([PosixTimer::default(); MAX_POSIX_TIMER_COUNT])),
             rlimit: Arc::new(RwLock::new([RLimit::default(); RLIM_NLIMITS])),
             pgid: AtomicUsize::new(0),
             uid: AtomicU32::new(0),
@@ -286,6 +291,7 @@ impl Task {
             re_start: AtomicBool::new(true),
             restore_mask: AtomicBool::new(true),
             itimerval: Arc::new(RwLock::new([ITimerVal::default(); 3])),
+            timers: Arc::new(Mutex::new([PosixTimer::default(); MAX_POSIX_TIMER_COUNT])),
             rlimit: Arc::new(RwLock::new([RLimit::default(); RLIM_NLIMITS])),
             uid: AtomicU32::new(0), // 默认为root(0)用户
             euid: AtomicU32::new(0),
@@ -359,6 +365,7 @@ impl Task {
             re_start: AtomicBool::new(true),
             restore_mask: AtomicBool::new(true),
             itimerval: Arc::new(RwLock::new([ITimerVal::default(); 3])),
+            timers: Arc::new(Mutex::new([PosixTimer::default(); MAX_POSIX_TIMER_COUNT])),
             rlimit: Arc::new(RwLock::new([RLimit::default(); RLIM_NLIMITS])),
             pgid: AtomicUsize::new(0),
             uid: AtomicU32::new(0),
@@ -401,6 +408,7 @@ impl Task {
         let children;
         let thread_group;
         let itimerval;
+        let timers;
         let memory_set;
         let fd_table;
         let root;
@@ -472,6 +480,7 @@ impl Task {
             children = self.children.clone();
             thread_group = self.thread_group.clone();
             itimerval = self.itimerval.clone();
+            timers = self.timers.clone();
             rlimit = self.rlimit.clone();
         }
         // 创建进程
@@ -482,6 +491,7 @@ impl Task {
             children = Arc::new(Mutex::new(BTreeMap::new()));
             thread_group = Arc::new(Mutex::new(ThreadGroup::new()));
             itimerval = Arc::new(RwLock::new([ITimerVal::default(); 3]));
+            timers = Arc::new(Mutex::new([PosixTimer::default(); MAX_POSIX_TIMER_COUNT]));
             rlimit = Arc::new(RwLock::new([RLimit::default(); RLIM_NLIMITS]));
         }
 
@@ -573,6 +583,7 @@ impl Task {
             re_start,
             restore_mask,
             itimerval,
+            timers,
             rlimit,
             uid,
             euid,
@@ -1342,6 +1353,12 @@ impl Task {
     pub fn op_itimerval_mut<T>(&self, f: impl FnOnce(&mut [ITimerVal; 3]) -> T) -> T {
         f(&mut self.itimerval.write())
     }
+    pub fn op_timers_mut<T>(
+        &self,
+        f: impl FnOnce(&mut [PosixTimer; MAX_POSIX_TIMER_COUNT]) -> T,
+    ) -> T {
+        f(&mut self.timers.lock())
+    }
     pub fn op_rlimit<T>(&self, f: impl FnOnce(&[RLimit; RLIM_NLIMITS]) -> T) -> T {
         f(&self.rlimit.read())
     }
@@ -1790,6 +1807,8 @@ pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
     // task.op_sig_pending_mut(|pending| {
     //     pending.clear();
     // });
+    // 清空计时器
+    remove_all_timer(task.tid());
 
     // 向父进程发送SIGCHID
     if task.thread_group.lock().len() == 0 {

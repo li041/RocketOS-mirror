@@ -163,7 +163,7 @@ impl File {
     }
     /// Read all data inside a inode into vector
     pub fn read_all(&self) -> Vec<u8> {
-        info!("[File::read_all]");
+        log::debug!("[File::read_all]");
         let inode = self.inner_handler(|inner| inner.inode.clone());
         let size = inode.get_size();
         let mut buffer = vec![0u8; size];

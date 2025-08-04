@@ -4,10 +4,8 @@ use core::fmt::{Debug, Formatter};
 
 use alloc::fmt;
 
-use crate::arch::config::{KERNEL_BASE, PAGE_SIZE, PAGE_SIZE_BITS};
+use crate::arch::config::{KERNEL_BASE, PAGE_SIZE_BITS};
 use crate::arch::mm::PageTableEntry;
-
-use core::ops::{Add, Sub};
 
 #[repr(C)]
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]

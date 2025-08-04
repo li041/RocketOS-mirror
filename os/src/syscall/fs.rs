@@ -96,11 +96,13 @@ pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> SyscallRet {
         let read_len = file.read(&mut ker_buf)?;
         if fd >= 3 {
             log::info!("sys_read: fd: {}, len: {}", fd, len);
+            // let debug_len = if read_len > 16 { 16 } else { read_len };
             // log::info!(
-            //     "sys_read: fd: {}, len: {}, buf: {:?}",
+            //     "sys_read: fd: {}, len: {}, buf: {:?}..., caller: {}",
             //     fd,
             //     len,
-            //     String::from_utf8_lossy(&ker_buf[..read_len])
+            //     String::from_utf8_lossy(&ker_buf[..debug_len]),
+            //     task.tid(),
             // );
         }
         let ker_buf_ptr = ker_buf.as_ptr();
@@ -128,7 +130,12 @@ pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> SyscallRet {
         let mut ker_buf = vec![0u8; len];
         copy_from_user(buf, ker_buf.as_mut_ptr(), len)?;
         if fd >= 3 {
-            // log::info!("sys_write: fd: {}, len: {}, buf: {:?}", fd, len, ker_buf);
+            // log::info!(
+            //     "sys_write: fd: {}, len: {}, buf: {:?}",
+            //     fd,
+            //     len,
+            //     String::from_utf8_lossy(&ker_buf)
+            // );
             log::info!("sys_write: fd: {}, len: {}", fd, len);
         }
         let ret = file.write(&ker_buf)?;
@@ -963,7 +970,7 @@ pub fn sys_fstat(dirfd: i32, statbuf: *mut Stat) -> SyscallRet {
     if let Some(file) = current_task().fd_table().get_file(dirfd as usize) {
         let inode = file.get_inode();
         let stat = Stat::from(inode.getattr());
-        log::error!("[sys_fstat] stat is {:?}", stat);
+        log::debug!("[sys_fstat] stat is {:?}", stat);
         if let Err(e) = copy_to_user(statbuf, &stat as *const Stat, 1) {
             log::error!("fstat: copy_to_user failed: {:?}", e);
             return Err(e);
@@ -1426,7 +1433,7 @@ pub fn sys_pselect6(
     sigmask: usize,
 ) -> SyscallRet {
     // log::error!("[sys_pselecct6] nfds: {}, readfds: {:?}, writefds: {:?}, exceptfds: {:?}, timeout: {:?}, mask: {}",nfds,readfds,writefds,exceptfds,timeout,mask);
-    log::error!("[sys_pselect6]:begin pselect6,nfds {:?},readfds {:?},writefds {:?},exceptfds {:?},timeout {:?},sigmask {:?}",nfds,readfds,writefds,exceptfds,timeout,sigmask);
+    log::info!("[sys_pselect6] begin pselect6,nfds {:?},readfds {:#x},writefds {:#x},exceptfds {:#x},timeout {:#x},sigmask {:#x}",nfds,readfds,writefds,exceptfds,timeout as usize,sigmask);
     let starttime = get_time_us();
     let timeout = if timeout.is_null() {
         //timeout为空则是阻塞
@@ -1434,8 +1441,8 @@ pub fn sys_pselect6(
     } else {
         let mut tmo: TimeSpec = TimeSpec::default();
         copy_from_user(timeout, &mut tmo as *mut TimeSpec, 1)?;
-        log::error!(
-            "[sys_pselect6] tmo sec is {:?},tmo nsec is {:?}",
+        log::info!(
+            "[sys_pselect6] timeout sec: {:?}, nsec: {:?}",
             tmo.sec,
             tmo.nsec
         );
@@ -1470,15 +1477,14 @@ pub fn sys_pselect6(
 
     loop {
         log::trace!("[sys_pselect6]:loop");
-        //这里必须要yield否则会死机
-        yield_current_task();
         set = 0;
         if readfditer.fdset.valid() {
             for fd in 0..readfditer.fds.len() {
                 log::trace!("[sys_pselect6] read fd: {}", readfditer.fds[fd]);
                 if readfditer.files[fd].r_ready() {
                     //e内核会根据嗅探的结果设置fdset的对应位为1
-                    log::trace!("[sys_pselect6] set read fd is {:?}", readfditer.fds[fd]);
+                    // 8.3 Debug
+                    log::info!("[sys_pselect6] set read fd is {:?}", readfditer.fds[fd]);
                     readfditer.fdset.set(readfditer.fds[fd]);
                     set += 1;
                 }
@@ -1494,11 +1500,19 @@ pub fn sys_pselect6(
             }
         }
         if set > 0 {
+            log::info!(
+                "[sys_pselect6] set is {}, readfds: {:#x}, writefds: {:#x}, exceptfds: {:#x}",
+                set,
+                readfds,
+                writefds,
+                exceptfds
+            );
             break;
         }
         if timeout == 0 {
             // timeout为0表示立即返回, 即使没有fd准备好
             log::trace!("[sys_pselect] timeout is 0");
+            log::error!("[sys_pselect6] timeout is 0, no fd ready, returning");
             break;
         } else if timeout > 0 {
             if get_time_us() - starttime > timeout as usize {
@@ -3619,4 +3633,16 @@ pub fn sys_splice(
     }
 }
 
+pub fn sys_flock(fd: usize, operation: i32) -> SyscallRet {
+    log::info!("[sys_flock] fd: {}, operation: {}", fd, operation);
+    let task = current_task();
+    if let Some(file) = task.fd_table().get_file(fd) {
+        // do nothing
+        // Todo:
+        return Ok(0);
+    } else {
+        log::error!("[sys_flock] invalid file descriptor");
+        return Err(Errno::EBADF);
+    };
+}
 /* fake end */

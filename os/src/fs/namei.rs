@@ -723,7 +723,7 @@ pub fn lookup_dentry(nd: &mut Nameidata) -> Arc<Dentry> {
     //     println!("after add /pid: {}", absolute_path);
     // }
     let absolute_path = format!("{}/{}", absolute_path, segment);
-    log::info!("[lookup_dentry] Looking up path: {}", absolute_path);
+    log::debug!("[lookup_dentry] Looking up path: {}", absolute_path);
     // 尝试从 dcache 查找
     if let Some(dentry) = lookup_dcache_with_absolute_path(&absolute_path) {
         return dentry;
@@ -905,7 +905,7 @@ pub fn link_path_walk(nd: &mut Nameidata) -> Result<(), Errno> {
     let mut symlink_count = 0;
     let task = current_task();
     while nd.depth < len {
-        log::info!(
+        log::debug!(
             "[link_path_walk] depth: {}, path_segment: {:?}",
             nd.depth,
             nd.path_segments[nd.depth]

@@ -30,15 +30,15 @@ impl FdSet {
         if len > MAX_FDS {
             return Err(Errno::EINVAL);
         }
-        log::error!("[Fd_set::from_user] len is {:?}",len);
+        log::info!("[Fd_set::from_user] len is {:?}", len);
         let mut kernel_len = core::cmp::min(len, 100);
         if current_task().exe_path().contains("netperf") {
             kernel_len = core::cmp::min(len, 15);
         }
         // 创建内核缓冲区并拷贝数据
         let mut kernel_buf = vec![0; kernel_len];
-        if kernel_len>0 {
-                copy_from_user(
+        if kernel_len > 0 {
+            copy_from_user(
                 addr as *const i32,
                 kernel_buf.as_mut_ptr() as *mut i32,
                 kernel_len,
@@ -81,7 +81,7 @@ impl FdSet {
         self.addr as usize != 0
     }
     pub fn clear(&self) {
-        if self.len>0 {
+        if self.len > 0 {
             for i in 0..=(self.len - 1) / 64 {
                 unsafe {
                     *(self.addr.add(i)) = 0;
@@ -127,7 +127,7 @@ pub fn init_fdset(addr: usize, len: usize) -> Result<FdSetIter, Errno> {
     for fd in 0..len {
         if fdset.check(fd) {
             // let fd=addr[i] as usize;
-            log::error!("[init_fdset]:fdset check fd {} ", fd);
+            log::info!("[init_fdset]:fdset check fd {} ", fd);
             // let file=task.fd_table().get_file(fd).unwrap();
             if let Some(file) = task.fd_table().get_file(fd) {
                 files.push(file.clone());

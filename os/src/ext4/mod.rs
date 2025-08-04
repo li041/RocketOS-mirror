@@ -140,7 +140,7 @@ impl InodeOp for Ext4Inode {
         } else {
             // 从目录中查找
             if let Some(ext4_dentry) = self.lookup(name) {
-                log::info!("[InodeOp::lookup] ext4_dentry: {:?}", ext4_dentry);
+                log::debug!("[InodeOp::lookup] ext4_dentry: {:?}", ext4_dentry);
                 let absolute_path = format!("{}/{}", parent_entry.absolute_path, name);
                 let inode_num = ext4_dentry.inode_num as usize;
                 // 1.从磁盘加载inode

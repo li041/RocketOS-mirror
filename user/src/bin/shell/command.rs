@@ -7,6 +7,8 @@ use alloc::{
 };
 use user_lib::{chdir, execve, exit};
 
+use super::environment::Environment;
+
 pub struct Pipeline {
     commands: Vec<Command>,
 }
@@ -189,11 +191,24 @@ impl Command {
         self.tokens.iter().map(|s| s.to_str().unwrap()).collect()
     }
 
+    // 将环境变量转换为 C 格式的字符串数组
+    fn get_env(&self, env: &Environment) -> Vec<CString> {
+        let mut env_strings = Vec::new();
+
+        // 遍历所有环境变量，转换为 "KEY=VALUE" 格式
+        for (key, value) in env.list_all() {
+            let env_str = key + "=" + &value;
+            if let Ok(c_str) = CString::new(env_str) {
+                env_strings.push(c_str);
+            }
+        }
+        env_strings
+    }
     // pub fn exec(&self) {
     //     execve(self.get_name(), &self.get_argv(), &[]);
     //     exit(-1);
     // }
-    pub fn exec(&self) {
+    pub fn exec(&self, env: &Environment) {
         use user_lib::OpenFlags;
         use user_lib::{close, dup3, open};
 
@@ -219,9 +234,11 @@ impl Command {
                 close(fd as usize);
             }
         }
+        let env_array = self.get_env(env);
+        let envp: Vec<&str> = env_array.iter().map(|s| s.to_str().unwrap()).collect();
 
         // 执行命令
-        execve(self.get_name(), &self.get_argv(), &[]);
+        execve(self.get_name(), &self.get_argv(), &envp);
         exit(-1);
     }
 }

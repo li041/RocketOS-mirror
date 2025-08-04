@@ -2092,12 +2092,13 @@ impl MemorySet {
         let page_table = &mut self.page_table;
         if let Some(pte) = page_table.find_pte(vpn) {
             if pte.is_cow() {
-                log::error!(
-                    "[handle_recoverable_page_fault] COW: {:#x}, pte: {:#x?}, tid: {:#x}",
-                    va.0,
-                    pte,
-                    current_task().tid()
-                );
+                // 8.3 Debug
+                // log::error!(
+                //     "[handle_recoverable_page_fault] COW: {:#x}, pte: {:#x?}, tid: {:#x}",
+                //     va.0,
+                //     pte,
+                //     current_task().tid()
+                // );
                 // 1. fork COW area
                 // 如果refcnt == 1, 则直接修改pte, 否则, 分配新的frame, 修改pte, 更新MemorySet
                 // debug!("handle cow page fault(cow), vpn {:#x}", vpn.0);
