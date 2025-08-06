@@ -15,7 +15,6 @@ use fdt::{self, node::FdtNode};
 use virtio_drivers::transport::mmio::{MmioTransport, VirtIOHeader};
 use virtio_drivers::transport::DeviceType;
 use virtio_drivers::transport::Transport; // Bring the trait into scope
-
 pub mod block;
 pub mod net;
 pub(crate) fn get_dev_tree_size(addr: usize) -> usize {
@@ -32,6 +31,7 @@ pub(crate) fn get_dev_tree_size(addr: usize) -> usize {
 }
 #[cfg(target_arch = "riscv64")]
 pub fn init_device(addr: usize) -> usize {
+
     let dev_tree = unsafe { fdt::Fdt::from_ptr((addr + KERNEL_BASE) as *const u8).unwrap() };
 
     // println!("{:?}",size_cells);
@@ -104,13 +104,11 @@ pub fn init_device(addr: usize) -> usize {
                     #[cfg(feature = "virt")]
                     crate::net::init(Some(dev));
                 }
+                #[cfg(feature="vf2")]
                 if node_t.name == "ethernet@16040000" {
-                    use crate::drivers::net::starfive::StarFiveDeviceWrapper;
-                    let dev=StarFiveDeviceWrapper::<32,HalImpl>::new();
-                    log::error!("[init_device]:the ethernet has built");
-                    #[cfg(feature="vf2")]
+                    use crate::drivers::net::starfive::platform::VisionFive2_NetDevice;
+                    let dev=VisionFive2_NetDevice::<32>::new();
                     crate::net::init_vf2_net(Some(dev));
-
                 }
             }
         }

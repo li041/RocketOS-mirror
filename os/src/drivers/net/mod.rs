@@ -18,8 +18,7 @@ const NET_BUF_LEN: usize = 1536;
 const BUF_LEN: usize = 1 << 12;
 const QUEUE_SIZE: usize = 16;
 pub mod netdevice;
-pub mod config;
-pub mod ring;
+#[cfg(all(target_arch="riscv64",feature="vf2"))]
 pub mod starfive;
 #[cfg(feature="la2000")]
 pub mod la2000;
@@ -448,11 +447,12 @@ impl NetBuf {
     pub fn from_ptr_into_netbuf(ptr: NetBufPtr) -> Box<Self> {
         unsafe { Box::from_raw(ptr.raw_ptr::<Self>()) }
     }
-    pub fn from_rawptr_into_netbuf(ptr:usize)->Box<Self> {
+    pub fn from_rawptr_into_netbuf(ptr: usize) -> Box<Self> {
         unsafe { Box::from_raw(ptr as *mut Self) }
     }
     pub fn into_buf_ptr(mut self: Box<Self>) -> NetBufPtr {
         let buf_ptr = self.get_mut_packet().as_mut_ptr();
+        log::info!("[into_buf_ptr] buf_ptr is {:#x?}",buf_ptr);
         let len = self.packet_len;
         NetBufPtr {
             netbuf_ptr: NonNull::new(Box::into_raw(self) as *mut u8).unwrap(),

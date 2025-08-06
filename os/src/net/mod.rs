@@ -4,16 +4,18 @@ use alloc::borrow::ToOwned;
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-30 16:26:05
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-08-08 22:04:01
+ * @LastEditTime: 2025-08-12 12:00:58
  * @FilePath: /RocketOS_netperfright/os/src/net/mod.rs
  * @Description: net mod for interface wrapper,socketset
  *
  * Copyright (c) 2025 by peterluck2021@163.com, All Rights Reserved.
  */
-use alloc::{boxed::Box, sync::Arc, vec};
-#[cfg(feature="la2000")]
-use core::ops::Deref;
-use core::{cell::{OnceCell, RefCell}, ops::DerefMut, panic};
+use alloc::{boxed::Box, vec};
+use core::{
+    cell::{OnceCell, RefCell},
+    ops::DerefMut,
+    panic,
+};
 use lazyinit::LazyInit;
 use listentable::ListenTable;
 use loopback::LoopbackDev;
@@ -27,11 +29,9 @@ use smoltcp::{
     },
 };
 // use socket::Socket;
-use crate::{arch::virtio_blk::HalImpl};
-#[cfg(feature="la2000")]
-use crate::drivers::net::la2000::platform::La2k1000_NetDevice;
-#[cfg(target_arch = "riscv64")]
-use crate::drivers::net::starfive::StarFiveDeviceWrapper;
+use crate::arch::virtio_blk::HalImpl;
+#[cfg(all(target_arch = "riscv64",feature="vf2"))]
+use crate::drivers::net::starfive::platform::VisionFive2_NetDevice;
 use crate::{
     arch::timer::get_time,
     drivers::net::{
@@ -50,11 +50,10 @@ pub mod alg;
 mod listentable;
 mod loopback;
 pub mod socket;
+pub mod socketpair;
 pub mod tcp;
 pub mod udp;
 pub mod unix;
-pub mod socketpair;
-const IPV4_DEFAULT: IpCidr = IpCidr::Ipv4(Ipv4Cidr::new(Ipv4Address::new(0, 0, 0, 0), 0));
 ///用于在使用函数返回错误时返回，如果是true可以yield_now,反之必须退出，可能等待没有意义
 /// 任何使用block_on返回是如果是err必须返回是否需要继续阻塞
 // #[derive(Debug)]
@@ -72,7 +71,7 @@ static ETH0_LA2000: Mutex<OnceCell<Mutex<Interface>>> =Mutex::new(OnceCell::new(
 static NET_DEV_LA2000: Mutex<OnceCell<NetDeviceWrapper>> =Mutex::new(OnceCell::new());
 static LOOPBACK_DEV: LazyInit<Mutex<LoopbackDev>> = LazyInit::new();
 static LOOPBACK: LazyInit<Mutex<Interface>> = LazyInit::new();
-static LISTEN_TABLE: Mutex<OnceCell<ListenTable>> =  Mutex::new(OnceCell::new());
+static LISTEN_TABLE: Mutex<OnceCell<ListenTable>> = Mutex::new(OnceCell::new());
 const TCP_RX_BUF_LEN_IPERF: usize = 128 * 1024;
 const TCP_TX_BUF_LEN_IPERF: usize = 128 * 1024;
 const UDP_RX_BUF_LEN: usize = 64 * 1024;
@@ -149,8 +148,8 @@ pub fn init(net_device: Option<VirtioNetDevice<32, HalImpl, MmioTransport>>) {
     //     // LOOPBACK_DEV.init_once(Mutex::new(local_device));
     // }
 }
-#[cfg(all(target_arch = "riscv64", feature = "vf2"))]
-pub fn init_vf2_net(net_device: Option<StarFiveDeviceWrapper<32, HalImpl>>) {
+#[cfg(all(target_arch = "riscv64",feature="vf2"))]
+pub fn init_vf2_net(net_device: Option<VisionFive2_NetDevice<32>>) {
     //初始化网卡
     if let Some(dev) = net_device {
         log::error!("[init_net]:begin init virtionetdevice");
@@ -195,20 +194,8 @@ pub fn init_vf2_net(net_device: Option<StarFiveDeviceWrapper<32, HalImpl>>) {
         LOOPBACK.init_once(Mutex::new(iface));
         LOOPBACK_DEV.init_once(Mutex::new(device));
     }
-    // else {
-    //     panic!("currently not support loopback");
-    //     //loopbackdev
-    //     // let mut local_device=LoopBackDevWrapper::new(smoltcp::phy::Medium::Ip);
-    //     // let config=Config::new(smoltcp::wire::HardwareAddress::Ip);
-    //     // let mut iface=Interface::new(config, &mut local_device, SmolInstant::from_micros_const(get_time() as i64));
-    //     // iface.update_ip_addrs(|ipaddrs|{
-    //     //     ipaddrs.push(IpCidr::new(IpAddress::v4(127, 0, 0, 1), 8)).unwrap();
-    //     // });
-    //     // LOOPBACK.init_once(Mutex::new(iface));
-    //     // LOOPBACK_DEV.init_once(Mutex::new(local_device));
-    // }
 }
-#[cfg(target_arch="loongarch64")]
+#[cfg(target_arch = "loongarch64")]
 pub fn init_la<T: Transport + 'static>(net_device: Option<VirtioNetDevice<32, HalImpl, T>>) {
     //初始化网卡
     //需要添加这个trace 否则会panic在uninit lazyinit
@@ -217,10 +204,10 @@ pub fn init_la<T: Transport + 'static>(net_device: Option<VirtioNetDevice<32, Ha
     log::trace!("[init_la]");
     log::trace!("[init_la]");
     let mut socket_set = SOCKET_SET.lock();
-        socket_set.get_or_init(|| {
-            // 初始化代码
-            SocketSetWrapper::new()
-        });
+    socket_set.get_or_init(|| {
+        // 初始化代码
+        SocketSetWrapper::new()
+    });
     log::trace!("[init_la]");
     if let Some(dev) = net_device {
         log::error!("[init_net]:begin init virtionetdevice");
@@ -470,13 +457,13 @@ impl<'a> SocketSetWrapper<'a> {
         smoltcp::socket::dns::Socket::new(&[server], vec![])
     }
     //这里允许sockset承接任何socket
-    pub fn add<T:AnySocket<'a>>(&self,socket:T)->SocketHandle {
-        let handle=self.0.lock().add(socket);
-        log::error!("[socketsetwrapper_add]:socket handle is {:?}",handle);
+    pub fn add<T: AnySocket<'a>>(&self, socket: T) -> SocketHandle {
+        let handle = self.0.lock().add(socket);
+        log::error!("[socketsetwrapper_add]:socket handle is {:?}", handle);
         handle
     }
     pub fn remove(&self, handle: SocketHandle) {
-        let socket=self.0.lock().remove(handle);
+        let socket = self.0.lock().remove(handle);
         drop(socket);
     }
     //todo 判断到底是哪个网卡poll
@@ -507,7 +494,6 @@ impl<'a> SocketSetWrapper<'a> {
         }
         // log::error!("[poll_interfaces]:LoopbackDev may readiness {}",b);
     }
-
     pub fn bind_check(&self, addr: IpAddress, port: u16) -> Result<usize, Errno> {
         let mut sockets = self.0.lock();
         for item in sockets.iter_mut() {
@@ -548,11 +534,9 @@ impl Device for NetDeviceWrapper {
         _timestamp: smoltcp::time::Instant,
     ) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
         let mut dev = self.inner.borrow_mut();
-        // #[cfg(feature="la2000")]
-        // if !dev.isok_recv() {
-        //     log::info!("[nothing recv]");
-        //     return None;
-        // }
+        if !dev.isok_recv() {
+            return None;
+        }
         if dev.recycle_send_buffer().is_err() {
             return None;
         }
@@ -631,7 +615,8 @@ impl<'a> TxToken for NetSendToken<'a> {
         let send_buffer = dev.alloc_send_buffer(len);
 
         let data = send_buffer.packet_mut();
-  
+        // log::error!("[NetSendToken] ptr is {:#x?},data is {:#x?}",send_buffer.packet_ptr,data);
+        // log::error!("3");
         let res = f(data);
         log::error!("[NetSendToken] send data is {:?}",data);
         let a=dev.send(send_buffer);
@@ -667,7 +652,11 @@ fn snoop_tcp_packet(buf: &[u8], sockets: &mut SocketSet<'_>) -> Result<(), smolt
         );
         if is_first {
             // create a socket for the first incoming TCP packet, as the later accept() returns.
-            LISTEN_TABLE.lock().get().unwrap().push_incoming_packet(dst_addr, src_addr, sockets);
+            LISTEN_TABLE
+                .lock()
+                .get()
+                .unwrap()
+                .push_incoming_packet(dst_addr, src_addr, sockets);
         }
     }
     Ok(())

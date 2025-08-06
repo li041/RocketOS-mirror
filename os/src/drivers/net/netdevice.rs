@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-26 10:01:09
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-08-06 17:55:59
+ * @LastEditTime: 2025-08-10 20:34:26
  * @FilePath: /RocketOS_netperfright/os/src/drivers/net/netdevice.rs
  * @Description: 
  * 
@@ -43,7 +43,6 @@ pub trait NetDevice:Sync + Send {
 
 
 
-#[repr(C)]
 #[derive(Debug,Clone, Copy)]
 pub struct NetBufPtr{
     ///NetBuf指针
