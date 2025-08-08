@@ -12,17 +12,18 @@
 
 use errno::{Errno, SyscallRet};
 use fs::{
-    sys_chdir, sys_chroot, sys_close, sys_copy_file_range, sys_dup, sys_dup3, sys_faccessat,
-    sys_fadvise64, sys_fallocate, sys_fchdir, sys_fchmod, sys_fchmodat, sys_fchown, sys_fchownat,
-    sys_fcntl, sys_fdatasync, sys_fgetxattr, sys_flistxattr, sys_flock, sys_fremovexattr,
-    sys_fsetxattr, sys_fstat, sys_fstatat, sys_fstatfs, sys_fsync, sys_ftruncate, sys_getcwd,
-    sys_getdents64, sys_getxattr, sys_ioctl, sys_lgetxattr, sys_linkat, sys_listxattr,
+    sys_chdir, sys_chroot, sys_close, sys_close_range, sys_copy_file_range, sys_dup, sys_dup3,
+    sys_faccessat, sys_fadvise64, sys_fallocate, sys_fchdir, sys_fchmod, sys_fchmodat, sys_fchown,
+    sys_fchownat, sys_fcntl, sys_fdatasync, sys_fgetxattr, sys_flistxattr, sys_flock,
+    sys_fremovexattr, sys_fsetxattr, sys_fstat, sys_fstatat, sys_fstatfs, sys_fsync, sys_ftruncate,
+    sys_getcwd, sys_getdents64, sys_getxattr, sys_ioctl, sys_lgetxattr, sys_linkat, sys_listxattr,
     sys_llistxattr, sys_lremovexattr, sys_lseek, sys_lsetxattr, sys_memfd_create, sys_mkdirat,
     sys_mknodat, sys_mount, sys_msync, sys_openat, sys_openat2, sys_pipe2, sys_ppoll, sys_pread,
     sys_preadv, sys_preadv2, sys_pselect6, sys_pwrite, sys_pwritev, sys_pwritev2, sys_read,
     sys_readlinkat, sys_readv, sys_removexattr, sys_renameat2, sys_sendfile, sys_setxattr,
-    sys_splice, sys_statfs, sys_statx, sys_symlinkat, sys_sync, sys_sync_file_range, sys_truncate,
-    sys_umask, sys_umount2, sys_unlinkat, sys_utimensat, sys_write, sys_writev,
+    sys_splice, sys_statfs, sys_statx, sys_symlinkat, sys_sync, sys_sync_file_range, sys_tee,
+    sys_truncate, sys_umask, sys_umount2, sys_unlinkat, sys_utimensat, sys_vmsplice, sys_write,
+    sys_writev,
 };
 use mm::{
     sys_brk, sys_get_mempolicy, sys_madvise, sys_membarrier, sys_mlock, sys_mmap, sys_mprotect,
@@ -51,10 +52,10 @@ use task::{
 };
 use util::{
     sys_adjtimex, sys_bpf, sys_clock_adjtime, sys_clock_getres, sys_clock_gettime,
-    sys_clock_settime, sys_getitimer, sys_getrusage, sys_prlimit64, sys_setitimer, sys_shutdown,
-    sys_sysinfo, sys_syslog, sys_timer_create, sys_timer_delete, sys_timer_getoverrun,
-    sys_timer_gettimer, sys_timer_settimer, sys_timerfd_create, sys_timerfd_gettime,
-    sys_timerfd_settime, sys_times, sys_uname, SysInfo,
+    sys_clock_settime, sys_getitimer, sys_getrlimit, sys_getrusage, sys_prlimit64, sys_setitimer,
+    sys_setrlimit, sys_shutdown, sys_sysinfo, sys_syslog, sys_timer_create, sys_timer_delete,
+    sys_timer_getoverrun, sys_timer_gettimer, sys_timer_settimer, sys_timerfd_create,
+    sys_timerfd_gettime, sys_timerfd_settime, sys_times, sys_uname, SysInfo,
 };
 
 use crate::{
@@ -91,6 +92,7 @@ mod task;
 mod util;
 // mod time;
 
+// io_*一族
 const SYSCALL_SETXATTR: usize = 5;
 const SYSCALL_LSETXATTR: usize = 6;
 const SYSCALL_FSETXATTR: usize = 7;
@@ -104,10 +106,13 @@ const SYSCALL_REMOVEXATTR: usize = 14;
 const SYSCALL_LREMOVEXATTR: usize = 15;
 const SYSCALL_FREMOVEXATTR: usize = 16;
 const SYSCALL_GETCWD: usize = 17;
+// epoll一族
 const SYSCALL_DUP: usize = 23;
 const SYSCALL_DUP3: usize = 24;
 const SYSCALL_FCNTL: usize = 25;
+// inotify一族
 const SYSCALL_IOCTL: usize = 29;
+// ioprio一族
 const SYSCALL_FLOCK: usize = 32;
 const SYSCALL_MKNODAT: usize = 33;
 const SYSCALL_MKDIRAT: usize = 34;
@@ -116,6 +121,10 @@ const SYSCALL_SYMLINKAT: usize = 36;
 const SYSCALL_LINKAT: usize = 37;
 const SYSCALL_UMOUNT2: usize = 39;
 const SYSCALL_MOUNT: usize = 40;
+#[allow(unused)]
+const SYSCALL_PIVOT_ROOT: usize = 41;
+#[allow(unused)]
+const SYSCALL_NI_SYSCALL: usize = 42;
 const SYSCALL_STATFS: usize = 43;
 const SYSCALL_FSTATFS: usize = 44;
 const SYSCALL_TRUNCATE: usize = 45;
@@ -131,7 +140,11 @@ const SYSCALL_FCHOWNAT: usize = 54;
 const SYSCALL_FCHOWN: usize = 55;
 const SYSCALL_OPENAT: usize = 56;
 const SYSCALL_CLOSE: usize = 57;
+#[allow(unused)]
+const SYSCALL_VHANGUP: usize = 58;
 const SYSCALL_PIPE2: usize = 59;
+#[allow(unused)]
+const SYSCALL_QUOTACTL: usize = 60;
 const SYSCALL_GETDENTS64: usize = 61;
 const SYSCALL_LSEEK: usize = 62;
 const SYSCALL_READ: usize = 63;
@@ -145,7 +158,11 @@ const SYSCALL_PWRITEV: usize = 70;
 const SYSCALL_SENDFILE: usize = 71;
 const SYSCALL_PSELECT6: usize = 72;
 const SYSCALL_PPOLL: usize = 73;
+#[allow(unused)]
+const SYSCALL_SIGNALFD: usize = 74;
+const SYSCALL_VMSPLICE: usize = 75;
 const SYSCALL_SPLICE: usize = 76;
+const SYSCALL_TEE: usize = 77;
 const SYSCALL_READLINKAT: usize = 78;
 const SYSCALL_FSTATAT: usize = 79;
 const SYSCALL_FSTAT: usize = 80;
@@ -160,15 +177,21 @@ const SYSCALL_UTIMENSAT: usize = 88;
 const SYSCALL_ACCT: usize = 89;
 const SYSCALL_CAPGET: usize = 90;
 const SYSCALL_CAPSET: usize = 91;
+const SYSCALL_PERSONALITY: usize = 92;
 const SYSCALL_EXIT: usize = 93;
 const SYSCALL_EXIT_GROUP: usize = 94;
+const SYSCALL_WAITID: usize = 95;
 const SYSCALL_SET_TID_ADDRESS: usize = 96;
+const SYSCALL_UNSHARE: usize = 97;
 const SYSCALL_FUTEX: usize = 98;
 const SYSCALL_SET_ROBUST_LIST: usize = 99;
 const SYSCALL_GET_ROBUST_LIST: usize = 100;
 const SYSCALL_NANOSLEEP: usize = 101;
 const SYSCALL_GETITIMER: usize = 102;
 const SYSCALL_SETITIMER: usize = 103;
+const SYSCALL_KEXEC_LOAD: usize = 104;
+const SYSCALL_INIT_MODULE: usize = 105;
+const SYSCALL_DELETE_MODULE: usize = 106;
 const SYSCALL_TIMER_CREATE: usize = 107;
 const SYSCALL_TIMER_GETTIME: usize = 108;
 const SYSCALL_TIMER_GETOVERRUN: usize = 109;
@@ -179,6 +202,7 @@ const SYSCALL_CLOCK_GETTIME: usize = 113;
 const SYSCALL_CLOCK_GETRES: usize = 114;
 const SYSCALL_CLOCK_NANOSLEEP: usize = 115;
 const SYSCALL_SYSLOG: usize = 116;
+const SYSCALL_PTRACE: usize = 117;
 const SYSCALL_SCHED_SETPARAM: usize = 118;
 const SYSCALL_SCHED_SETSCHEDULER: usize = 119;
 const SYSCALL_SCHED_GETSCHEDULER: usize = 120;
@@ -202,6 +226,7 @@ const SYSCALL_RT_SIGQUEUEINFO: usize = 138;
 const SYSCALL_RT_SIGRETURN: usize = 139;
 const SYSCALL_SETPRIORITY: usize = 140;
 const SYSCALL_GETPRIORITY: usize = 141;
+const SYSCALL_REROOT: usize = 142;
 const SYACALL_SETREGRID: usize = 143;
 const SYSCALL_SETGID: usize = 144;
 const SYSCALL_SETREUID: usize = 145;
@@ -215,15 +240,21 @@ const SYSCALL_SETFSGID: usize = 152;
 const SYSCALL_TIMES: usize = 153;
 const SYSCALL_SETPGID: usize = 154;
 const SYSCALL_GETPGID: usize = 155;
+const SYSCALL_GETSID: usize = 156;
+const SYSCALL_SETSID: usize = 157;
 const SYSCALL_GETGROUPS: usize = 158;
 const SYSCALL_SETGROUPS: usize = 159;
 const SYSCALL_UNAME: usize = 160;
 const SYSCALL_SETHOSTNAME: usize = 161;
 const SYSCALL_SETDOMAINNAME: usize = 162;
+const SYSCALL_GETRLIMIT: usize = 163;
+const SYSCALL_SETRLIMIT: usize = 164;
 const SYSCALL_GETRUSAGE: usize = 165;
 const SYSCALL_UMASK: usize = 166;
 const SYSCALL_GETCPU: usize = 168;
 const SYSCALL_GET_TIME: usize = 169;
+const SYSCALL_SETTIMEOFDAY: usize = 170;
+const SYSCALL_ADJTIMEX: usize = 171;
 const SYSCALL_GITPID: usize = 172;
 const SYSCALL_GETPPID: usize = 173;
 const SYSCALL_GETUID: usize = 174;
@@ -232,6 +263,11 @@ const SYSCALL_GETGID: usize = 176;
 const SYSCALL_GETEGID: usize = 177;
 const SYSCALL_GETTID: usize = 178;
 const SYSCALL_SYSINFO: usize = 179;
+// mq_*一族, ms*一族
+const SYSCALL_SEMGET: usize = 190;
+const SYSCALL_SEMCTL: usize = 191;
+const SYSCALL_SEMTIMEDOP: usize = 192;
+const SYSCALL_SEMOP: usize = 193;
 const SYCALL_SHMGET: usize = 194;
 const SYSCALL_SHMCTL: usize = 195;
 const SYSCALL_SHMAT: usize = 196;
@@ -251,17 +287,26 @@ const SYSCALL_GETSOCKOPT: usize = 209;
 const SYSCALL_SHUTDOWN: usize = 210;
 const SYSCALL_SENDMSG: usize = 211;
 const SYSCALL_RECVMSG: usize = 212;
+const SYSCALL_READAHEAD: usize = 213;
 const SYSCALL_BRK: usize = 214;
 const SYSCALL_MUNMAP: usize = 215;
 const SYSCALL_MREMAP: usize = 216;
+// key一族
 const SYSCALL_FORK: usize = 220;
 const SYSCALL_EXEC: usize = 221;
 const SYSCALL_MMAP: usize = 222;
 const SYSCALL_FADVISE64: usize = 223;
+// swap一族
 const SYSCALL_MPROTECT: usize = 226;
 const SYSCALL_MSYNC: usize = 227;
 const SYSCALL_MLOCK: usize = 228;
+const SYSCALL_MUNLOCK: usize = 229;
+const SYSCALL_MLOCKALL: usize = 230;
+const SYSCALL_MUNLOCKALL: usize = 231;
+const SYSCALL_MINCORE: usize = 232;
 const SYSCALL_MADVISE: usize = 233;
+const SYSCALL_REMAP_FILE_PAGES: usize = 234;
+const SYSCALL_MBIND: usize = 235;
 const SYSCALL_GET_MEMPOLICY: usize = 236;
 const SYSCALL_ACCEPT4: usize = 242;
 const SYSCALL_WAIT4: usize = 260;
@@ -281,9 +326,6 @@ const SYSCALL_PWRITEV2: usize = 287;
 const SYSCALL_STATX: usize = 291;
 const SYSCALL_STRERROR: usize = 300;
 const SYSCALL_PERROR: usize = 301;
-const SYSCALL_PSELECT: usize = 72;
-const SYSCALL_SETSID: usize = 157;
-const SYSCALL_ADJTIMEX: usize = 171;
 const SYSCALL_CLOCKADJTIME: usize = 266;
 const SYSCALL_FSOPEN: usize = 430;
 const SYSCALL_CLOSE_RANGE: usize = 436;
@@ -392,7 +434,9 @@ pub fn syscall(
         SYSCALL_SENDFILE => sys_sendfile(a0, a1, a2 as *mut usize, a3),
         SYSCALL_PSELECT6 => sys_pselect6(a0, a1, a2, a3, a4 as *const TimeSpec, a5),
         SYSCALL_PPOLL => sys_ppoll(a0 as *mut PollFd, a1, a2 as *const TimeSpec, a3),
+        SYSCALL_VMSPLICE => sys_vmsplice(a0, a1 as *const IoVec, a2, a3 as i32),
         SYSCALL_SPLICE => sys_splice(a0, a1, a2, a3, a4, a5 as i32),
+        SYSCALL_TEE => sys_tee(a0, a1, a2, a3 as i32),
         SYSCALL_READLINKAT => {
             sys_readlinkat(a0 as i32, a1 as *const u8, a2 as *mut u8, a3 as isize)
         }
@@ -550,7 +594,6 @@ pub fn syscall(
             a3 as u32,
             a4 as *mut Statx,
         ),
-        SYSCALL_PSELECT => sys_pselect6(a0, a1, a2, a3, a4 as *const TimeSpec, a5),
         // SYSCALL_SELECT=>sys_select(a0 , a1, a2,a3 ,a4 as *const TimeSpec , a5),
         SYSCALL_SETSOCKOPT => syscall_setsocketopt(a0, a1, a2, a3 as *const u8, a4),
         SYSCALL_GETSOCKOPT => syscall_getsocketopt(a0, a1, a2, a3 as *mut u8, a4),
@@ -560,9 +603,12 @@ pub fn syscall(
         SYSCALL_SOCKETPAIR => syscall_socketpair(a0, a1, a2, a3 as *mut i32),
         SYSCALL_SENDMSG => syscall_sendmsg(a0, a1, a2),
         SYSCALL_RECVMSG => syscall_recvmsg(a0, a1, a2),
+        SYSCALL_CLOSE_RANGE => sys_close_range(a0, a1, a2 as i32),
         SYSCALL_OPENAT2 => sys_openat2(a0 as i32, a1 as *const u8, a2 as *const u8, a3 as usize),
         SYSCALL_FACCESSAT2 => sys_faccessat(a0 as usize, a1 as *const u8, a2 as i32, a3 as i32),
         SYSCALL_SETDOMAINNAME => syscall_setdomainname(a0 as *const u8, a1),
+        SYSCALL_GETRLIMIT => sys_getrlimit(a0 as i32, a1 as *mut RLimit),
+        SYSCALL_SETRLIMIT => sys_setrlimit(a0 as i32, a1 as *const RLimit),
         SYSCALL_SETHOSTNAME => syscall_sethostname(a0 as *const u8, a1),
         SYSCALL_SHUTDOMN => sys_shutdown(),
         _ => {

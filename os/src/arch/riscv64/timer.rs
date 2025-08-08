@@ -127,7 +127,6 @@ pub fn read_rtc() -> u64 {
             panic!("RTC base address not initialized");
         }
     };
-    log::error!("[read_rtc] GOLDFISH_RTC_BASE is {:?}", rtc_base);
     // 读取低32位和高32位
     let low = unsafe { core::ptr::read_volatile((KERNEL_BASE + rtc_base + TIME_LOW) as *const u32) }
         as u64;

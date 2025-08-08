@@ -1,6 +1,9 @@
-use crate::syscall::{
-    errno::{Errno, SyscallRet},
-    FcntlOp,
+use crate::{
+    syscall::{
+        errno::{Errno, SyscallRet},
+        FcntlOp,
+    },
+    task::current_task,
 };
 
 use alloc::vec;
@@ -212,11 +215,34 @@ impl FdTable {
             false
         }
     }
-    pub fn close_range(&self, first: usize, last: usize, flags: CloseRangeFlags) -> SyscallRet {
-        if flags.contains(CloseRangeFlags::CLOSE_RANGE_UNSHARE) {
-            // Todo:
+
+    /// 由上层调用者实现unshare逻辑
+    /// 操作的文件描述符包含end
+    pub fn close_range(&self, start: usize, end: usize, flags: CloseRangeFlags) -> SyscallRet {
+        if start > end {
+            log::error!("[FdTable::close_range] Invalid range: {}-{}", start, end);
+            return Err(Errno::EINVAL);
         }
-        return Err(Errno::ENOSYS); // 目前不支持 CLOSE_RANGE_UNSHARE
+        let mut table = self.table.write();
+        if flags.contains(CloseRangeFlags::CLOSE_RANGE_CLOEXEC) {
+            for fd in start..=end {
+                // 设置 FD_CLOEXEC 标志位
+                if let Some(entry) = table.get_mut(fd) {
+                    if let Some(fd_entry) = entry {
+                        fd_entry.fd_flags |= FdFlags::FD_CLOEXEC;
+                    } else {
+                        log::warn!("[FdTable::close_range] fd {} is already closed", fd);
+                    }
+                }
+            }
+        } else {
+            for fd in start..=end {
+                if let Some(_) = table.get_mut(fd) {
+                    table[fd] = None;
+                }
+            }
+        }
+        Ok(0)
     }
 
     pub fn clear(&self) {
@@ -226,13 +252,26 @@ impl FdTable {
     pub fn get_rlimit(&self) -> RLimit {
         self.rlimit.read().clone()
     }
-    pub fn set_rlimit(&self, rlimit: &RLimit) {
+    pub fn set_rlimit(&self, rlimit: &RLimit) -> SyscallRet {
         let mut rlimit_lock = self.rlimit.write();
         rlimit_lock.rlim_cur = rlimit.rlim_cur;
+        log::info!(
+            "[FdTable::set_rlimit] set rlimit: {:?}, rlimit_hard: {}",
+            rlimit,
+            rlimit_lock.rlim_max
+        );
+        // 如果要提高硬限制, 需要检查是否有权限
+        if rlimit.rlim_max > rlimit_lock.rlim_max {
+            if current_task().euid() != 0 {
+                log::error!("[FdTable::set_rlimit] Permission denied to increase hard limit");
+                return Err(Errno::EPERM);
+            }
+        }
         rlimit_lock.rlim_max = rlimit.rlim_max;
         if self.table.read().len() > rlimit.rlim_cur as usize {
             self.table.write().truncate(rlimit.rlim_cur as usize);
         }
+        Ok(0)
     }
 
     // 设置某个fd的flag（例如 FD_CLOEXEC）
@@ -305,15 +344,12 @@ impl FdTable {
         })
     }
     pub fn fcntl(&self, fd: usize, op: i32, arg: usize) -> SyscallRet {
-        // let table = self.table.read();
-        // let fd_entry = table.get(fd).and_then(|entry| entry.as_ref());
         let op = FcntlOp::try_from(op).map_err(|_| {
             log::error!("[fcntl] Invalid fcntl operation: {}", op);
             Errno::EINVAL
         })?;
         let fd_flags = FdFlags::from(&op);
 
-        // if let Some(entry) = fd_entry {
         match op {
             FcntlOp::F_DUPFD | FcntlOp::F_DUPFD_CLOEXEC => {
                 let file = self.get_file(fd).ok_or(Errno::EBADF)?;

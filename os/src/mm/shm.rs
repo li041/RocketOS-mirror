@@ -24,7 +24,7 @@ lazy_static! {
 }
 
 pub struct ShmSegment {
-    pub id: ShmId, // 共享内存的ID
+pub id: ShmId, // 共享内存的ID
     // 注意这里使用Weak引用, 因为共享内存的页生命周期是由用户决定的
     pub pages: Vec<Weak<Page>>, //
 }

@@ -989,7 +989,7 @@ impl Task {
     pub fn set_rlimit(&self, resource: Resource, rlim: &RLimit) -> SyscallRet {
         match resource {
             Resource::NOFILE => {
-                self.fd_table().set_rlimit(&rlim);
+                self.fd_table().set_rlimit(&rlim)?;
                 Ok(0)
             }
             Resource::STACK => {
@@ -1090,8 +1090,7 @@ impl Task {
     }
 
     pub fn is_rt(&self) -> bool {
-        self.task_inner
-            .read().priority <= MAX_RT_PRIO
+        self.task_inner.read().priority <= MAX_RT_PRIO
     }
 
     /*********************************** getter *************************************/
@@ -1228,6 +1227,9 @@ impl Task {
         self.umask
             .store(umask, core::sync::atomic::Ordering::Relaxed);
     }
+    pub fn set_fd_table(&self, fd_table: Arc<FdTable>) {
+        *self.fd_table.lock() = fd_table;
+    }
     pub fn set_exit_code(&self, exit_code: i32) {
         self.exit_code
             .store(exit_code, core::sync::atomic::Ordering::SeqCst);
@@ -1287,7 +1289,7 @@ impl Task {
         {
             if priority > MAX_RT_PRIO {
                 let se = self.sched_entity();
-                se.load.set_weight( priority_to_nice(priority));
+                se.load.set_weight(priority_to_nice(priority));
             }
         }
     }

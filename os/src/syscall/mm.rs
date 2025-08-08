@@ -846,6 +846,72 @@ pub fn sys_mremap(
         Ok(target_addr)
     })
 }
+
+#[repr(i32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MadviseAdvice {
+    Normal = 0,         // MADV_NORMAL
+    Random = 1,         // MADV_RANDOM
+    Sequential = 2,     // MADV_SEQUENTIAL
+    WillNeed = 3,       // MADV_WILLNEED
+    DontNeed = 4,       // MADV_DONTNEED
+    Remove = 9,         // MADV_REMOVE (free + punch hole)
+    DontFork = 10,      // MADV_DONTFORK
+    DoFork = 11,        // MADV_DOFORK
+    Mergeable = 12,     // MADV_MERGEABLE (KSM)
+    Unmergeable = 13,   // MADV_UNMERGEABLE
+    Hugepage = 14,      // MADV_HUGEPAGE (THP)
+    NoHugepage = 15,    // MADV_NOHUGEPAGE
+    DontDump = 16,      // MADV_DONTDUMP
+    DoDump = 17,        // MADV_DODUMP
+    Free = 8,           // MADV_FREE
+    WipeOnFork = 18,    // MADV_WIPEONFORK
+    KeepOnFork = 19,    // MADV_KEEPONFORK
+    Cold = 20,          // MADV_COLD
+    PageOut = 21,       // MADV_PAGEOUT
+    PopulateRead = 22,  // MADV_POPULATE_READ
+    PopulateWrite = 23, // MADV_POPULATE_WRITE
+    Collapse = 25,      // MADV_COLLAPSE (force THP collapse)
+    GuardInstall = 26,  // MADV_GUARD_INSTALL
+    GuardRemove = 27,   // MADV_GUARD_REMOVE
+
+    /// 非法或未知值
+    Unknown(i32),
+}
+
+impl From<i32> for MadviseAdvice {
+    fn from(value: i32) -> Self {
+        use MadviseAdvice::*;
+        match value {
+            0 => Normal,
+            1 => Random,
+            2 => Sequential,
+            3 => WillNeed,
+            4 => DontNeed,
+            9 => Remove,
+            10 => DontFork,
+            11 => DoFork,
+            12 => Mergeable,
+            13 => Unmergeable,
+            14 => Hugepage,
+            15 => NoHugepage,
+            16 => DontDump,
+            17 => DoDump,
+            8 => Free,
+            18 => WipeOnFork,
+            19 => KeepOnFork,
+            20 => Cold,
+            21 => PageOut,
+            22 => PopulateRead,
+            23 => PopulateWrite,
+            25 => Collapse,
+            26 => GuardInstall,
+            27 => GuardRemove,
+            other => Unknown(other),
+        }
+    }
+}
+
 // Todo:
 pub fn sys_madvise(addr: usize, len: usize, advice: i32) -> SyscallRet {
     log::info!(
@@ -854,13 +920,51 @@ pub fn sys_madvise(addr: usize, len: usize, advice: i32) -> SyscallRet {
         len,
         advice
     );
-    log::warn!("[sys_madvise] Unimplemented");
     // addr必须页对齐
     if addr % PAGE_SIZE != 0 {
         return Err(Errno::EINVAL);
     }
-    // Todo:
-    Ok(0)
+    if len == 0 {
+        return Ok(0);
+    }
+    let aligned_len = ceil_to_page_size(len);
+    let advice = MadviseAdvice::from(advice);
+    match advice {
+        MadviseAdvice::Unknown(val) => {
+            log::warn!("[sys_madvise] Unknown advice: {:#x}", val);
+            return Err(Errno::EINVAL);
+        }
+        MadviseAdvice::DontNeed => {
+            // // 释放内存, 但不影响页表
+            // let start_vpn = VirtPageNum::from(addr >> PAGE_SIZE_BITS);
+            // let end_vpn =
+            //     VirtPageNum::from(ceil_to_page_size(addr + aligned_len) >> PAGE_SIZE_BITS);
+            // let unmap_range = VPNRange::new(start_vpn, end_vpn);
+            // current_task().op_memory_set_mut(|memory_set| {
+            //     if memory_set.remove_area_with_overlap(unmap_range) {
+            //         log::info!("[sys_madvise] DontNeed: {:#x} ~ {:#x}", addr, addr + len);
+            //     } else {
+            //         log::warn!(
+            //             "[sys_madvise] DontNeed: {:#x} ~ {:#x} not found",
+            //             addr,
+            //             addr + len
+            //         );
+            //     }
+            //     Ok(0)
+            // })
+            log::info!("[sys_madvise] DontNeed: {:#x} ~ {:#x}", addr, addr + len);
+            Ok(0)
+        }
+        MadviseAdvice::Remove => {
+            log::info!("[sys_madvise] Remove: {:#x} ~ {:#x}", addr, addr + len);
+            Ok(0)
+        }
+        _ => {
+            // 目前只处理已知的建议
+            log::warn!("[sys_madvise] Unimplemented advice: {:?}", advice);
+            Ok(0)
+        }
+    }
 }
 
 /* shm start */

@@ -253,6 +253,236 @@ impl Pipe {
         buffer.resize(new_size)
     }
 }
+impl Pipe {
+    pub fn write_nonblock(&self, buf: &[u8]) -> SyscallRet {
+        debug_assert!(self.writable);
+        let mut write_size = 0;
+        let nonblock = true;
+        if self.is_named_pipe {
+            let mut guard = self.inode.buffer.lock();
+            // 命名管道对端还没打开, 需阻塞
+            if guard.read_end.is_none() {
+                if nonblock {
+                    log::error!("[Pipe::write] named pipe read end not ready, non-blocking mode");
+                    return Err(Errno::EAGAIN);
+                }
+                guard.add_waiter(current_task().tid());
+                drop(guard);
+                if wait() == -1 {
+                    // log::error!("[Pipe::read] wait failed");
+                    return Err(Errno::ERESTARTSYS);
+                }
+            } else {
+                drop(guard);
+            }
+        }
+        let mut buffer;
+        loop {
+            buffer = self.inode.buffer.lock();
+            core::hint::black_box(&buffer);
+            // 检查读端是否关闭
+            if buffer.all_read_ends_closed() {
+                log::error!("[Pipe::write] all read ends closed");
+                current_task().receive_siginfo(
+                    SigInfo::new(
+                        Sig::SIGPIPE.raw(),
+                        SigInfo::KERNEL,
+                        crate::signal::SiField::NULL,
+                    ),
+                    false,
+                );
+                return Err(Errno::EPIPE);
+            }
+            if buffer.status == RingBufferStatus::FULL {
+                if nonblock {
+                    log::error!("[Pipe::write] buffer is full, non-blocking mode, return EAGAIN");
+                    return Err(Errno::EAGAIN);
+                }
+                // wait for space, 注意释放锁
+                buffer.add_waiter(current_task().tid());
+                drop(buffer);
+                // yield_current_task();
+                if wait() == -1 {
+                    // log::error!("[Pipe::write] wait failed");
+                    return Err(Errno::ERESTARTSYS);
+                }
+                continue;
+            }
+            while write_size < buf.len() {
+                let write_bytes = buffer.buffer_write(&buf[write_size..]);
+                let waiter = buffer.get_one_waiter();
+                if waiter != 0 {
+                    // log::info!("[Pipe::write] wake up waiter");
+                    // wake up reader
+                    wakeup(waiter);
+                }
+                // log::error!("[Pipe::write] write_bytes: {}", write_bytes);
+                write_size += write_bytes;
+                log::info!(
+                    "buffer.head: {}, buffer.tail: {}, write_size: {}",
+                    buffer.head,
+                    buffer.tail,
+                    write_size
+                );
+                if buffer.head == buffer.tail {
+                    buffer.status = RingBufferStatus::FULL;
+                    log::warn!("[Pipe::write] buffer is full, byte_written: {}", write_size);
+                    return Ok(write_size);
+                }
+            }
+            buffer.status = RingBufferStatus::NORMAL;
+            return Ok(write_size);
+        }
+    }
+    pub fn read(&self, buf: &mut [u8]) -> SyscallRet {
+        debug_assert!(self.readable);
+        let mut read_size = 0usize;
+        let nonblock = self.flags.load(core::sync::atomic::Ordering::Relaxed)
+            & OpenFlags::O_NONBLOCK.bits()
+            != 0;
+        if self.is_named_pipe {
+            let mut guard = self.inode.buffer.lock();
+            // 命名管道对端还没打开, 需阻塞
+            if guard.write_end.is_none() {
+                if nonblock {
+                    log::error!("[Pipe::read] named pipe read end not ready, non-blocking mode");
+                    return Err(Errno::EAGAIN);
+                }
+                guard.add_waiter(current_task().tid());
+                drop(guard);
+                if wait() == -1 {
+                    // log::error!("[Pipe::read] wait failed");
+                    return Err(Errno::ERESTARTSYS);
+                }
+            } else {
+                drop(guard);
+            }
+        }
+        let mut buffer;
+        loop {
+            buffer = self.inode.buffer.lock();
+            core::hint::black_box(&buffer);
+            if buffer.status == RingBufferStatus::EMPTY {
+                if buffer.all_write_ends_closed() {
+                    log::error!("all write ends closed");
+                    return Ok(read_size);
+                }
+                if nonblock {
+                    log::error!("[Pipe::read] pipe read end not ready, non-blocking mode");
+                    return Err(Errno::EAGAIN);
+                }
+                // wait for data, 注意释放锁
+                buffer.add_waiter(current_task().tid());
+                drop(buffer);
+                // log::error!("[Pipe::read] set waiter: {}", current_task().tid());
+                if wait() == -1 {
+                    // log::error!("[Pipe::read] wait failed");
+                    return Err(Errno::ERESTARTSYS);
+                }
+                continue;
+            }
+            while read_size < buf.len() {
+                let read_bytes = buffer.buffer_read(&mut buf[read_size..]);
+                let waiter = buffer.get_one_waiter();
+                if waiter != 0 {
+                    // log::info!("[Pipe::read] wake up waiter");
+                    // wake up writer
+                    wakeup(waiter);
+                }
+                // log::error!("[Pipe::read] read_bytes: {}", read_bytes);
+                read_size += read_bytes;
+                if buffer.head == buffer.tail {
+                    buffer.status = RingBufferStatus::EMPTY;
+                    return Ok(read_size);
+                }
+            }
+            buffer.status = RingBufferStatus::NORMAL;
+            return Ok(read_size);
+        }
+    }
+    pub fn write(&self, buf: &[u8]) -> SyscallRet {
+        debug_assert!(self.writable);
+        let mut write_size = 0;
+        let nonblock = self.flags.load(core::sync::atomic::Ordering::Relaxed)
+            & OpenFlags::O_NONBLOCK.bits()
+            != 0;
+        if self.is_named_pipe {
+            let mut guard = self.inode.buffer.lock();
+            // 命名管道对端还没打开, 需阻塞
+            if guard.read_end.is_none() {
+                if nonblock {
+                    log::error!("[Pipe::write] named pipe read end not ready, non-blocking mode");
+                    return Err(Errno::EAGAIN);
+                }
+                guard.add_waiter(current_task().tid());
+                drop(guard);
+                if wait() == -1 {
+                    // log::error!("[Pipe::read] wait failed");
+                    return Err(Errno::ERESTARTSYS);
+                }
+            } else {
+                drop(guard);
+            }
+        }
+        let mut buffer;
+        loop {
+            buffer = self.inode.buffer.lock();
+            core::hint::black_box(&buffer);
+            // 检查读端是否关闭
+            if buffer.all_read_ends_closed() {
+                log::error!("[Pipe::write] all read ends closed");
+                current_task().receive_siginfo(
+                    SigInfo::new(
+                        Sig::SIGPIPE.raw(),
+                        SigInfo::KERNEL,
+                        crate::signal::SiField::NULL,
+                    ),
+                    false,
+                );
+                return Err(Errno::EPIPE);
+            }
+            if buffer.status == RingBufferStatus::FULL {
+                if nonblock {
+                    log::error!("[Pipe::write] buffer is full, non-blocking mode, return EAGAIN");
+                    return Err(Errno::EAGAIN);
+                }
+                // wait for space, 注意释放锁
+                buffer.add_waiter(current_task().tid());
+                drop(buffer);
+                // yield_current_task();
+                if wait() == -1 {
+                    // log::error!("[Pipe::write] wait failed");
+                    return Err(Errno::ERESTARTSYS);
+                }
+                continue;
+            }
+            while write_size < buf.len() {
+                let write_bytes = buffer.buffer_write(&buf[write_size..]);
+                let waiter = buffer.get_one_waiter();
+                if waiter != 0 {
+                    // log::info!("[Pipe::write] wake up waiter");
+                    // wake up reader
+                    wakeup(waiter);
+                }
+                // log::error!("[Pipe::write] write_bytes: {}", write_bytes);
+                write_size += write_bytes;
+                log::info!(
+                    "buffer.head: {}, buffer.tail: {}, write_size: {}",
+                    buffer.head,
+                    buffer.tail,
+                    write_size
+                );
+                if buffer.head == buffer.tail {
+                    buffer.status = RingBufferStatus::FULL;
+                    log::warn!("[Pipe::write] buffer is full, byte_written: {}", write_size);
+                    return Ok(write_size);
+                }
+            }
+            buffer.status = RingBufferStatus::NORMAL;
+            return Ok(write_size);
+        }
+    }
+}
 
 pub const RING_DEFAULT_BUFFER_SIZE: usize = 65536;
 
@@ -432,152 +662,10 @@ impl FileOp for Pipe {
         self
     }
     fn read<'a>(&'a self, buf: &'a mut [u8]) -> SyscallRet {
-        debug_assert!(self.readable);
-        let mut read_size = 0usize;
-        let nonblock = self.flags.load(core::sync::atomic::Ordering::Relaxed)
-            & OpenFlags::O_NONBLOCK.bits()
-            != 0;
-        if self.is_named_pipe {
-            let mut guard = self.inode.buffer.lock();
-            // 命名管道对端还没打开, 需阻塞
-            if guard.write_end.is_none() {
-                if nonblock {
-                    log::error!("[Pipe::read] named pipe read end not ready, non-blocking mode");
-                    return Err(Errno::EAGAIN);
-                }
-                guard.add_waiter(current_task().tid());
-                drop(guard);
-                if wait() == -1 {
-                    // log::error!("[Pipe::read] wait failed");
-                    return Err(Errno::ERESTARTSYS);
-                }
-            } else {
-                drop(guard);
-            }
-        }
-        let mut buffer;
-        loop {
-            buffer = self.inode.buffer.lock();
-            core::hint::black_box(&buffer);
-            if buffer.status == RingBufferStatus::EMPTY {
-                if buffer.all_write_ends_closed() {
-                    log::error!("all write ends closed");
-                    return Ok(read_size);
-                }
-                if nonblock {
-                    log::error!("[Pipe::read] pipe read end not ready, non-blocking mode");
-                    return Err(Errno::EAGAIN);
-                }
-                // wait for data, 注意释放锁
-                buffer.add_waiter(current_task().tid());
-                drop(buffer);
-                // log::error!("[Pipe::read] set waiter: {}", current_task().tid());
-                if wait() == -1 {
-                    // log::error!("[Pipe::read] wait failed");
-                    return Err(Errno::ERESTARTSYS);
-                }
-                continue;
-            }
-            while read_size < buf.len() {
-                let read_bytes = buffer.buffer_read(&mut buf[read_size..]);
-                let waiter = buffer.get_one_waiter();
-                if waiter != 0 {
-                    // log::info!("[Pipe::read] wake up waiter");
-                    // wake up writer
-                    wakeup(waiter);
-                }
-                // log::error!("[Pipe::read] read_bytes: {}", read_bytes);
-                read_size += read_bytes;
-                if buffer.head == buffer.tail {
-                    buffer.status = RingBufferStatus::EMPTY;
-                    return Ok(read_size);
-                }
-            }
-            buffer.status = RingBufferStatus::NORMAL;
-            return Ok(read_size);
-        }
+        self.read(buf)
     }
     fn write<'a>(&'a self, buf: &'a [u8]) -> SyscallRet {
-        debug_assert!(self.writable);
-        let mut write_size = 0;
-        let nonblock = self.flags.load(core::sync::atomic::Ordering::Relaxed)
-            & OpenFlags::O_NONBLOCK.bits()
-            != 0;
-        if self.is_named_pipe {
-            let mut guard = self.inode.buffer.lock();
-            // 命名管道对端还没打开, 需阻塞
-            if guard.read_end.is_none() {
-                if nonblock {
-                    log::error!("[Pipe::write] named pipe read end not ready, non-blocking mode");
-                    return Err(Errno::EAGAIN);
-                }
-                guard.add_waiter(current_task().tid());
-                drop(guard);
-                if wait() == -1 {
-                    // log::error!("[Pipe::read] wait failed");
-                    return Err(Errno::ERESTARTSYS);
-                }
-            } else {
-                drop(guard);
-            }
-        }
-        let mut buffer;
-        loop {
-            buffer = self.inode.buffer.lock();
-            core::hint::black_box(&buffer);
-            // 检查读端是否关闭
-            if buffer.all_read_ends_closed() {
-                log::error!("[Pipe::write] all read ends closed");
-                current_task().receive_siginfo(
-                    SigInfo::new(
-                        Sig::SIGPIPE.raw(),
-                        SigInfo::KERNEL,
-                        crate::signal::SiField::NULL,
-                    ),
-                    false,
-                );
-                return Err(Errno::EPIPE);
-            }
-            if buffer.status == RingBufferStatus::FULL {
-                if nonblock {
-                    log::error!("[Pipe::write] buffer is full, non-blocking mode, return EAGAIN");
-                    return Err(Errno::EAGAIN);
-                }
-                // wait for space, 注意释放锁
-                buffer.add_waiter(current_task().tid());
-                drop(buffer);
-                // yield_current_task();
-                if wait() == -1 {
-                    // log::error!("[Pipe::write] wait failed");
-                    return Err(Errno::ERESTARTSYS);
-                }
-                continue;
-            }
-            while write_size < buf.len() {
-                let write_bytes = buffer.buffer_write(&buf[write_size..]);
-                let waiter = buffer.get_one_waiter();
-                if waiter != 0 {
-                    // log::info!("[Pipe::write] wake up waiter");
-                    // wake up reader
-                    wakeup(waiter);
-                }
-                // log::error!("[Pipe::write] write_bytes: {}", write_bytes);
-                write_size += write_bytes;
-                log::info!(
-                    "buffer.head: {}, buffer.tail: {}, write_size: {}",
-                    buffer.head,
-                    buffer.tail,
-                    write_size
-                );
-                if buffer.head == buffer.tail {
-                    buffer.status = RingBufferStatus::FULL;
-                    log::warn!("[Pipe::write] buffer is full, byte_written: {}", write_size);
-                    return Ok(write_size);
-                }
-            }
-            buffer.status = RingBufferStatus::NORMAL;
-            return Ok(write_size);
-        }
+        self.write(buf)
     }
     fn pwrite<'a>(&'a self, _buf: &'a [u8], _offset: usize) -> SyscallRet {
         log::error!("[Pipe::pwrite] Pipe does not support pwrite");

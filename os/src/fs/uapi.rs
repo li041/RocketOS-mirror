@@ -327,10 +327,10 @@ bitflags::bitflags! {
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, Default)]
     pub struct CloseRangeFlags: i32 {
-        /// 并不立即关闭文件描述符，而是设置这些文件描述符的 FD_CLOEXEC 标志。
-        const CLOSE_RANGE_CLOEXEC = 0x1;
         ///  先解除与其他进程共享的文件描述符表（unshare fd table），再进行关闭。
         const CLOSE_RANGE_UNSHARE = 0x2;
+        /// 并不立即关闭文件描述符，而是设置这些文件描述符的 FD_CLOEXEC 标志。
+        const CLOSE_RANGE_CLOEXEC = 0x4;
     }
 }
 

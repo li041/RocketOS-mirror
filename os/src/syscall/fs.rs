@@ -17,7 +17,7 @@ use crate::fs::dentry::{
     chown, dentry_check_access, Dentry, LinuxDirent64, F_OK, R_OK, W_OK, X_OK,
 };
 use crate::fs::fd_set::init_fdset;
-use crate::fs::fdtable::FdFlags;
+use crate::fs::fdtable::{FdFlags, FdTable};
 use crate::fs::file::OpenFlags;
 use crate::fs::kstat::Statx;
 use crate::fs::mount::get_mount_by_dentry;
@@ -25,7 +25,7 @@ use crate::fs::namei::{
     link_path_walk, link_path_walk2, lookup_dentry, open_last_lookups, open_last_lookups2,
     MAX_SYMLINK_DEPTH,
 };
-use crate::fs::pipe::make_pipe;
+use crate::fs::pipe::{make_pipe, Pipe};
 use crate::fs::uapi::{
     convert_old_dev_to_new, CloseRangeFlags, DevT, FallocFlags, MemfdCreateFlags, OpenHow,
     PollEvents, PollFd, RenameFlags, ResolveFlags, SetXattrFlags, StatFs, Whence, MAX_OPEN_HOW,
@@ -136,7 +136,8 @@ pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> SyscallRet {
             //     len,
             //     String::from_utf8_lossy(&ker_buf)
             // );
-            log::info!("sys_write: fd: {}, len: {}", fd, len);
+            // 8.8 tmp comment
+            // log::info!("sys_write: fd: {}, len: {}", fd, len);
         }
         let ret = file.write(&ker_buf)?;
         Ok(ret)
@@ -1167,7 +1168,13 @@ pub fn sys_close_range(first: usize, last: usize, flags: i32) -> SyscallRet {
     }
     let flags = CloseRangeFlags::from_bits(flags).ok_or(Errno::EINVAL)?;
     let task = current_task();
-    let fd_table = task.fd_table();
+    let fd_table = if flags.contains(CloseRangeFlags::CLOSE_RANGE_UNSHARE) {
+        let unshare_fdtable = FdTable::from_existed_user(&task.fd_table());
+        task.set_fd_table(unshare_fdtable.clone());
+        unshare_fdtable
+    } else {
+        task.fd_table()
+    };
     fd_table.close_range(first, last, flags)
 }
 
@@ -1366,6 +1373,8 @@ pub enum FcntlOp {
     F_SETFD = 2,
     F_GETFL = 3,
     F_SETFL = 4,
+    F_GETLK = 12, // 获取文件锁
+    F_SETLK = 13, // 设置文件锁
     F_DUPFD_CLOEXEC = 1030,
     F_SETPIPE_SZE = 1031, // 设置管道大小
     F_GETPIPE_SZ = 1032,  // 获取管道大小
@@ -3629,6 +3638,171 @@ pub fn sys_splice(
         Ok(write_len)
     } else {
         log::error!("[sys_splice] invalid file descriptors");
+        return Err(Errno::EBADF);
+    }
+}
+
+// 不消耗数据
+pub fn sys_tee(fd_in: usize, fd_out: usize, size: usize, flags: i32) -> SyscallRet {
+    log::info!(
+        "[sys_tee] fd_in: {}, fd_out: {}, size: {}, flags: {}",
+        fd_in,
+        fd_out,
+        size,
+        flags
+    );
+
+    if size >= EXT4_MAX_FILE_SIZE {
+        log::error!("[sys_tee] size is too large: {}", size);
+        return Err(Errno::EINVAL);
+    }
+
+    let task = current_task();
+    let in_file = task.fd_table().get_file(fd_in);
+    let out_file = task.fd_table().get_file(fd_out);
+
+    if let (Some(in_file), Some(out_file)) = (in_file, out_file) {
+        if !in_file.readable() || !out_file.writable() {
+            log::error!("[sys_tee] invalid fd");
+            return Err(Errno::EBADF);
+        }
+        // 两个fd都必须是管道或FIFO
+        let in_file_inode = in_file.get_inode();
+        let out_file_inode = out_file.get_inode();
+        let in_file_mode = in_file_inode.get_mode();
+        let out_file_mode = out_file_inode.get_mode();
+        if in_file_mode & S_IFIFO == 0 || out_file_mode & S_IFIFO == 0 {
+            log::error!("[sys_tee] both file descriptors are not pipes or FIFOs");
+            return Err(Errno::EINVAL);
+        }
+        if out_file.get_flags().contains(OpenFlags::O_APPEND) {
+            log::error!("[sys_tee] O_APPEND files cannot be written to");
+            return Err(Errno::EINVAL);
+        }
+        // 如果in_file和out_file指向同一个pipe, 返回EINVAL
+        if Arc::ptr_eq(&in_file_inode, &out_file_inode) {
+            log::error!("[sys_tee] in_file and out_file cannot be the same pipe");
+            return Err(Errno::EINVAL);
+        }
+
+        let mut buf = vec![0u8; size];
+        let read_len = in_file.read(&mut buf)?;
+        in_file.write(&buf[..read_len])?;
+
+        if read_len == 0 {
+            log::info!("[sys_tee] reached end of file, nothing copied");
+            return Ok(0);
+        }
+
+        // 7.14 Debug
+        log::warn!(
+            "[sys_tee] read_len: {}, buf: {:?}",
+            read_len,
+            String::from_utf8_lossy(&buf[..read_len])
+        );
+        let write_len = out_file.write(&buf[..read_len])?;
+
+        log::info!("[sys_tee] copied {} bytes from fd_in to fd_out", write_len);
+        Ok(write_len)
+    } else {
+        log::error!("[sys_tee] invalid file descriptors");
+        return Err(Errno::EBADF);
+    }
+}
+
+pub const IOVEC_MAX: usize = 1024;
+pub const SPLICE_F_NONBLOCK: i32 = 0x02;
+
+// Todo: 支持 flags
+pub fn sys_vmsplice(fd: usize, iov_ptr: *const IoVec, nr_segs: usize, flags: i32) -> SyscallRet {
+    log::info!(
+        "[sys_vmsplice] fd: {}, iov: {:?}, nr_segs: {}, flags: {}",
+        fd,
+        iov_ptr,
+        nr_segs,
+        flags
+    );
+
+    if nr_segs > IOVEC_MAX {
+        log::error!("[sys_vmsplice] nr_segs exceeds IOVEC_MAX: {}", IOVEC_MAX);
+        return Err(Errno::EINVAL);
+    }
+
+    let mut iov: Vec<IoVec> = vec![IoVec::default(); nr_segs];
+    copy_from_user(iov_ptr as *const IoVec, iov.as_mut_ptr(), nr_segs)?;
+    let mut iovec_total_len = 0;
+    let mut total_bytes = 0;
+
+    let task = current_task();
+    let file = task.fd_table().get_file(fd);
+    let nonblock = flags & SPLICE_F_NONBLOCK != 0;
+    if let Some(file) = file {
+        let open_flags = file.get_flags();
+        if let Some(pipe) = file.as_any().downcast_ref::<Pipe>() {
+            if open_flags.contains(OpenFlags::O_WRONLY) || open_flags.contains(OpenFlags::O_RDWR) {
+                for iovec in iov.iter() {
+                    log::info!(
+                        "[sys_vmsplice] iovec base: {:?}, len: {}",
+                        iovec.base,
+                        iovec.len
+                    );
+                    iovec_total_len += iovec.len;
+                    if iovec.len == 0 {
+                        continue; // 跳过长度为0的iovec
+                    }
+                    if iovec_total_len > isize::MAX as usize {
+                        log::error!("[sys_vmsplice] total length exceeds maximum file size");
+                        return Err(Errno::EINVAL);
+                    }
+                    let mut ker_buf = vec![0u8; iovec.len];
+                    copy_from_user(iovec.base as *mut u8, ker_buf.as_mut_ptr(), iovec.len)?;
+                    let written = if nonblock {
+                        pipe.write_nonblock(&ker_buf)?
+                    } else {
+                        pipe.write(&ker_buf)?
+                    };
+                    log::info!("[sys_vmsplice] wrote {} bytes to fd: {}", written, fd);
+                    if written == 0 {
+                        return if total_bytes > 0 {
+                            Ok(total_bytes)
+                        } else {
+                            Ok(written)
+                        };
+                    }
+                    total_bytes += written;
+                }
+            } else {
+                for iovec in iov.iter() {
+                    iovec_total_len += iovec.len;
+                    if iovec.len == 0 {
+                        continue; // 跳过长度为0的iovec
+                    }
+                    if iovec_total_len > isize::MAX as usize {
+                        log::error!("[sys_vmsplice] total length exceeds maximum file size");
+                        return Err(Errno::EINVAL);
+                    }
+                    let mut ker_buf = vec![0u8; iovec.len];
+                    let read = pipe.read(&mut ker_buf)?;
+                    log::info!("[sys_vmsplice] read {} bytes from fd: {}", read, fd);
+                    copy_to_user(iovec.base as *mut u8, ker_buf.as_ptr(), iovec.len)?;
+                    if read == 0 {
+                        return if total_bytes > 0 {
+                            Ok(total_bytes)
+                        } else {
+                            Ok(read)
+                        };
+                    }
+                    total_bytes += read;
+                }
+            }
+            log::info!("[sys_vmsplice] total bytes written: {}", total_bytes);
+            Ok(total_bytes)
+        } else {
+            log::error!("[sys_vmsplice] fd is not a pipe or FIFO");
+            return Err(Errno::EBADF);
+        }
+    } else {
+        log::error!("[sys_vmsplice] invalid file descriptor");
         return Err(Errno::EBADF);
     }
 }

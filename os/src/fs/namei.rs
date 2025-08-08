@@ -716,12 +716,11 @@ pub fn lookup_dentry(nd: &mut Nameidata) -> Arc<Dentry> {
     // let absolute_path = format!("{}/{}", nd.dentry.absolute_path, segment);
     let segment = &nd.path_segments[nd.depth];
     let mut absolute_path = nd.dentry.absolute_path.clone();
-    // if nd.path_segments.len() >= 2 && nd.path_segments[0] == "proc" && nd.path_segments[1] == "pid"
-    // {
-    //     // 特殊处理/proc/pid目录
-    //     absolute_path += "/pid";
-    //     println!("after add /pid: {}", absolute_path);
-    // }
+    if nd.path_segments.len() >= 2 && nd.path_segments[0] == "proc" && nd.path_segments[1] == "pid"
+    {
+        // 特殊处理/proc/pid目录
+        absolute_path += "/pid";
+    }
     let absolute_path = format!("{}/{}", absolute_path, segment);
     log::debug!("[lookup_dentry] Looking up path: {}", absolute_path);
     // 尝试从 dcache 查找

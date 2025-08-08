@@ -259,6 +259,16 @@ pub fn sys_prlimit64(
     Ok(0)
 }
 
+pub fn sys_getrlimit(resource: i32, rlim: *mut RLimit) -> SyscallRet {
+    // 这里等价于 prlimit64(pid=0, new_limit=NULL, old_limit=rlim)
+    sys_prlimit64(0, resource, core::ptr::null(), rlim)
+}
+
+pub fn sys_setrlimit(resource: i32, rlim: *const RLimit) -> SyscallRet {
+    // 这里等价于 prlimit64(pid=0, new_limit=rlim, old_limit=NULL)
+    sys_prlimit64(0, resource, rlim, core::ptr::null_mut())
+}
+
 // clockid
 pub const SUPPORT_CLOCK: usize = 2;
 /// 一个可设置的系统级实时时钟，用于测量真实（即墙上时钟）时间
