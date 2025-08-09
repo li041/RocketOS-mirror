@@ -1,3 +1,4 @@
+#![allow(unused)]
 use alloc::sync::Arc;
 use inode_trait::InodeTrait;
 use lazy_static::lazy_static;

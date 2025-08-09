@@ -1,4 +1,4 @@
-use fdt::{node::FdtNode, standard_nodes::Compatible, Fdt};
+use fdt::Fdt;
 use spin::Mutex;
 
 use core::ptr::NonNull;
@@ -6,7 +6,6 @@ use core::ptr::NonNull;
 use virtio_drivers::{
     device::blk::VirtIOBlk,
     transport::{
-        mmio::{MmioTransport, VirtIOHeader},
         pci::{
             bus::{Cam, PciRoot},
             virtio_device_type, PciTransport,
@@ -20,13 +19,9 @@ use core::{
     ptr::{self},
 };
 
-use buddy_system_allocator::FrameAllocator;
-use lazy_static::lazy_static;
-
 use alloc::{
     alloc::{alloc_zeroed, dealloc, handle_alloc_error},
     boxed::Box,
-    vec::Vec,
 };
 use virtio_drivers::{BufferDirection, Hal};
 

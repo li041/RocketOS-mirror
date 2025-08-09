@@ -1,6 +1,6 @@
-use core::sync::atomic::{AtomicU32, AtomicUsize};
+use core::sync::atomic::AtomicUsize;
 
-use alloc::{collections::btree_map::Iter, sync::Arc, task};
+use alloc::sync::Arc;
 
 use crate::{
     arch::backtrace::backtrace::count_frames,
@@ -15,20 +15,6 @@ use super::{
     link::BpfLink,
 };
 
-const TASK_INFO: &str = "
-Task Info. Pid: 279. Process Name: systemd. Kernel Stack Len: 5. State: INTERRUPTIBLE
-Task Info. Pid: 280. Process Name: init-systemd(Ub. Kernel Stack Len: 5. State: INTERRUPTIBLE
-Task Info. Pid: 306. Process Name: init. Kernel Stack Len: 8. State: <unknown>
-Task Info. Pid: 306. Process Name: init. Kernel Stack Len: 6. State: INTERRUPTIBLE
-Task Info. Pid: 280. Process Name: Interop. Kernel Stack Len: 10. State: INTERRUPTIBLE
-Task Info. Pid: 349. Process Name: systemd-journal. Kernel Stack Len: 5. State: INTERRUPTIBLE
-Task Info. Pid: 377. Process Name: systemd-udevd. Kernel Stack Len: 5. State: INTERRUPTIBLE
-Task Info. Pid: 391. Process Name: snapfuse. Kernel Stack Len: 7. State: <unknown>
-Task Info. Pid: 391. Process Name: snapfuse. Kernel Stack Len: 8. State: INTERRUPTIBLE
-Task Info. Pid: 391. Process Name: snapfuse. Kernel Stack Len: 8. State: INTERRUPTIBLE
-";
-
-// Todo:
 pub struct Iterator {
     link: Arc<dyn FileOp>,
     seq_num: AtomicUsize, // 序列号
@@ -102,7 +88,7 @@ impl LinuxTask {
             // 抓取内核栈
             0 => {
                 // 仅复制栈帧
-                let (frame_count, ra_vec) = count_frames(task);
+                let (_frame_count, ra_vec) = count_frames(task);
                 let mut i = 0;
                 for &ra in &ra_vec {
                     if i >= size / core::mem::size_of::<usize>() {

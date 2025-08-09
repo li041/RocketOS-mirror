@@ -37,6 +37,7 @@ impl TrapContext {
     pub fn get_a0(&self) -> usize {
         self.x[10]
     }
+    #[allow(unused)]
     pub fn get_sepc(&self) -> usize {
         self.sepc
     }
@@ -99,6 +100,7 @@ impl TrapContext {
         cx // return initial Trap Context of app
     }
 
+    #[allow(unused)]
     pub fn idle_trap_context() -> Self {
         let mut sstatus = sstatus::read();
         sstatus.set_spp(SPP::Supervisor);

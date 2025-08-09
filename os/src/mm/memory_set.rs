@@ -1,24 +1,23 @@
 //! MemorySet
-use core::{arch::asm, iter::Map, mem, ops::Range, usize};
+use core::{arch::asm, usize};
 
+use super::shm::ShmId;
 use super::{address::StepByOne, area::MapArea, shm::ShmSegment, VPNRange};
-#[cfg(feature="board")]
+#[cfg(feature = "board")]
 use crate::drivers::block::ramdisk::{RAMDISK_BASE, RAMDISK_SIZE};
 use crate::drivers::get_dev_tree_size;
-use crate::fs::file;
-use crate::fs::uapi::{SealFlags, F_SEAL_WRITE};
+use crate::fs::uapi::F_SEAL_WRITE;
+use crate::mm::shm::increment_shm_segment_nattach;
 use crate::signal::Sig;
-use crate::syscall::errno;
 use crate::{
     arch::mm::{sfence_vma_vaddr, PTEFlags, PageTable, PageTableEntry},
-    fs::{fdtable::FdFlags, file::OpenFlags},
+    fs::file::OpenFlags,
     futex::futex::SharedMappingInfo,
     mm::{
         area::{MapPermission, MapType},
-        frame_alloc, FrameTracker, PhysAddr, PhysPageNum, VirtAddr, VirtPageNum,
+        frame_alloc, FrameTracker, VirtAddr, VirtPageNum,
     },
     syscall::errno::{Errno, SyscallRet},
-    task::current_task,
 };
 
 use crate::{
@@ -37,10 +36,9 @@ use alloc::{
     vec,
     vec::Vec,
 };
-use bitflags::bitflags;
 use log::info;
 
-use spin::{Mutex, RwLock};
+use spin::Mutex;
 use xmas_elf::program::Type;
 
 use crate::{
@@ -636,23 +634,25 @@ impl MemorySet {
                 if let Ok(busybox) = path_openat("/musl/busybox", OpenFlags::empty(), AT_FDCWD, 0) {
                     elf_file = busybox;
                 }
-            } 
+            }
             // 处理py文件
-            else if file_name.ends_with(".py")
-            {
+            else if file_name.ends_with(".py") {
                 let prepend_args = vec![String::from("/python/bin/python3.10")];
                 argv.splice(0..0, prepend_args);
-                if let Ok(python) = path_openat("/python/bin/python3.10", OpenFlags::empty(), AT_FDCWD, 0) {
+                if let Ok(python) =
+                    path_openat("/python/bin/python3.10", OpenFlags::empty(), AT_FDCWD, 0)
+                {
                     elf_file = python;
                 }
             }
-            
+
             #[cfg(feature = "la2000")]
             if file_name.ends_with(".sh") || sh_head.starts_with(b"#!") || file_name == "/tmp/hello"
             {
                 let prepend_args = vec![String::from("/glibc/busybox"), String::from("sh")];
                 argv.splice(0..0, prepend_args);
-                if let Ok(busybox) = path_openat("/glibc/busybox", OpenFlags::empty(), AT_FDCWD, 0) {
+                if let Ok(busybox) = path_openat("/glibc/busybox", OpenFlags::empty(), AT_FDCWD, 0)
+                {
                     elf_file = busybox;
                 }
             }
@@ -675,7 +675,6 @@ impl MemorySet {
         // 只有解析elf头部信息时可以使用库了
         let pgtbl_ppn = memory_set.page_table.token();
         let elf_header = elf.header;
-        let magic = elf_header.pt1.magic;
         let mut entry_point = elf_header.pt2.entry_point() as usize;
         let mut aux_vec: Vec<AuxHeader> = Vec::with_capacity(64);
         let mut ph_va = 0;
@@ -1076,6 +1075,9 @@ impl MemorySet {
                 area.map_perm
             );
         });
+        for (_shm_addr, shmid) in user_memory_set.addr2shmid.iter() {
+            increment_shm_segment_nattach(*shmid);
+        }
         let memory_set = MemorySet {
             brk: user_memory_set.brk,
             heap_bottom: user_memory_set.heap_bottom,
@@ -1397,6 +1399,16 @@ impl MemorySet {
         );
         self.areas.remove(&start_vpn);
     }
+    /// used by `shmdt`, 删除共享内存区域并取消映射
+    pub fn remove_area_and_mapping(&mut self, start_vpn: VirtPageNum) {
+        log::error!(
+            "[MemorySet::remove_area_with_start_vpn] remove area with start_vpn: {:#x}",
+            start_vpn.0
+        );
+        if let Some(mut area) = self.areas.remove(&start_vpn) {
+            area.unmap(&mut self.page_table);
+        }
+    }
 
     /// 从尾部开始找, 因为动态分配的内存一般在最后
     /// 在原有的MapArea上增/删页, 并添加相关映射
@@ -1428,7 +1440,7 @@ impl MemorySet {
 impl MemorySet {
     /// 只允许要求vpn_range在单一的MapArea中使用
     pub fn get_area_by_range(&self, vpn_range: &VPNRange) -> Option<&MapArea> {
-        if let Some((start_vpn, area)) = self.areas.range(..vpn_range.get_end()).next_back() {
+        if let Some((_start_vpn, area)) = self.areas.range(..vpn_range.get_end()).next_back() {
             if area.vpn_range.is_contain(vpn_range) {
                 return Some(area);
             }
@@ -1517,13 +1529,12 @@ impl MemorySet {
                         // 注意: 找页的时候需要加上偏移量
                         let offset = area.offset
                             + (vpn.0 - area.vpn_range.get_start().0) * PAGE_SIZE as usize;
-                        log::error!(
+                        log::debug!(
                             "[handle_lazy_allocation_area] lazy alloc file_offset {:#x}, vpn: {:#x}",
                             offset,
                             vpn.0
                         );
                         let backend_file = area.backend_file.as_ref().unwrap().clone();
-                        let seals = SealFlags::from(backend_file.get_inode().get_seals());
                         if let Some(page) = backend_file.get_page(offset) {
                             // 增加页表映射
                             // 注意这里也可以是写时复制(私有映射)
@@ -1536,7 +1547,7 @@ impl MemorySet {
                             return Ok(());
                         } else {
                             // 如果没有找到对应的页, 则说明文件映射的偏移不合法
-                            log::error!(
+                            log::debug!(
                                 "[handle_lazy_allocation_area] lazy alloc file_offset {:#x} not found",
                                 offset
                             );
@@ -1546,7 +1557,7 @@ impl MemorySet {
                         // 私有文件映射, 写时复制
                         let offset = area.offset
                             + (vpn.0 - area.vpn_range.get_start().0) * PAGE_SIZE as usize;
-                        log::error!(
+                        log::debug!(
                             "[handle_lazy_allocation_area] COW file_offset {:#x}",
                             offset
                         );
@@ -1673,7 +1684,7 @@ impl MemorySet {
                 vpn.0
             );
         }
-        self.areas.iter().for_each(|(vpn, area)| {
+        self.areas.iter().for_each(|(_vpn, area)| {
             log::error!("[handle_lazy_allocation_area] area: {:#x?}", area.vpn_range,);
         });
         log::error!(
@@ -1852,77 +1863,6 @@ impl MemorySet {
 
         Ok(0)
     }
-    // pub fn pre_handle_cow_and_lazy_alloc(&mut self, vpn_range: VPNRange) -> SyscallRet {
-    //     let mut vpn = vpn_range.get_start();
-    //     while vpn < vpn_range.get_end() {
-    //         if let Some(pte) = self.page_table.find_pte(vpn) {
-    //             if pte.is_cow() {
-    //                 debug_assert!(!pte.is_shared());
-    //                 log::warn!(
-    //                     "[pre_handle_cow_and_lazy_alloc] pre handle cow page fault, vpn {:#x}, pte: {:#x?}",
-    //                     vpn.0,
-    //                     pte
-    //                 );
-    //                 if let Some((_, area)) = self.areas.range_mut(..=vpn).next_back() {
-    //                     if area.vpn_range.contains_vpn(vpn) {
-    //                         let data_frame = area.pages.get(&vpn).unwrap();
-    //                         if Arc::strong_count(data_frame) == 1 {
-    //                             log::warn!("[pre_handle_cow_and_lazy_alloc] arc strong count == 1");
-    //                             let mut flags = pte.flags();
-    //                             flags.remove(PTEFlags::COW);
-    //                             flags.insert(PTEFlags::W);
-    //                             #[cfg(target_arch = "loongarch64")]
-    //                             flags.insert(PTEFlags::D);
-    //                             *pte = PageTableEntry::new(pte.ppn(), flags);
-    //                         } else {
-    //                             log::warn!("arc strong count > 1");
-    //                             let page = Page::new_framed(None);
-    //                             let src_frame = pte.ppn().get_bytes_array();
-    //                             let dst_frame = page.ppn().get_bytes_array();
-    //                             log::warn!("dst_frame: {:#x}", page.ppn().0);
-    //                             dst_frame.copy_from_slice(src_frame);
-    //                             let mut flags = pte.flags();
-    //                             flags.remove(PTEFlags::COW);
-    //                             flags.insert(PTEFlags::W);
-    //                             #[cfg(target_arch = "loongarch64")]
-    //                             flags.insert(PTEFlags::D);
-    //                             *pte = PageTableEntry::new(page.ppn(), flags);
-    //                             area.pages.insert(vpn, Arc::new(page));
-    //                         }
-    //                         unsafe {
-    //                             sfence_vma_vaddr(vpn.0 << PAGE_SIZE_BITS);
-    //                         }
-    //                     }
-    //                 }
-    //             }
-    //         } else {
-    //             // 页表中没有对应的页表项, 可能是lazy allocation区域
-    //             if let Some((_, area)) = self.areas.range_mut(..=vpn).next_back() {
-    //                 if area.vpn_range.contains_vpn(vpn) {
-    //                     log::warn!(
-    //                         "[pre_handle_cow_and_lazy_alloc] lazy allocation area, vpn: {:#x}, area: {:#x?}",
-    //                         vpn.0,
-    //                         area.vpn_range
-    //                     );
-    //                     // 处理lazy allocation区域
-    //                     if let Err(sig) = self.handle_lazy_allocation_area(
-    //                         VirtAddr::from(vpn.0 << PAGE_SIZE_BITS),
-    //                         PageFaultCause::STORE,
-    //                     ) {
-    //                         log::error!(
-    //                             "[pre_handle_cow_and_lazy_alloc] handle lazy allocation area failed: {:?}",
-    //                             sig
-    //                         );
-    //                         return Err(Errno::EFAULT);
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //         // 继续处理下一页
-    //         vpn.step();
-    //     }
-    //     return Ok(0);
-    // }
     // 检查是否是COW或者lazy_allocation的区域
     // 逐页处理
     // used by `copy_to_user`, 不仅会检查, 还会提前处理, 避免实际写的时候发生page fault
@@ -2008,13 +1948,18 @@ impl MemorySet {
                                                 vpn.0,
                                                 page.ppn().0
                                             );
-                                            #[cfg(target_arch = "riscv64")]{
+                                            #[cfg(target_arch = "riscv64")]
+                                            {
                                                 *pte = PageTableEntry::new(
                                                     page.ppn(),
-                                                    pte_flags | PTEFlags::V | PTEFlags::A | PTEFlags::D,
+                                                    pte_flags
+                                                        | PTEFlags::V
+                                                        | PTEFlags::A
+                                                        | PTEFlags::D,
                                                 );
                                             }
-                                            #[cfg(target_arch = "loongarch64")]{
+                                            #[cfg(target_arch = "loongarch64")]
+                                            {
                                                 *pte = PageTableEntry::new(
                                                     page.ppn(),
                                                     pte_flags | PTEFlags::V,
@@ -2022,14 +1967,18 @@ impl MemorySet {
                                             }
                                             area.pages.insert(vpn, page);
                                         } else {
-                                            let ppn = page.ppn();
-                                            #[cfg(target_arch = "riscv64")]{
+                                            #[cfg(target_arch = "riscv64")]
+                                            {
                                                 *pte = PageTableEntry::new(
                                                     page.ppn(),
-                                                    pte_flags | PTEFlags::V | PTEFlags::A | PTEFlags::D,
+                                                    pte_flags
+                                                        | PTEFlags::V
+                                                        | PTEFlags::A
+                                                        | PTEFlags::D,
                                                 );
                                             }
-                                            #[cfg(target_arch = "loongarch64")]{
+                                            #[cfg(target_arch = "loongarch64")]
+                                            {
                                                 *pte = PageTableEntry::new(
                                                     page.ppn(),
                                                     pte_flags | PTEFlags::V,
@@ -2048,10 +1997,15 @@ impl MemorySet {
                                     map_perm.insert(MapPermission::W);
                                     let pte_flags = PTEFlags::from(map_perm);
                                     let ppn = page.ppn();
-                                    #[cfg(target_arch = "riscv64")]{
-                                        *pte = PageTableEntry::new(ppn, pte_flags | PTEFlags::V | PTEFlags::A | PTEFlags::D);
+                                    #[cfg(target_arch = "riscv64")]
+                                    {
+                                        *pte = PageTableEntry::new(
+                                            ppn,
+                                            pte_flags | PTEFlags::V | PTEFlags::A | PTEFlags::D,
+                                        );
                                     }
-                                    #[cfg(target_arch = "loongarch64")]{
+                                    #[cfg(target_arch = "loongarch64")]
+                                    {
                                         *pte = PageTableEntry::new(ppn, pte_flags | PTEFlags::V);
                                     }
                                     area.pages.insert(vpn, Arc::new(page));
@@ -2194,22 +2148,29 @@ impl MemorySet {
                 VirtAddr::from(shmaddr + shm_size).ceil(),
             )
         };
+        log::info!(
+            "[attach_shm_segment] shmaddr: {:#x}, shm_size: {:#x}, vpn_range: {:?}",
+            shmaddr,
+            shm_size,
+            vpn_range
+        );
         let mut map_area = MapArea::new(vpn_range, MapType::Framed, map_perm, None, 0, false);
         if shm_segment.pages.is_empty() {
+            log::info!("[attach_shm_segment] shm segment is empty, allocating new pages");
             for vpn in vpn_range {
                 let page = Arc::new(Page::new_framed(None));
                 self.page_table.map(vpn, page.ppn(), map_perm.into());
-                shm_segment.pages.push(Arc::downgrade(&page));
+                shm_segment.pages.push(page.clone());
                 map_area.pages.insert(vpn, page);
             }
         } else {
+            log::info!("[attach_shm_segment] shm segment is not empty, mapping existing pages, shm_size: {:#x}, shm_segment.pages.len(): {}",
+                shm_size, shm_segment.pages.len());
             debug_assert!(
                 shm_segment.pages.len() == vpn_range.get_end().0 - vpn_range.get_start().0
             );
             for vpn in vpn_range {
-                let page = shm_segment.pages[vpn.0 - vpn_range.get_start().0]
-                    .upgrade()
-                    .unwrap();
+                let page = shm_segment.pages[vpn.0 - vpn_range.get_start().0].clone();
                 self.page_table.map(vpn, page.ppn(), map_perm.into());
                 map_area.pages.insert(vpn, page);
             }
@@ -2219,7 +2180,7 @@ impl MemorySet {
     }
     pub fn detach_shm_segment(&mut self, shmaddr: usize) {
         let shm_start_vpn = VirtAddr::from(shmaddr).floor();
-        self.remove_area_with_start_vpn(shm_start_vpn);
+        self.remove_area_and_mapping(shm_start_vpn);
     }
     // ToOptimize:
     pub fn is_range_free(&self, range: VPNRange) -> bool {

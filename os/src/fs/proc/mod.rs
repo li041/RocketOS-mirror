@@ -1,5 +1,5 @@
 use crate::{
-    ext4::inode::{Ext4InodeDisk, S_IFCHR, S_IFDIR, S_IFLNK, S_IFREG},
+    ext4::inode::{Ext4InodeDisk, S_IFDIR, S_IFLNK, S_IFREG},
     fs::proc::{
         cpuinfo::{CPUInfoFile, CPUINFO},
         interrupts::{InterruptsFile, INTERRUPTS},
@@ -10,22 +10,18 @@ use crate::{
 use alloc::vec;
 
 use super::{
-    dentry::{self, delete_dentry, insert_core_dentry, Dentry},
-    file::{FileOp, OpenFlags},
+    dentry::{self, delete_dentry, insert_core_dentry},
+    file::OpenFlags,
     inode::InodeOp,
-    mount::VfsMount,
-    namei::{filename_create, filename_lookup, parse_path_uncheck, path_openat, Nameidata},
+    namei::{filename_create, filename_lookup, parse_path_uncheck, Nameidata},
     path::Path,
-    pipe::PipeInode,
-    uapi::{DevT, RenameFlags},
-    AT_FDCWD,
+    uapi::RenameFlags,
 };
 use alloc::sync::Arc;
 use exe::{ExeFile, ExeInode, EXE};
 use fd::FdDirInode;
 use meminfo::{MemInfoFile, MEMINFO};
 use mounts::{MountsFile, MOUNTS};
-use smoltcp::config;
 use spin::Once;
 use tainted::{TaintedFile, TAINTED};
 
@@ -220,12 +216,33 @@ pub fn init_procfs(root_path: Arc<Path>) {
             let parent_inode = nd.dentry.get_inode();
             parent_inode.create(dentry.clone(), shmmax_mode);
             // 现在dentry的inode指向/proc/sys/kernel/shmmax
-            dentry.get_inode().write(0, b"8192"); // 设置默认的共享内存最大值为8192
+            dentry.get_inode().write(0, b"334455"); // 设置默认的共享内存最大值为8192
             insert_core_dentry(dentry.clone());
             SHMMAX.call_once(|| dentry.get_inode().clone());
         }
         Err(e) => {
             panic!("create {} failed: {:?}", shmmax_path, e);
+        }
+    }
+
+    let shmmni_path = "/proc/sys/kernel/shmmni";
+    let shmmni_mode = S_IFREG as u16 | 0o444;
+    nd = Nameidata {
+        path_segments: parse_path_uncheck(shmmni_path),
+        dentry: root_path.dentry.clone(),
+        mnt: root_path.mnt.clone(),
+        depth: 0,
+    };
+    match filename_create(&mut nd, 0) {
+        Ok(dentry) => {
+            let parent_inode = nd.dentry.get_inode();
+            parent_inode.create(dentry.clone(), shmmni_mode);
+            // 现在dentry的inode指向/proc/sys/kernel/shmmin
+            dentry.get_inode().write(0, b"1"); // 设置默认的共享内存最小值为1
+            insert_core_dentry(dentry.clone());
+        }
+        Err(e) => {
+            panic!("create {} failed: {:?}", shmmni_path, e);
         }
     }
 
@@ -675,16 +692,19 @@ pub fn init_procfs(root_path: Arc<Path>) {
     };
 }
 
+const SHM_MAX_DEFAULT: usize = 334455; // 默认的共享内存最大值
+
 pub fn get_shm_max() -> usize {
     let shmmax_inode = SHMMAX.get().unwrap();
     let mut buf = vec![0; 32];
-    shmmax_inode.read(0, &mut buf);
-    let shmmax_str = core::str::from_utf8(&buf).unwrap_or("8192");
+    let read_byte = shmmax_inode.read(0, &mut buf);
+    log::info!("[get_shm_max] shmmax raw value: {:?}", buf);
+    let shmmax_str = core::str::from_utf8(&buf[..read_byte]).unwrap_or("334455");
     match shmmax_str.trim().parse::<usize>() {
         Ok(size) => size,
         Err(_) => {
             log::error!("Failed to parse shmmax value, using default 8192");
-            8192 // 默认值
+            SHM_MAX_DEFAULT
         }
     }
 }

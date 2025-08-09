@@ -40,6 +40,7 @@ impl WaitQueue {
         }
     }
     // 打印队列中所有内容
+    #[allow(unused)]
     pub fn dump_queue(&self) {
         println!("**************************** dump queue ****************************");
         for task in self.queue.iter() {

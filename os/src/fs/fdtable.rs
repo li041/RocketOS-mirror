@@ -408,7 +408,7 @@ impl FdTable {
                         // Todo: 权限检查
                         arg
                     };
-                    pipe.resize(pipe_size);
+                    pipe.resize(pipe_size)?;
                     return Ok(pipe_size);
                 } else {
                     log::warn!("[fcntl] F_SETPIPE_SZ on non-pipe file");

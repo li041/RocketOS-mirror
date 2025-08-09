@@ -2,7 +2,6 @@ use alloc::{string::String, sync::Arc, vec::Vec};
 
 use crate::{
     arch::backtrace::symbol::lookup_symbol,
-    fs::namei,
     task::{current_task, get_stack_top_by_sp, Task, KSTACK_SIZE},
 };
 
@@ -10,6 +9,7 @@ use crate::{
 const MAX_BACKTRACE_DEPTH: usize = 32;
 
 /// 打印当前任务的调用栈信息
+#[allow(unused)]
 pub fn dump_backtrace() {
     println!("/************** Backtrace Start **************/");
 

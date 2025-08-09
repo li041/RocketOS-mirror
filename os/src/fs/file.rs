@@ -3,7 +3,6 @@ use core::any::Any;
 use spin::Mutex;
 
 use alloc::{sync::Arc, vec::Vec};
-use log::info;
 use virtio_drivers::PAGE_SIZE;
 
 use crate::{
@@ -109,7 +108,7 @@ pub trait FileOp: Any + Send + Sync {
     fn can_seek(&self) -> Result<(), Errno> {
         unimplemented!();
     }
-    fn add_wait_queue(&self, tid: usize) {
+    fn add_wait_queue(&self, _tid: usize) {
         unimplemented!();
     }
     fn hang_up(&self) -> bool {
@@ -208,7 +207,10 @@ impl FileOp for File {
     }
     fn read<'a>(&'a self, buf: &'a mut [u8]) -> SyscallRet {
         if self.inner.lock().path.dentry.is_dir() {
-            log::error!("read a directory as file path : {}", self.inner.lock().path.dentry.absolute_path);
+            log::error!(
+                "read a directory as file path : {}",
+                self.inner.lock().path.dentry.absolute_path
+            );
             return Err(Errno::EISDIR);
         }
         let read_size = self.inner_handler(|inner| {

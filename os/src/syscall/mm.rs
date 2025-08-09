@@ -14,8 +14,9 @@ use crate::{
     index_list::{IndexList, ListIndex},
     mm::{
         shm::{
-            self, add_shm_segment, attach_shm_segment, check_shm_segment_exist, detach_shm_segment,
-            stat_shm_segment, ShmAtFlags, ShmCtlOp, ShmGetFlags, ShmId, ShmSegment, IPC_PRIVATE,
+            self, add_shm_segment, attach_shm_segment, check_shm_perm, check_shm_segment_exist,
+            detach_shm_segment, do_shmctl, ShmAtFlags, ShmCtlOp, ShmGetFlags, ShmId, ShmSegment,
+            IPC_PRIVATE,
         },
         MapArea, MapPermission, MapType, VPNRange, VirtAddr, VirtPageNum,
     },
@@ -1065,12 +1066,18 @@ const SHM_MIN: usize = 1;
 
 /* shm start */
 pub fn sys_shmget(key: usize, size: usize, shmflg: i32) -> SyscallRet {
-    let shmflg = ShmGetFlags::from_bits_truncate(shmflg);
+    let mode = (shmflg & 0o777) as u16; // 提取权限位
+    let shmflg = ShmGetFlags::from_bits_truncate(shmflg & !0o777);
+    if shmflg.contains(ShmGetFlags::SHM_HUGETLB) {
+        log::warn!("[sys_shmget] SHM_HUGETLB flag is not supported");
+        return Err(Errno::EINVAL);
+    }
     log::info!(
-        "sys_shmget: key: {:#x}, size: {:#x}, shmflg: {:#x}",
+        "sys_shmget: key: {:#x}, size: {:#x}, shmflg: {:#x}, mode: {:#o}",
         key,
         size,
-        shmflg
+        shmflg,
+        mode,
     );
     let task = current_task();
     let shm_max = get_shm_max();
@@ -1085,15 +1092,15 @@ pub fn sys_shmget(key: usize, size: usize, shmflg: i32) -> SyscallRet {
     }
     if key == IPC_PRIVATE {
         // IPC_PRIVATE是一个特殊的key值, 用于创建一个新的共享内存段
-        let shmid = add_shm_segment(size, task.tgid(), None);
+        let shmid = add_shm_segment(size, task.tgid(), None, mode);
         return Ok(shmid);
     }
     // 其他key值, 需要检查是否存在, 若存在, 则检查权限
-    let shmid = check_shm_segment_exist(key, size, &shmflg)?;
+    let shmid = check_shm_segment_exist(key, size, &shmflg, mode)?;
     if shmid == 0 {
         if shmflg.contains(ShmGetFlags::IPC_CREAT) {
             // 创建新的共享内存段, 同时指定了key(已检查key不存在)
-            let shmid = add_shm_segment(size, task.tgid(), Some(key));
+            let shmid = add_shm_segment(size, task.tgid(), Some(key), mode);
             debug_assert!(shmid == key);
             return Ok(shmid);
         } else {
@@ -1127,31 +1134,16 @@ pub fn sys_shmdt(shmaddr: usize) -> SyscallRet {
     detach_shm_segment(shmaddr)
 }
 
-pub fn sys_shmctl(shmid: usize, op: i32, buf: *mut ShmId) -> SyscallRet {
+pub fn sys_shmctl(shmid: usize, op: i32, buf: usize) -> SyscallRet {
     let shmctl_op = ShmCtlOp::from(op);
     log::info!(
         "sys_shmctl: shmid: {:#x}, op: {}-{:?}, buf: {:#x}",
         shmid,
         op,
         shmctl_op,
-        buf as usize
+        buf
     );
-    match shmctl_op {
-        ShmCtlOp::IPC_STAT => {
-            // 读取共享内存段信息
-            stat_shm_segment(shmid, buf)
-        }
-        ShmCtlOp::IPC_RMID => {
-            // Todo: 标记删除共享内存段
-            return Ok(0);
-        }
-        _ => {
-            log::warn!("[sys_shmctl] Unimplemented");
-            // Todo: 实现sys_shmctl
-            return Ok(0);
-            // return Err(Errno::EINVAL);
-        }
-    }
+    do_shmctl(shmid, shmctl_op, buf)
 }
 
 /* shm end */

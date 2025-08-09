@@ -1,7 +1,4 @@
-use core::{default, mem, str};
-
-use lazy_static::lazy_static;
-use spin::{lazy, mutex, Once, RwLock};
+use spin::{Once, RwLock};
 
 use crate::{
     ext4::inode::Ext4InodeDisk,

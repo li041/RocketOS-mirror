@@ -2,32 +2,21 @@ use core::panic;
 
 use super::{
     dentry::{insert_dentry, lookup_dcache_with_absolute_path, Dentry},
-    dev::tty::{TtyFile, TTY},
+    dev::tty::TTY,
     file::{File, FileOp, OpenFlags},
-    inode::InodeOp,
     mount::VfsMount,
     path::Path,
     pipe::Pipe,
     proc::{
-        exe::EXE,
-        maps::MAPS,
-        meminfo::{self, MEMINFO},
-        mounts::{MountsFile, MOUNTS},
-        pagemap::PAGEMAP,
-        pid::PID_STAT,
+        exe::EXE, maps::MAPS, meminfo::MEMINFO, mounts::MOUNTS, pagemap::PAGEMAP, pid::PID_STAT,
         status::STATUS,
     },
-    tmp,
     uapi::ResolveFlags,
-    FileOld, Stdin, FS_BLOCK_SIZE,
 };
 use crate::{
-    ext4::{
-        dentry,
-        inode::{self, S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFMT, S_IFREG},
-    },
+    ext4::inode::{S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFMT, S_IFREG},
     fs::{
-        dentry::{dentry_check_open, DentryFlags},
+        dentry::dentry_check_open,
         dev::{
             loop_device::{get_loop_device, LOOP_CONTROL},
             null::NULL,
@@ -35,19 +24,18 @@ use crate::{
             urandom::URANDOM,
             zero::ZERO,
         },
-        fdtable::{FdEntry, FdFlags},
         proc::{
             cpuinfo::CPUINFO,
-            fd::{record_fd, FD_FILE},
+            fd::FD_FILE,
             interrupts::INTERRUPTS,
-            pid::{record_target_pid, SELF_STAT, TARGERT_PID},
+            pid::{record_target_pid, SELF_STAT},
             pid_max::PIDMAX,
             smaps::SMAPS,
             tainted::TAINTED,
         },
         AT_FDCWD,
     },
-    syscall::{errno::Errno, AT_SYMLINK_NOFOLLOW, NAME_MAX},
+    syscall::{errno::Errno, NAME_MAX},
     task::current_task,
 };
 use alloc::{
@@ -302,8 +290,6 @@ pub fn open_last_lookups(
     flags: OpenFlags,
     mode: i32,
 ) -> Result<Arc<dyn FileOp>, Errno> {
-    let absolute_current_dir = nd.dentry.absolute_path.clone();
-
     // 判断是否是 O_TMPFILE
     if flags.contains(OpenFlags::O_TMPFILE) {
         // 确保传入的是目录路径
@@ -424,8 +410,6 @@ pub fn open_last_lookups2(
     mode: i32,
     resolve_flags: &ResolveFlags,
 ) -> Result<Arc<dyn FileOp>, Errno> {
-    let absolute_current_dir = nd.dentry.absolute_path.clone();
-
     // 判断是否是 O_TMPFILE
     if flags.contains(OpenFlags::O_TMPFILE) {
         // 确保传入的是目录路径
@@ -488,7 +472,7 @@ pub fn open_last_lookups2(
                         symlink_target
                     );
                     // 根据符号链接目标, 更新nd
-                    nd.resolve_symlink(&symlink_target);
+                    nd.resolve_symlink(&symlink_target)?;
                     follow_symlink += 1;
                     continue;
                 }
@@ -739,18 +723,14 @@ pub fn lookup_dentry(nd: &mut Nameidata) -> Arc<Dentry> {
     dentry
 }
 
-const EEXIST: isize = 17;
-
 // 创建新文件或目录时用于解析路径, 获得对应的`dentry`
 // 同时检查路径是否存在, 若存在则返回错误
 /// 预期的返回值是负目录项(已建立父子关系), nd的dentry和inode为父目录
 pub fn filename_create(nd: &mut Nameidata, _lookup_flags: usize) -> Result<Arc<Dentry>, Errno> {
-    let mut error: i32;
     // 解析路径的目录部分，调用后nd.dentry是最后一个组件的父目录
     match link_path_walk(nd) {
         Ok(_) => {
             // 到达最后一个组件
-            let mut absolute_current_dir = nd.dentry.absolute_path.clone();
             // 处理`.`和`..`, 最后一个组件不能是`.`或`..`, 不合法
             if nd.path_segments[nd.depth] == "." {
                 return Err(Errno::EEXIST);
@@ -774,7 +754,6 @@ pub fn filename_create(nd: &mut Nameidata, _lookup_flags: usize) -> Result<Arc<D
 /// 根据路径查找inode, 如果不存在, 则返回error
 /// flags可能包含AT_SYMLINK_NOFOLLOW, 如果包含则路径最后一个组件不跟随符号链接
 pub fn filename_lookup(nd: &mut Nameidata, follow_symlink: bool) -> Result<Arc<Dentry>, Errno> {
-    let mut error: i32;
     match link_path_walk(nd) {
         Ok(_) => {
             // 到达最后一个组件
@@ -804,7 +783,7 @@ pub fn filename_lookup(nd: &mut Nameidata, follow_symlink: bool) -> Result<Arc<D
                                 nd.path_segments[nd.depth],
                                 symlink_target
                             );
-                            nd.resolve_symlink(&symlink_target);
+                            nd.resolve_symlink(&symlink_target)?;
                             follow_symlink_cnt += 1;
                             continue;
                         }
@@ -874,11 +853,6 @@ pub fn filename_lookup(nd: &mut Nameidata, follow_symlink: bool) -> Result<Arc<D
 //     }
 // }
 
-// 不是目录
-const ENOTDIR: isize = 20;
-// 访问路径组件不存在
-const ENOENT: isize = 2;
-
 // 注意: name可能为"."或"..", 在DentryCache中绝对路径不包括这两个特殊目录
 /// 若找不到, 则返回负目录项, nd中的dentry和inode为父目录的
 /// 由上层调用者保真nd.dentry是positive
@@ -940,7 +914,7 @@ pub fn link_path_walk(nd: &mut Nameidata) -> Result<(), Errno> {
                     symlink_target
                 );
                 // 根据符号链接目标, 更新nd
-                nd.resolve_symlink(&symlink_target);
+                nd.resolve_symlink(&symlink_target)?;
                 // 更新len
                 len = nd.path_segments.len() - 1;
                 // 重新查找
@@ -1036,7 +1010,7 @@ pub fn link_path_walk2(nd: &mut Nameidata, resolve_flags: &ResolveFlags) -> Resu
                     symlink_target
                 );
                 // 根据符号链接目标, 更新nd
-                nd.resolve_symlink(&symlink_target);
+                nd.resolve_symlink(&symlink_target)?;
                 // 更新len
                 len = nd.path_segments.len() - 1;
                 // 重新查找

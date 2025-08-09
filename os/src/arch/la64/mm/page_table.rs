@@ -589,6 +589,7 @@ impl PageTable {
 }
 
 // Todo:
+#[allow(unused)]
 pub fn current_token() -> usize {
     todo!()
 }

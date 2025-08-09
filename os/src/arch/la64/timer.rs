@@ -1,18 +1,15 @@
+#![allow(unused)]
 use core::{
     arch::asm,
-    cmp::Ordering,
-    ops::{Add, Sub},
     ptr::{read_volatile, write_volatile},
 };
 
 use crate::{
     timer::{StatxTimeStamp, TimeSpec, TimeVal, MSEC_PER_SEC},
-    utils::{seconds_to_beijing_datetime, DateTime},
+    utils::DateTime,
 };
 
 use super::config::{self, CLOCK_FREQ};
-
-const NANOS_PER_SEC: u64 = 1_000_000_000;
 
 impl TimeSpec {
     pub fn new_machine_time() -> Self {
@@ -36,7 +33,7 @@ impl TimeSpec {
             nsec: 0,
         };
         let current_time = get_time_ns();
-        base_time.nsec += (current_time % 1000000000);
+        base_time.nsec += current_time % 1000000000;
         base_time.sec += current_time / 1000000000;
         base_time
     }
@@ -246,7 +243,6 @@ pub fn ls7a_rtc_real_time() {
     );
 }
 
-/// Todo:
 pub fn read_rtc() -> u64 {
     let low = rtc_read(SYS_TOYREAD0) as u64;
     let high = rtc_read(SYS_TOYREAD1) as u64;

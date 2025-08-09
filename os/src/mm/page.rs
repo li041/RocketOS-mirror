@@ -1,7 +1,4 @@
-use core::{alloc::Layout, ops::Add};
-
 use alloc::{
-    alloc::{alloc, dealloc},
     sync::{Arc, Weak},
     vec::Vec,
 };
@@ -10,7 +7,7 @@ use virtio_drivers::PAGE_SIZE;
 use crate::{
     arch::config::{EXT4_MAX_INLINE_DATA, KERNEL_BASE},
     drivers::block::{block_dev::BlockDevice, VIRTIO_BLOCK_SIZE},
-    ext4::{self, extent_tree::Ext4Extent, fs::EXT4_BLOCK_SIZE, inode::Ext4Inode, MAX_FS_BLOCK_ID},
+    ext4::{extent_tree::Ext4Extent, fs::EXT4_BLOCK_SIZE, inode::Ext4Inode, MAX_FS_BLOCK_ID},
     fs::{inode::InodeOp, page_cache::AddressSpace, FS_BLOCK_SIZE},
 };
 
@@ -20,7 +17,6 @@ use crate::arch::config::PAGE_SIZE_BITS;
 use crate::mm::PhysPageNum;
 
 use super::{
-    frame_alloc_range,
     frame_allocator::{frame_alloc_ppn, frame_alloc_range_any},
     frame_dealloc,
 };
@@ -30,14 +26,6 @@ pub enum PageKind {
     Filebe(RwLock<ShreadPageInfo>),
     // Todo: inline_data
     Inline(RwLock<InlinePageInfo>),
-}
-impl PageKind {
-    pub fn is_private(&self) -> bool {
-        match self {
-            PageKind::Framed => true,
-            _ => false,
-        }
-    }
 }
 
 pub struct ShreadPageInfo {

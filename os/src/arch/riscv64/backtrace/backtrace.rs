@@ -3,7 +3,7 @@ use alloc::{string::String, sync::Arc, vec::Vec};
 use crate::task::{current_task, get_stack_top_by_sp, Task, KSTACK_SIZE};
 
 // 嵌套深度
-const MAX_BACKTRACE_DEPTH: usize = 32;  
+const MAX_BACKTRACE_DEPTH: usize = 32;
 
 /// 打印当前任务的调用栈信息
 pub fn dump_backtrace() {
@@ -37,7 +37,10 @@ pub fn dump_backtrace() {
     }
 
     if frame_count >= MAX_BACKTRACE_DEPTH {
-        println!("Backtrace truncated at maximum depth of {}", MAX_BACKTRACE_DEPTH);
+        println!(
+            "Backtrace truncated at maximum depth of {}",
+            MAX_BACKTRACE_DEPTH
+        );
     }
 
     println!("/*************** Backtrace End ***************/");
@@ -86,6 +89,7 @@ fn print_frame_info(frame_num: usize, fp: usize, ra: usize) {
 }
 
 /// 打印栈帧信息(带符号解析)
+#[allow(unused)]
 fn print_frame_info_with_symbol(frame_num: usize, ra: usize, name: String) {
     println!("  #{}: ra:{:#x}, {:?}", frame_num, ra, name);
 }

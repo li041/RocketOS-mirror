@@ -27,14 +27,6 @@ impl Debug for BpfInsn {
 }
 
 impl BpfInsn {
-    pub fn new(code: u8, dst_src_reg: u8, off: i16, imm: i32) -> Self {
-        BpfInsn {
-            code,
-            dst_src_reg,
-            off,
-            imm,
-        }
-    }
     pub fn dst_reg(&self) -> usize {
         (self.dst_src_reg & 0xF) as usize // 只取低4位
     }
@@ -121,6 +113,7 @@ impl TryFrom<u32> for BpfProgType {
 }
 
 // BPF Token结构（权限委托）
+#[allow(unused)]
 pub struct BpfToken {
     pub allowed_cmds: u64,
     pub allowed_prog_types: u64,
@@ -128,6 +121,7 @@ pub struct BpfToken {
 }
 
 // BPF程序结构
+#[allow(unused)]
 pub struct BpfProg {
     pub id: u32,
     pub prog_type: BpfProgType,
@@ -187,27 +181,27 @@ impl BpfProg {
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum BpfInsnClass {
-    BPF_LD = 0x00,    // Load
-    BPF_LDX = 0x01,   // Load Index
-    BPF_ST = 0x02,    // Store
-    BPF_STX = 0x03,   // Store Index
-    BPF_ALU = 0x04,   // ALU Operations
-    BPF_JMP = 0x05,   // Jump
-    BPF_RET = 0x06,   // Return
-    BPF_ALU64 = 0x07, // Miscellaneous
+    BpfLd = 0x00,    // Load
+    BpfLdx = 0x01,   // Load Index
+    BpfSt = 0x02,    // Store
+    BpfStx = 0x03,   // Store Index
+    BpfAlu = 0x04,   // ALU Operations
+    BpfJmp = 0x05,   // Jump
+    BpfRet = 0x06,   // Return
+    BpfAlu64 = 0x07, // Miscellaneous
 }
 
 impl Debug for BpfInsnClass {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            BpfInsnClass::BPF_LD => write!(f, "BPF_LD"),
-            BpfInsnClass::BPF_LDX => write!(f, "BPF_LDX"),
-            BpfInsnClass::BPF_ST => write!(f, "BPF_ST"),
-            BpfInsnClass::BPF_STX => write!(f, "BPF_STX"),
-            BpfInsnClass::BPF_ALU => write!(f, "BPF_ALU"),
-            BpfInsnClass::BPF_JMP => write!(f, "BPF_JMP"),
-            BpfInsnClass::BPF_RET => write!(f, "BPF_RET"),
-            BpfInsnClass::BPF_ALU64 => write!(f, "BPF_ALU64"),
+            BpfInsnClass::BpfLd => write!(f, "BPF_LD"),
+            BpfInsnClass::BpfLdx => write!(f, "BPF_LDX"),
+            BpfInsnClass::BpfSt => write!(f, "BPF_ST"),
+            BpfInsnClass::BpfStx => write!(f, "BPF_STX"),
+            BpfInsnClass::BpfAlu => write!(f, "BPF_ALU"),
+            BpfInsnClass::BpfJmp => write!(f, "BPF_JMP"),
+            BpfInsnClass::BpfRet => write!(f, "BPF_RET"),
+            BpfInsnClass::BpfAlu64 => write!(f, "BPF_ALU64"),
         }
     }
 }
@@ -215,14 +209,14 @@ impl Debug for BpfInsnClass {
 impl From<u8> for BpfInsnClass {
     fn from(value: u8) -> Self {
         match value & 0x07 {
-            0x00 => BpfInsnClass::BPF_LD,
-            0x01 => BpfInsnClass::BPF_LDX,
-            0x02 => BpfInsnClass::BPF_ST,
-            0x03 => BpfInsnClass::BPF_STX,
-            0x04 => BpfInsnClass::BPF_ALU,
-            0x05 => BpfInsnClass::BPF_JMP,
-            0x06 => BpfInsnClass::BPF_RET,
-            0x07 => BpfInsnClass::BPF_ALU64,
+            0x00 => BpfInsnClass::BpfLd,
+            0x01 => BpfInsnClass::BpfLdx,
+            0x02 => BpfInsnClass::BpfSt,
+            0x03 => BpfInsnClass::BpfStx,
+            0x04 => BpfInsnClass::BpfAlu,
+            0x05 => BpfInsnClass::BpfJmp,
+            0x06 => BpfInsnClass::BpfRet,
+            0x07 => BpfInsnClass::BpfAlu64,
             _ => unreachable!(),
         }
     }
@@ -231,10 +225,12 @@ impl From<u8> for BpfInsnClass {
 // BPF指令码定义
 pub const BPF_LD: u8 = 0x00; // Load
 pub const BPF_LDX: u8 = 0x01; // Load Index
+#[allow(unused)]
 pub const BPF_ST: u8 = 0x02; // Store
 pub const BPF_STX: u8 = 0x03; // Store Index
 pub const BPF_ALU: u8 = 0x04; // ALU Operations
 pub const BPF_JMP: u8 = 0x05; // Jump
+#[allow(unused)]
 pub const BPF_RET: u8 = 0x06; // Return
 pub const BPF_ALU64: u8 = 0x07; // ALU Operations 64-bit
 
@@ -256,6 +252,7 @@ const BPF_MOD: u8 = 0x90; // 取模
 const BPF_XOR: u8 = 0xA0; // 按位异或
 const BPF_MOV: u8 = 0xB0; // 移动
 const BPF_ARSH: u8 = 0xC0; // 算术右移
+#[allow(unused)]
 const BPF_END: u8 = 0xD0; // 结束
 
 // BPF跳转指令
@@ -271,12 +268,12 @@ const BPF_JSET: u8 = 0x40;
 const BPF_EXIT: u8 = 0x90;
 const BPF_CALL: u8 = 0x80;
 
-pub fn interpret(insns: &[BpfInsn], bpf_itet__task_ptr: usize) -> u64 {
+pub fn interpret(insns: &[BpfInsn], bpf_itet_task_ptr: usize) -> u64 {
     const BPF_STACK_SIZE: usize = 512; // 模拟栈大小
     let mut regs = [0u64; 11]; // R0~R10
-    let mut stack = [0u8; BPF_STACK_SIZE]; // 模拟栈
+    let stack = [0u8; BPF_STACK_SIZE]; // 模拟栈
     regs[10] = stack.as_ptr() as u64 + BPF_STACK_SIZE as u64; // R10指向栈顶
-    regs[1] = bpf_itet__task_ptr as u64; // R1指向BPF迭代器任务指针
+    regs[1] = bpf_itet_task_ptr as u64; // R1指向BPF迭代器任务指针
 
     let mut pc = 0;
 

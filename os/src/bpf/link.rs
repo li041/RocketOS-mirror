@@ -2,7 +2,7 @@ use alloc::sync::Arc;
 
 use crate::{fs::file::FileOp, syscall::errno::Errno};
 
-use super::insn::{BpfProg, BpfProgType};
+use super::insn::BpfProgType;
 
 pub enum BpfLinkType {
     Unspec,
@@ -33,6 +33,7 @@ impl TryFrom<u32> for BpfLinkType {
     }
 }
 
+#[allow(unused)]
 pub struct BpfLink {
     pub prog: Arc<dyn FileOp>,
     pub attach_type: BpfProgType,

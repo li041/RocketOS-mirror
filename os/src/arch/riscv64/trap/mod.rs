@@ -11,7 +11,7 @@ use riscv::register::{
 };
 
 use crate::{
-    arch::{mm::PageTable, trap::context::dump_trap_context},
+    arch::mm::PageTable,
     fs::{dentry::clean_dentry_cache, proc::interrupts::record_interrupt},
     mm::VirtAddr,
     signal::{handle_signal, SiField, SigInfo},

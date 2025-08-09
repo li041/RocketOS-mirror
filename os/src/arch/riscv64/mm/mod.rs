@@ -11,7 +11,7 @@ use crate::{
     task::current_task,
 };
 
-use super::config::{USER_MAX, USER_MAX_VA};
+use super::config::USER_MAX_VA;
 
 #[inline(always)]
 pub unsafe fn sfence_vma_vaddr(vaddr: usize) {

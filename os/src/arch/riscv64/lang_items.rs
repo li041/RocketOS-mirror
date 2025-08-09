@@ -1,6 +1,6 @@
 use core::panic::PanicInfo;
 
-use crate::arch::backtrace::backtrace::{count_frames, dump_backtrace};
+use crate::arch::backtrace::backtrace::dump_backtrace;
 
 use super::sbi::shutdown;
 

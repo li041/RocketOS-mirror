@@ -143,7 +143,7 @@ impl PasswdEntry {
                 }
             }
         };
-        log::error!("[passwd_lookup] database is {:?}", db);
+        log::debug!("[passwd_lookup] database is {:?}", db);
         if db == Database::Passwd {
             let file = path_openat("/etc/passwd", OpenFlags::O_CLOEXEC, AT_FDCWD, 0)?;
             let mut small_buf = [0u8; 128];
@@ -156,7 +156,7 @@ impl PasswdEntry {
                     // 文件读完，检查最后是否还有残余没有 '\n'
                     if !accu.is_empty() {
                         if let Some(line) = core::str::from_utf8(&accu).ok() {
-                            log::error!("[passwd_lookup] line: {}", line);
+                            log::debug!("[passwd_lookup] line: {}", line);
                             if let Some(entry) = PasswdEntry::parse_passwd_line(line) {
                                 // 做匹配
                                 if (nscdrequest.req_type == RequestType::GetpwNam)
@@ -181,7 +181,7 @@ impl PasswdEntry {
                     // 从 accu 中删掉这一行（包含 '\n'）
                     accu.drain(..=pos);
                     if let Ok(line) = core::str::from_utf8(&line_bytes) {
-                        log::error!("[passwd_lookup] line: {}", line);
+                        log::debug!("[passwd_lookup] line: {}", line);
                         if let Some(entry) = PasswdEntry::parse_passwd_line(line) {
                             // 匹配逻辑
                             let matches = if nscdrequest.req_type == RequestType::GetpwNam {

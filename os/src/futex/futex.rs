@@ -9,7 +9,6 @@ use axfutex::{flags::FLAGS_SHARED, futex::{FutexKey, FutexQ}, queues::{futex_has
 
 extern crate alloc;
 
-use core::cmp;
 
 use super::{flags::*, queue::FUTEXQUEUES};
 use crate::{
@@ -17,21 +16,14 @@ use crate::{
         config::{PAGE_SIZE_BITS, USER_MAX},
         mm::copy_from_user,
     },
-    futex::{
-        self,
-        queue::{display_futexqueues, futex_hash},
-    },
+    futex::queue::futex_hash,
     syscall::errno::{Errno, SyscallRet},
-    task::{
-        current_task, dump_wait_queue, wait, wait_timeout, wakeup,
-        yield_current_task, Task, ITIMER_REAL,
-    },
+    task::{current_task, wait, wait_timeout, wakeup, yield_current_task, Task, ITIMER_REAL},
     timer::TimeSpec,
 };
 use alloc::{
     collections::vec_deque::VecDeque,
     sync::{Arc, Weak},
-    task,
 };
 
 pub(crate) type Futex = u32;

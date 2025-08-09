@@ -164,7 +164,7 @@ pub fn handle_signal() {
         else {
             // 不包含SA_NODEFER时需要在信号掩码中防止重复sig
             log::warn!("[handle_signal] Using user {:?} signal handlers", sig);
-            log::info!(
+            log::debug!(
                 "[handle_signal] sa_handler: {:#x}, sigActionFlags: {:x}",
                 action.sa_handler,
                 action.flags
@@ -178,13 +178,13 @@ pub fn handle_signal() {
             // 加上action中的mask
             task.op_sig_pending_mut(|pending| {
                 pending.add_mask_sigset(action.mask);
-                log::info!("[handle_signal] current mask = {:?}", pending.mask);
+                log::debug!("[handle_signal] current mask = {:?}", pending.mask);
             });
 
             // 决定 signal handler 应该运行在哪个栈（SignalStack / 普通栈）
             // user_sp：当前用户栈（信号栈）位置
             let mut user_sp = (trap_cx.get_sp() - 15) & !0x0f; // 向下对齐到16字节
-            log::info!("[handle_signal] origin user stack {:#x}", user_sp);
+            log::debug!("[handle_signal] origin user stack {:#x}", user_sp);
             if action.flags.contains(SigActionFlag::SA_ONSTACK) {
                 let mut sig_stack = task.sigstack();
                 if sig_stack.ss_flags == 0 || sig_stack.ss_flags == SS_ONSTACK {
@@ -208,21 +208,21 @@ pub fn handle_signal() {
                 user_sp -= core::mem::size_of::<LinuxSigInfo>();
                 let siginfo_sp = user_sp; // siginfo_sp：塞入siginfo后的用户栈位置
                 trap_cx.set_a1(siginfo_sp);
-                log::info!("[handle_signal] a1 = {:#x}", siginfo_sp);
+                log::debug!("[handle_signal] a1 = {:#x}", siginfo_sp);
                 let linux_siginfo = sig_info.into();
 
                 // 创建ucontext
                 user_sp = user_sp - core::mem::size_of::<UContext>();
                 let ucontext_sp = user_sp; // ucontext_sp：塞入ucontext后的用户栈位置
                 trap_cx.set_a2(ucontext_sp);
-                log::info!("[handle_signal] a2 = {:#x}", ucontext_sp);
+                log::debug!("[handle_signal] a2 = {:#x}", ucontext_sp);
                 let ucontext = UContext::new(sig_context, old_mask);
 
                 // 创建sigframe
                 user_sp = user_sp - core::mem::size_of::<FrameFlags>();
                 let frame_flags_sp = user_sp; // frame_flags_sp：塞入frame_flags后的用户栈位置
                 let sig_rt_frame = SigRTFrame::new(ucontext, linux_siginfo);
-                log::info!("[handle_signal] frame_flags_sp = {:#x}", frame_flags_sp);
+                log::debug!("[handle_signal] frame_flags_sp = {:#x}", frame_flags_sp);
                 if let Err(err) = copy_to_user(frame_flags_sp as *mut SigRTFrame, &sig_rt_frame, 1)
                 {
                     panic!("[handle_signal] copy_to_user failed: {:?}", err);
@@ -235,7 +235,7 @@ pub fn handle_signal() {
                 let user_sig_frame_ptr = user_sp as *mut SigFrame;
                 let sig_context = SigContext::init(&trap_cx, old_mask);
                 let sig_frame = SigFrame::new(sig_context);
-                log::error!("[handle_signal] frame: {:#x}", user_sp);
+                log::debug!("[handle_signal] frame: {:#x}", user_sp);
                 if let Err(err) = copy_to_user(user_sig_frame_ptr, &sig_frame, 1) {
                     panic!("[handle_signal] copy_to_user failed: {:?}", err);
                 }
@@ -245,10 +245,10 @@ pub fn handle_signal() {
             trap_cx.set_sp(user_sp);
             trap_cx.set_sepc(action.sa_handler);
             trap_cx.set_a0(sig.raw() as usize);
-            log::info!("[handle_signal] ra = {:x}", sigreturn_trampoline as usize);
-            log::info!("[handle_signal] user stack = {:x}", user_sp);
-            log::info!("[handle_signal] sa_handler = {:x}", action.sa_handler);
-            log::info!("[handle_signal] a0 = {}", sig.raw() as usize);
+            log::debug!("[handle_signal] ra = {:x}", sigreturn_trampoline as usize);
+            log::debug!("[handle_signal] user stack = {:x}", user_sp);
+            log::debug!("[handle_signal] sa_handler = {:x}", action.sa_handler);
+            log::debug!("[handle_signal] a0 = {}", sig.raw() as usize);
             save_trap_context(&task, trap_cx);
         }
         break;

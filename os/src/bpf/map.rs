@@ -1,35 +1,9 @@
 use core::fmt::Debug;
 
 use alloc::{collections::btree_map::BTreeMap, vec::Vec};
-use hashbrown::HashMap;
-use spin::{Mutex, RwLock};
+use spin::RwLock;
 
 use crate::{fs::file::FileOp, syscall::errno::Errno};
-
-use super::attr::BpfMapElemAttr;
-
-pub static BPF_OBJECT_TABLE: Mutex<Vec<Option<BpfMap>>> = Mutex::new(Vec::new());
-
-pub fn register_bpf_object(obj: BpfMap) -> usize {
-    let mut table = BPF_OBJECT_TABLE.lock();
-    for (i, slot) in table.iter_mut().enumerate() {
-        if slot.is_none() {
-            *slot = Some(obj);
-            return i;
-        }
-    }
-    table.push(Some(obj));
-    table.len() - 1
-}
-
-// pub fn get_map_by_fd(fd: usize) -> Result<&BpfMap, Errno> {
-//     let table = BPF_OBJECT_TABLE.lock();
-//     if fd < table.len() && table[fd].is_some() {
-//         Ok(table[fd].as_ref().unwrap())
-//     } else {
-//         Err(Errno::EBADF)
-//     }
-// }
 
 #[derive(Debug)]
 pub struct BpfMap {
@@ -75,6 +49,7 @@ impl BpfMap {
             data: RwLock::new(BTreeMap::new()),
         }
     }
+    #[allow(unused)]
     pub fn lookup(&self, key_ptr: usize) -> Option<Vec<u8>> {
         let key_size = self.key_size as usize;
         let key_buf = unsafe { core::slice::from_raw_parts(key_ptr as *const u8, key_size) };

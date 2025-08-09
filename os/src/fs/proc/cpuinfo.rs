@@ -1,7 +1,5 @@
-use core::{default, str};
-
 use lazy_static::lazy_static;
-use spin::{lazy, mutex, Once, RwLock};
+use spin::{Once, RwLock};
 
 use crate::{
     ext4::inode::Ext4InodeDisk,
@@ -10,9 +8,7 @@ use crate::{
         inode::InodeOp,
         kstat::Kstat,
         path::Path,
-        proc,
         uapi::Whence,
-        FileOld,
     },
     syscall::errno::{Errno, SyscallRet},
     timer::TimeSpec,
@@ -36,6 +32,7 @@ pub struct CPUInfoInodeInner {
 }
 
 impl CPUInfoInode {
+    #[allow(unused)]
     pub fn new(inode_on_disk: Ext4InodeDisk) -> Arc<Self> {
         Arc::new(CPUInfoInode {
             inner: RwLock::new(CPUInfoInodeInner { inode_on_disk }),
@@ -103,6 +100,7 @@ impl InodeOp for CPUInfoInode {
     }
 }
 
+#[allow(unused)]
 pub struct CPUInfoFile {
     pub path: Arc<Path>,
     pub inode: Arc<dyn InodeOp>,

@@ -187,7 +187,7 @@ pub fn extract_cstrings(ptr: *const usize) -> Result<Vec<String>, Errno> {
     Ok(vec)
 }
 
-#[cfg(target_arch = "loongarch64")]
+// #[cfg(target_arch = "loongarch64")]
 /// 由caller保证ptr的合法性
 /// Convert C-style strings(end with '\0') to rust strings
 /// used by sys_exec: 提取args和envs
@@ -210,8 +210,6 @@ pub fn extract_cstrings(ptr: *const usize) -> Result<Vec<String>, Errno> {
 //                 if *current == 0 {
 //                     break;
 //                 }
-//                 let cur_addr=current as usize;
-//                 log::info!("[extract_cstrings]current ptr {:#x?},page align {:#x?}",cur_addr,cur_addr%PAGE_SIZE);
 //                 vec.push(c_str_to_string((*current) as *const u8)?);
 //                 current = current.add(1);
 //             }
@@ -219,6 +217,7 @@ pub fn extract_cstrings(ptr: *const usize) -> Result<Vec<String>, Errno> {
 //     }
 //     Ok(vec)
 // }
+
 #[cfg(target_arch = "loongarch64")]
 /// 由caller保证ptr的合法性
 /// Convert C-style strings(end with '\0') to rust strings
@@ -234,29 +233,31 @@ pub fn extract_cstrings(ptr: *const usize) -> Result<Vec<String>, Errno> {
     let task = current_task();
     let mut current = task.op_memory_set(|memory_set| {
         memory_set
-        .translate_va_to_pa(VirtAddr::from(ptr as usize)).unwrap()
+            .translate_va_to_pa(VirtAddr::from(ptr as usize))
+            .unwrap()
     }) as *const usize;
     let mut current_va = ptr as usize;
 
     if !current.is_null() {
-    loop {
-        unsafe {
-            if *current == 0 {
-                break;
-            }
-            vec.push(c_str_to_string((*current) as *const u8)?);
-            current = current.add(1);
-            current_va += core::mem::size_of::<usize>();
-            // 判断是否跨页
-            if current as usize & (PAGE_SIZE - 1) == 0 {
-            // 重新翻译
-            current = task.op_memory_set(|memory_set| {
-                memory_set
-                .translate_va_to_pa(VirtAddr::from(current_va as usize)).unwrap()
-            }) as *const usize;
+        loop {
+            unsafe {
+                if *current == 0 {
+                    break;
+                }
+                vec.push(c_str_to_string((*current) as *const u8)?);
+                current = current.add(1);
+                current_va += core::mem::size_of::<usize>();
+                // 判断是否跨页
+                if current as usize & (PAGE_SIZE - 1) == 0 {
+                    // 重新翻译
+                    current = task.op_memory_set(|memory_set| {
+                        memory_set
+                            .translate_va_to_pa(VirtAddr::from(current_va as usize))
+                            .unwrap()
+                    }) as *const usize;
+                }
             }
         }
-    }
     }
     Ok(vec)
 }

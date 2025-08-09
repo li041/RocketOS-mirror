@@ -661,7 +661,7 @@ pub fn sys_rt_sigqueueinfo(pid: isize, sig: i32, info: usize) -> SyscallRet {
 /// 如果 Linux 内核确定某个进程有一个未阻塞的信号待处理，那么，在该进程下一次转换回用户模式时（例如，从系统调用返回或进程重新调度到 CPU 时）
 /// 它会在用户空间堆栈上创建一个新框架，在其中保存进程上下文的各个部分（处理器状态字、寄存器、信号掩码和信号堆栈设置）。
 pub fn sys_rt_sigreturn() -> SyscallRet {
-    log::info!("[sys_rt_sigreturn] enter sigreturn");
+    log::trace!("[sys_rt_sigreturn] enter sigreturn");
     let task = current_task();
     // 获取栈顶trapcontext
     let mut trap_cx = get_trap_context(&task);
@@ -681,8 +681,8 @@ pub fn sys_rt_sigreturn() -> SyscallRet {
 
     // 不包含SIG_INFOSIG_INFO
     if frame_flag.is_normal() {
-        log::warn!("[sys_rt_sigreturn] normal frame");
-        log::info!("[sys_rt_sigreturn] frame pos: {:#x}", user_sp);
+        log::debug!("[sys_rt_sigreturn] normal frame");
+        log::debug!("[sys_rt_sigreturn] frame pos: {:#x}", user_sp);
         let mut sig_frame: SigFrame = SigFrame::default();
         copy_from_user(
             user_sp as *const SigFrame,

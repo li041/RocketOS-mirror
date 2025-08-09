@@ -1803,7 +1803,7 @@ pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
     // }
     // 清空文件描述符表
     if Arc::strong_count(&task.fd_table()) == 2 {
-        log::warn!("[kernel_exit] Task{} fd_table recycle", task.tid());
+        log::debug!("[kernel_exit] Task{} fd_table recycle", task.tid());
         // 6.12 Debug
         task.fd_table().clear();
     } else {
@@ -1863,7 +1863,7 @@ pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
         remove_group(&task);
     }
     log::error!("[kernel_exit] Task{} clear the resource", task.tid());
-    log::error!(
+    log::debug!(
         "[kernel_exit] Task{} strong count: {}",
         task.tid(),
         Arc::strong_count(&task)

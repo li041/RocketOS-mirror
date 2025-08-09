@@ -1,23 +1,17 @@
-use core::{default, str, sync::atomic::AtomicUsize};
+use core::{str, sync::atomic::AtomicUsize};
 
-use lazy_static::lazy_static;
-use spin::{lazy, mutex, Once, RwLock};
+use spin::{Once, RwLock};
 
 use crate::{
-    ext4::{
-        dentry::{self, EXT4_DT_LNK},
-        inode::{Ext4Inode, Ext4InodeDisk},
-    },
+    ext4::{dentry::EXT4_DT_LNK, inode::Ext4InodeDisk},
     fs::{
         dentry::{Dentry, DentryFlags, LinuxDirent64},
         file::{FileOp, OpenFlags},
         inode::InodeOp,
         kstat::Kstat,
         path::Path,
-        uapi::Whence,
-        FileOld,
     },
-    syscall::errno::{Errno, SyscallRet},
+    syscall::errno::Errno,
     task::current_task,
     timer::TimeSpec,
 };
@@ -133,7 +127,7 @@ impl InodeOp for FdDirInode {
             const FAKE_INODE_NUM: u64 = 666; // 不能为0, 0表示目录项不存在
 
             // 创建dirent结构
-            let mut dirent = LinuxDirent64 {
+            let dirent = LinuxDirent64 {
                 d_ino: FAKE_INODE_NUM,
                 d_off: (file_offset + d_reclen) as u64, // 下一个条目的偏移
                 d_reclen: d_reclen as u16,
@@ -214,6 +208,7 @@ impl InodeOp for FdDirInode {
     }
 }
 
+#[allow(unused)]
 pub struct FdFile {
     pub path: Arc<Path>,
     pub inode: Arc<dyn InodeOp>,

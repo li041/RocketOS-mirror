@@ -1,3 +1,4 @@
+#![allow(unused)]
 use super::config::KERNEL_BASE;
 use crate::{
     arch::{boards::qemu::CLOCK_FREQ, sbi::set_timer},

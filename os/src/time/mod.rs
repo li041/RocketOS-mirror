@@ -1,5 +1,3 @@
-use core::cell::UnsafeCell;
-
 /*
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-05-28 21:00:03
@@ -10,41 +8,40 @@ use core::cell::UnsafeCell;
  *
  * Copyright (c) 2025 by peterluck2021@163.com, All Rights Reserved.
  */
-use config::{TimexModes, TimexStatus};
+use config::TimexModes;
 
 use crate::{
-    arch::timer::{get_time, get_time_ms},
     syscall::errno::{Errno, SyscallRet},
-    timer::{StatxTimeStamp, TimeSpec, TimeVal},
+    timer::{TimeSpec, TimeVal},
 };
 use config::NSEC_PER_SEC;
 pub mod config;
 /// 全局唯一的，保存“上一次”非 0 设置后的 timex
 pub static mut LAST_TIMEX: KernelTimex = KernelTimex {
-    modes:     0,
-    _pad0:     0,
-    offset:    0,
-    freq:      0,
-    maxerror:  0,
-    esterror:  0,
-    status:    0,
-    _pad1:     0,
-    constant:  0,
+    modes: 0,
+    _pad0: 0,
+    offset: 0,
+    freq: 0,
+    maxerror: 0,
+    esterror: 0,
+    status: 0,
+    _pad1: 0,
+    constant: 0,
     precision: 0,
     tolerance: 0,
-    time:      TimeVal { sec: 0, usec: 0 },
-    tick:      10000,
-    ppsfreq:   0,
-    jitter:    0,
-    shift:     0,
-    _pad2:     0,
-    stabil:    0,
-    jitcnt:    0,
-    calcnt:    0,
-    errcnt:    0,
-    stbcnt:    0,
-    tai:       0,
-    _pad_last:[0; 11],
+    time: TimeVal { sec: 0, usec: 0 },
+    tick: 10000,
+    ppsfreq: 0,
+    jitter: 0,
+    shift: 0,
+    _pad2: 0,
+    stabil: 0,
+    jitcnt: 0,
+    calcnt: 0,
+    errcnt: 0,
+    stbcnt: 0,
+    tai: 0,
+    _pad_last: [0; 11],
 };
 //这个文件将实现adjtimex相关逻辑
 /// adjtimex:从用户得到一个结构体根据参数1mode来设置系统时间，核心函数为do_adjtimex
@@ -54,7 +51,7 @@ pub static mut LAST_TIMEX: KernelTimex = KernelTimex {
 ///   int :32;                   /* pad */
 ///   long long offset;         /* time offset (usec) */
 ///   …（省略其余字段，详见下方）…
-#[derive(Clone, Copy, Debug,Default)]
+#[derive(Clone, Copy, Debug, Default)]
 #[repr(C)]
 pub struct KernelTimex {
     pub modes: u32, // unsigned int
@@ -133,9 +130,9 @@ pub fn do_adjtimex(txc: &mut KernelTimex) -> SyscallRet {
         ret = timekeeping_inject_offset(&delta)?;
     }
     if modes.contains(TimexModes::ADJ_TICK) {
-        let limit=txc.tick;
-        log::error!("[do_adjtimex] limit is {:?}",limit);
-        if limit<9000||limit>11000 {
+        let limit = txc.tick;
+        log::error!("[do_adjtimex] limit is {:?}", limit);
+        if limit < 9000 || limit > 11000 {
             return Err(Errno::EINVAL);
         }
     }

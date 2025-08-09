@@ -1,10 +1,10 @@
-use crate::arch::config::MAX_HARTS;
-
 extern "C" {
     fn _start();
 }
 
+#[cfg(feature = "smp")]
 pub fn start_other_harts(hart_id: usize) {
+    use crate::arch::config::MAX_HARTS;
     for i in 0..MAX_HARTS {
         if i == hart_id {
             continue;

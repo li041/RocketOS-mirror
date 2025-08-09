@@ -1,6 +1,5 @@
 //! Implementation of [`FrameAllocator`] which
 //! controls all the frames in the operating system.
-use crate::utils::ceil_to_page_size;
 use crate::{arch::boards::qemu::MEMORY_END, arch::config::KERNEL_BASE};
 use alloc::vec::Vec;
 use core::fmt::{self, Debug, Formatter};
@@ -216,52 +215,4 @@ pub fn frame_allocator_test() {
     }
     drop(v);
     println!("frame_allocator_test passed!");
-}
-
-/// 分配连续的 kernel buffer，返回连续页的首个 PhysPageNum, size是以字节为单位
-/// 如果无法分配连续的 n 页，返回 None
-pub fn kbuf_alloc(size: usize) -> Option<PhysPageNum> {
-    let n = ceil_to_page_size(size) / crate::arch::config::PAGE_SIZE;
-    let mut allocator = FRAME_ALLOCATOR.lock();
-    let mut temp = Vec::new();
-
-    let mut count = 0;
-    let mut base = None;
-
-    while let Some(ppn) = allocator.alloc() {
-        if base.is_none() {
-            base = Some(ppn.0);
-            count = 1;
-        } else if Some(ppn.0) == base.map(|b| b + count) {
-            count += 1;
-        } else {
-            // 非连续，回收之前分配的
-            for p in temp.drain(..) {
-                allocator.dealloc(p);
-            }
-            base = Some(ppn.0);
-            count = 1;
-        }
-
-        temp.push(ppn);
-
-        if count == n {
-            return base.map(PhysPageNum);
-        }
-    }
-
-    // 分配失败，回收
-    for p in temp {
-        allocator.dealloc(p);
-    }
-    None
-}
-
-/// 回收一段连续内核缓冲区
-pub fn kbuf_dealloc(start: PhysPageNum, size: usize) {
-    let n = ceil_to_page_size(size) / crate::arch::config::PAGE_SIZE;
-    let mut allocator = FRAME_ALLOCATOR.lock();
-    for i in 0..n {
-        allocator.dealloc(PhysPageNum(start.0 + i));
-    }
 }

@@ -1,9 +1,6 @@
-use core::{ops::DerefMut, ptr::copy_nonoverlapping};
-
-use alloc::{sync::Arc, vec};
+use alloc::sync::Arc;
 // use riscv::interrupt::Mutex;
 use crate::{
-    arch::{config::PAGE_SIZE_BITS, mm::copy_to_user},
     ext4::inode::{Ext4InodeDisk, S_IFCHR},
     fs::{
         file::{FileOp, OpenFlags},
@@ -12,13 +9,11 @@ use crate::{
         path::Path,
         uapi::DevT,
     },
-    mm::VirtAddr,
     syscall::errno::SyscallRet,
-    task::current_task,
     timer::TimeSpec,
 };
 use rand::RngCore;
-use rand::{rngs::SmallRng, Fill, SeedableRng};
+use rand::{rngs::SmallRng, SeedableRng};
 use spin::RwLock;
 use spin::{Mutex, Once};
 pub static URANDOM: Once<Arc<UrandomFile>> = Once::new();

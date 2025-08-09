@@ -816,7 +816,7 @@ fn select_task(pid: isize) -> Option<Arc<Task>> {
 
     cur_task.op_children_mut(|children| {
         for child in children.values() {
-            log::error!(
+            log::debug!(
                 "child: {}, pid: {}, pgid: {}, tgid: {}, is_zombie: {}",
                 child.tid(),
                 pid,

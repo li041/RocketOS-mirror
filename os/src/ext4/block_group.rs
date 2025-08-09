@@ -1,5 +1,4 @@
 use alloc::{sync::Arc, vec::Vec};
-use hmac::digest::block_buffer;
 use spin::RwLock;
 
 use crate::drivers::block::{block_cache::get_block_cache, block_dev::BlockDevice};
@@ -276,6 +275,7 @@ pub struct GroupDescInner {
     free_blocks_count: u32,
     free_inodes_count: u32,
     used_dirs_count: u32,
+    #[allow(unused)]
     itable_unused: u32,
 }
 

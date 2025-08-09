@@ -1,4 +1,3 @@
-use alloc::collections::btree_set::Intersection;
 use bit_field::BitField;
 use core::{convert::TryInto, fmt::Debug};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
@@ -36,6 +35,7 @@ impl Instruction {
                 .or_else(|_| (self.bits >> (32 - 17)).try_into())
         })
     }
+    #[allow(unused)]
     pub fn get_addr(
         &self,
         trap_ctx: &TrapContext,
@@ -84,7 +84,7 @@ impl Instruction {
             | OpCode::FLdXD
             | OpCode::FStXS
             | OpCode::FStXD => {
-               let rj_num = self.get_rj_num();
+                let rj_num = self.get_rj_num();
                 let rk_num = self.get_rk_num();
                 let rj_val = if rj_num != 0 { trap_ctx.r[rj_num] } else { 0 };
                 let rk_val = if rk_num != 0 { trap_ctx.r[rk_num] } else { 0 };

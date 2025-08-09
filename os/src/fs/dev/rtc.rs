@@ -126,6 +126,7 @@ pub struct RtcTime {
     tm_isdst: i32, // 夏令时标志
 }
 
+#[allow(unused)]
 pub struct RtcFile {
     pub path: Arc<Path>,
     pub inode: Arc<dyn InodeOp>,
@@ -145,7 +146,7 @@ impl FileOp for RtcFile {
     fn read(&self, buf: &mut [u8]) -> SyscallRet {
         let current_time = TimeSpec::new_wall_time();
         let date_time = DateTime::from(&current_time);
-        let rtc_time = RtcTime {
+        let _rtc_time = RtcTime {
             tm_sec: date_time.second as i32,
             tm_min: date_time.minute as i32,
             tm_hour: date_time.hour as i32,
@@ -164,7 +165,7 @@ impl FileOp for RtcFile {
         }
         unimplemented!()
     }
-    fn write<'a>(&'a self, buf: &'a [u8]) -> SyscallRet {
+    fn write<'a>(&'a self, _buf: &'a [u8]) -> SyscallRet {
         unimplemented!();
     }
     fn ioctl(&self, op: usize, arg_ptr: usize) -> SyscallRet {
@@ -183,7 +184,7 @@ impl FileOp for RtcFile {
         };
         let op = RtcIoctlCmd::try_from(op as u32).unwrap();
         match op {
-            RtcIoctlCmd::RTC_RD_TIME => {
+            RtcIoctlCmd::RtcRdTime => {
                 // 读取 RTC 时间
                 if arg_ptr == 0 {
                     return Err(Errno::EINVAL);
@@ -213,46 +214,46 @@ impl FileOp for RtcFile {
 #[repr(u32)]
 pub enum RtcIoctlCmd {
     /// 读取 RTC 时间（返回 struct rtc_time）
-    RTC_RD_TIME = 0x8024_7009, // _IOR('p', 0x09, struct rtc_time)
+    RtcRdTime = 0x8024_7009, // _IOR('p', 0x09, struct rtc_time)
 
     /// 设置 RTC 时间（输入 struct rtc_time）
-    RTC_SET_TIME = 0x4024_700A, // _IOW('p', 0x0A, struct rtc_time)
+    RtcSetTime = 0x4024_700A, // _IOW('p', 0x0A, struct rtc_time)
 
     /// 读取 RTC 闹钟时间（返回 struct rtc_time）
-    RTC_ALM_READ = 0x8024_700B, // _IOR('p', 0x0B, struct rtc_time)
+    RtcAlmRead = 0x8024_700B, // _IOR('p', 0x0B, struct rtc_time)
 
     /// 设置 RTC 闹钟时间（输入 struct rtc_time）
-    RTC_ALM_SET = 0x4024_700C, // _IOW('p', 0x0C, struct rtc_time)
+    RtcAlmSet = 0x4024_700C, // _IOW('p', 0x0C, struct rtc_time)
 
     /// 开启闹钟中断
-    RTC_AIE_ON = 0x0000_7005, // _IO('p', 0x05)
+    RtcAicOn = 0x0000_7005, // _IO('p', 0x05)
 
     /// 关闭闹钟中断
-    RTC_AIE_OFF = 0x0000_7006, // _IO('p', 0x06)
+    RtcAieOff = 0x0000_7006, // _IO('p', 0x06)
 
     /// 读取周期性中断频率（返回 unsigned long）
-    RTC_IRQP_READ = 0x8004_700D, // _IOR('p', 0x0D, unsigned long)
+    RtcIrqpRead = 0x8004_700D, // _IOR('p', 0x0D, unsigned long)
 
     /// 设置周期性中断频率（输入 unsigned long）
-    RTC_IRQP_SET = 0x4004_700E, // _IOW('p', 0x0E, unsigned long)
+    RtcIrqpSet = 0x4004_700E, // _IOW('p', 0x0E, unsigned long)
 
     /// 开启周期性中断
-    RTC_PIE_ON = 0x0000_7003, // _IO('p', 0x03)
+    RtcPieOn = 0x0000_7003, // _IO('p', 0x03)
 
     /// 关闭周期性中断
-    RTC_PIE_OFF = 0x0000_7004, // _IO('p', 0x04)
+    RtcPieOff = 0x0000_7004, // _IO('p', 0x04)
 
     /// 开启更新中断
-    RTC_UIE_ON = 0x0000_7001, // _IO('p', 0x01)
+    RtcUieOn = 0x0000_7001, // _IO('p', 0x01)
 
     /// 关闭更新中断
-    RTC_UIE_OFF = 0x0000_7002, // _IO('p', 0x02)
+    RtcUieOff = 0x0000_7002, // _IO('p', 0x02)
 
     /// 读取 RTC 纪元年份（返回 unsigned long）
-    RTC_EPOCH_READ = 0x8004_700F, // _IOR('p', 0x0F, unsigned long)
+    RtcEpochRead = 0x8004_700F, // _IOR('p', 0x0F, unsigned long)
 
     /// 设置 RTC 纪元年份（输入 unsigned long）
-    RTC_EPOCH_SET = 0x4004_7010, // _IOW('p', 0x10, unsigned long)
+    RtcEpochSet = 0x4004_7010, // _IOW('p', 0x10, unsigned long)
 
     /// 未知命令
     Unknown = 0xFFFFFFFF, // 用于表示未知命令
@@ -260,20 +261,20 @@ pub enum RtcIoctlCmd {
 impl From<u32> for RtcIoctlCmd {
     fn from(value: u32) -> Self {
         match value {
-            0x8024_7009 => RtcIoctlCmd::RTC_RD_TIME,
-            0x4024_700A => RtcIoctlCmd::RTC_SET_TIME,
-            0x8024_700B => RtcIoctlCmd::RTC_ALM_READ,
-            0x4024_700C => RtcIoctlCmd::RTC_ALM_SET,
-            0x0000_7005 => RtcIoctlCmd::RTC_AIE_ON,
-            0x0000_7006 => RtcIoctlCmd::RTC_AIE_OFF,
-            0x8004_700D => RtcIoctlCmd::RTC_IRQP_READ,
-            0x4004_700E => RtcIoctlCmd::RTC_IRQP_SET,
-            0x0000_7003 => RtcIoctlCmd::RTC_PIE_ON,
-            0x0000_7004 => RtcIoctlCmd::RTC_PIE_OFF,
-            0x0000_7001 => RtcIoctlCmd::RTC_UIE_ON,
-            0x0000_7002 => RtcIoctlCmd::RTC_UIE_OFF,
-            0x8004_700F => RtcIoctlCmd::RTC_EPOCH_READ,
-            0x4004_7010 => RtcIoctlCmd::RTC_EPOCH_SET,
+            0x8024_7009 => RtcIoctlCmd::RtcRdTime,
+            0x4024_700A => RtcIoctlCmd::RtcSetTime,
+            0x8024_700B => RtcIoctlCmd::RtcAlmRead,
+            0x4024_700C => RtcIoctlCmd::RtcAlmSet,
+            0x0000_7005 => RtcIoctlCmd::RtcAicOn,
+            0x0000_7006 => RtcIoctlCmd::RtcAieOff,
+            0x8004_700D => RtcIoctlCmd::RtcIrqpRead,
+            0x4004_700E => RtcIoctlCmd::RtcIrqpSet,
+            0x0000_7003 => RtcIoctlCmd::RtcPieOn,
+            0x0000_7004 => RtcIoctlCmd::RtcPieOff,
+            0x0000_7001 => RtcIoctlCmd::RtcUieOn,
+            0x0000_7002 => RtcIoctlCmd::RtcUieOff,
+            0x8004_700F => RtcIoctlCmd::RtcEpochRead,
+            0x4004_7010 => RtcIoctlCmd::RtcEpochSet,
             _ => RtcIoctlCmd::Unknown,
         }
     }

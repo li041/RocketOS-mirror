@@ -110,7 +110,7 @@ impl From<DevT> for u64 {
     }
 }
 
-/// sys_fcntl
+// sys_fcntl
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy)]
     pub struct RenameFlags: i32 {
@@ -290,6 +290,7 @@ bitflags::bitflags! {
 
 // openat2 how
 // 目前OpenHow只有三个字段
+#[allow(unused)]
 pub const MAX_OPEN_HOW: usize = 31; // openat2 的 how 参数最大长度
 
 #[repr(C)]
@@ -391,6 +392,7 @@ pub const F_SEAL_GROW: i32 = 0x0004; // 禁
 pub const F_SEAL_WRITE: i32 = 0x0008; // 禁止写入
 
 // flock
+#[allow(unused)]
 pub enum FlockOp {
     LockSh,
     LockEx,

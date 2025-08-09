@@ -1,10 +1,10 @@
 use alloc::vec;
 use alloc::{sync::Arc, vec::Vec};
-use attr::{BpfAttrBtfLoad, BpfAttrLinkCreate, BpfMapElemAttr, BpfProcLoadAttr};
+use attr::{BpfAttrBtfLoad, BpfAttrLinkCreate, BpfProcLoadAttr};
 use insn::{BpfInsn, BpfProg, BpfProgType};
 use iter::Iterator;
-use link::{BpfLink, BpfLinkType};
-use map::{BpfMap, BpfMapType, BPF_OBJECT_TABLE};
+use link::BpfLink;
+use map::{BpfMap, BpfMapType};
 use uapi::BtfObject;
 
 use crate::arch::mm::copy_to_user;
@@ -22,6 +22,7 @@ mod syscall;
 pub mod uapi;
 
 // helper
+#[allow(unused)]
 fn vec_to_u64(vec: &[u8]) -> Option<u64> {
     if vec.len() > 8 {
         return None;
@@ -47,7 +48,7 @@ pub fn bpf_prog_load(bpf_attr_ptr: usize, size: usize) -> Result<usize, Errno> {
 
     // 获取指令长度和偏移
     let insn_cnt = attr.insn_cnt as usize;
-    let insn_size = insn_cnt * core::mem::size_of::<u64>();
+    let _insn_size = insn_cnt * core::mem::size_of::<u64>();
 
     // Todo: 加载prog
     let prog_type = BpfProgType::try_from(attr.prog_type).map_err(|_| Errno::EINVAL)?;
@@ -97,7 +98,11 @@ pub fn bpf_map_create(bpf_attr_ptr: usize, size: usize) -> Result<usize, Errno> 
                 map.data.write().insert(key, value);
             }
             for (key, value) in map.data.read().iter() {
-                log::info!("[bpf_map_create]: Initial entry: key={:?}, value={:?}", key, value);
+                log::info!(
+                    "[bpf_map_create]: Initial entry: key={:?}, value={:?}",
+                    key,
+                    value
+                );
             }
         }
         BpfMapType::StackTrace => {
@@ -209,7 +214,7 @@ pub fn bpf_btf_link_create(bpf_attr_ptr: usize, size: usize) -> Result<usize, Er
     );
     if let Some(file) = current_task().fd_table().get_file(attr.prog_fd as usize) {
         // 确定文件类型是BpfProg
-        if let Some(prog) = file.clone().as_any().downcast_ref::<BpfProg>() {
+        if let Some(_prog) = file.clone().as_any().downcast_ref::<BpfProg>() {
             // Todo: 验证attach_type和attach_btf_id
             let attach_type = BpfProgType::try_from(attr.attach_type)?;
             // match prog.prog_type {
@@ -252,7 +257,7 @@ pub fn bpf_iter_create(bpf_attr_ptr: usize, size: usize) -> Result<usize, Errno>
     );
     if let Some(file) = current_task().fd_table().get_file(attr.link_fd as usize) {
         // 确定文件类型是BpfLink
-        if let Some(link) = file.clone().as_any().downcast_ref::<BpfLink>() {
+        if let Some(_link) = file.clone().as_any().downcast_ref::<BpfLink>() {
             let iter = Iterator::new(file);
             return current_task()
                 .fd_table()
@@ -265,125 +270,14 @@ pub fn bpf_iter_create(bpf_attr_ptr: usize, size: usize) -> Result<usize, Errno>
 
 pub fn copy_instructions_from_user(insns_ptr: u64, count: u32) -> Result<Vec<BpfInsn>, Errno> {
     // 从用户空间复制指令
-    // 这里需要实现实际的内存复制逻辑
     let mut instructions = Vec::with_capacity(count as usize);
 
     for i in 0..count {
         let insn_ptr =
             (insns_ptr + (i as u64 * core::mem::size_of::<BpfInsn>() as u64)) as *const BpfInsn;
-        // let insn = unsafe { *insn_ptr };
         let mut insn = BpfInsn::default();
         copy_from_user(insn_ptr, &mut insn, 1)?;
-        // 7.30 Debug, 逐字节打印insn
-        {
-            let mut insn_vec = vec![0u8; 8];
-            copy_from_user(insn_ptr as *const u8, insn_vec.as_mut_ptr(), 8)?;
-            // let insn_ptr = insn_ptr as *const u8;
-            // let insn_slice =
-            //     unsafe { core::slice::from_raw_parts(insn_ptr, core::mem::size_of::<BpfInsn>()) };
-            // print!("BPF Instruction Bytes: ");
-            // for byte in insn_slice {
-            //     print!("{:#x}", byte);
-            //     print!(" ");
-            // }
-            // println!("");
-            // 7.30 Debug, 逐字节打印insn_vec
-            // print!("BPF Instruction Vec Bytes: ");
-            // for byte in &insn_vec {
-            //     print!("{:#x}", byte);
-            //     print!(" ");
-            // }
-            // println!("");
-        }
         instructions.push(insn);
     }
     Ok(instructions)
 }
-
-// pub fn copy_instructions_from_user(mut insns_ptr: u64, count: u32) -> Result<Vec<BpfInsn>, Errno> {
-//     // 从用户空间复制指令
-//     // 这里需要实现实际的内存复制逻辑
-//     let mut instructions = Vec::with_capacity(count as usize);
-
-//     for i in 0..count {
-//         let mut insn = BpfInsn::default();
-//         let mut code: u8 = 0;
-//         let mut dst_src_reg: u8 = 0;
-//         let mut off: i16 = 0;
-//         let mut imm: i32 = 0;
-//         copy_from_user(insns_ptr as *const u8, &mut code, 1)?;
-//         insns_ptr += 8;
-//         copy_from_user(insns_ptr as *const u8, &mut dst_src_reg, 1)?;
-//         insns_ptr += 8;
-//         copy_from_user(insns_ptr as *const i16, &mut off, 1);
-//         insns_ptr += 16;
-//         copy_from_user(insns_ptr as *const i32, &mut imm, 1)?;
-//         log::info!(
-//             "[copy_instructions_from_user]: Instruction {}: code: {:#x}, dst_src_reg: {:#x}, off: {}, imm: {}",
-//             i,
-//             code,
-//             dst_src_reg,
-//             off,
-//             imm
-//         );
-//         let insn = BpfInsn::new(code, dst_src_reg, off, imm);
-
-//         // 7.30 Debug, 逐字节打印insn, 好像复制有问题, 逐字节看看
-//         let insn_ptr = &insn as *const BpfInsn as *const u8;
-//         let insn_slice =
-//             unsafe { core::slice::from_raw_parts(insn_ptr, core::mem::size_of::<BpfInsn>()) };
-//         print!("BPF Instruction Bytes: ");
-//         for byte in insn_slice {
-//             print!("{:#x}", byte);
-//             print!(" ");
-//         }
-//         println!("");
-
-//         instructions.push(insn);
-//     }
-//     Ok(instructions)
-// }
-
-// 只看字节看看
-// pub fn copy_instructions_from_user(mut insns_ptr: u64, count: u32) -> Result<Vec<BpfInsn>, Errno> {
-//     // 从用户空间复制指令
-//     // 这里需要实现实际的内存复制逻辑
-//     let mut instructions = Vec::with_capacity(count as usize);
-
-//     for i in 0..count {
-//         let mut insn = BpfInsn::default();
-//         let mut code: u8 = 0;
-//         let mut dst_src_reg: u8 = 0;
-//         let mut off: i16 = 0;
-//         let mut imm: i32 = 0;
-//         copy_from_user(insns_ptr as *const u8, &mut code, 1)?;
-//         insns_ptr += 8;
-//         copy_from_user(insns_ptr as *const u8, &mut dst_src_reg, 1)?;
-//         insns_ptr += 8;
-//         copy_from_user(insns_ptr as *const i16, &mut off, 1);
-//         insns_ptr += 16;
-//         copy_from_user(insns_ptr as *const i32, &mut imm, 1)?;
-//         log::info!(
-//             "[copy_instructions_from_user]: Instruction {}: code: {:#x}, dst_src_reg: {:#x}, off: {}, imm: {}",
-//             i,
-//             code,
-//             dst_src_reg,
-//             off,
-//             imm
-//         );
-//         let insn = BpfInsn::new(code, dst_src_reg, off, imm);
-
-//         // 7.30 Debug, 逐字节打印insn, 好像复制有问题, 逐字节看看
-//         let insn_ptr = &insn as *const BpfInsn as *const u8;
-//         let insn_slice =
-//             unsafe { core::slice::from_raw_parts(insn_ptr, core::mem::size_of::<BpfInsn>()) };
-//         print!("BPF Instruction Bytes: ");
-//         for byte in insn_slice {
-//             print!("{:#x}", byte);
-//             print!(" ");
-//         }
-
-//         instructions.push(insn);
-//     }
-//     Ok(instructions)
-// }

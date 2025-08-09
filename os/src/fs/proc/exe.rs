@@ -1,7 +1,4 @@
-use core::{default, str};
-
-use lazy_static::lazy_static;
-use spin::{lazy, mutex, Once, RwLock};
+use spin::{Once, RwLock};
 
 use crate::{
     ext4::inode::Ext4InodeDisk,
@@ -10,18 +7,12 @@ use crate::{
         inode::InodeOp,
         kstat::Kstat,
         path::Path,
-        uapi::Whence,
-        FileOld,
     },
-    syscall::errno::SyscallRet,
     task::current_task,
     timer::TimeSpec,
 };
 
-use alloc::{
-    string::{String, ToString},
-    sync::Arc,
-};
+use alloc::{string::String, sync::Arc};
 
 pub static EXE: Once<Arc<dyn FileOp>> = Once::new();
 
@@ -42,7 +33,7 @@ impl ExeInode {
 
 impl InodeOp for ExeInode {
     fn get_link(&self) -> String {
-        let mut exe_path = current_task().exe_path();
+        let  exe_path = current_task().exe_path();
         debug_assert!(
             exe_path.starts_with('/'),
             "ExeInode::get_link: exe_path is not absolute: {}",

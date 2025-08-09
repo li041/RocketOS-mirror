@@ -27,8 +27,8 @@ pub mod timer;
 mod arch;
 mod drivers;
 mod net;
-mod signal;
 mod sched;
+mod signal;
 
 mod ext4;
 
@@ -47,8 +47,7 @@ pub mod utils;
 
 use core::{
     arch::{asm, global_asm},
-    ffi::c_void,
-    panic, ptr,
+    panic,
     sync::atomic::{AtomicBool, AtomicU8},
 };
 
@@ -63,9 +62,6 @@ fn clear_bss() {
         fn sbss();
         fn ebss();
     }
-    // unsafe {
-    //     ptr::write_bytes(sbss as *mut c_void, 0, ebss as usize - sbss as usize);
-    // }
     unsafe {
         core::slice::from_raw_parts_mut(sbss as usize as *mut u8, ebss as usize - sbss as usize)
             .fill(0);
@@ -164,20 +160,17 @@ pub fn rust_main(hart_id: usize) -> ! {
 
     use arch::{
         bootstrap_init,
-        config::{PAGE_SIZE, SUC_DMW_VESG},
         drivers::pci,
-        sbi::shutdown,
         timer::ls7a_rtc_init,
         trap::{
             self,
             timer::{enable_timer_interrupt, set_next_trigger},
             TrapContext,
         },
-        DMW, DMW2, DMW3,
     };
-    use task::run_tasks;
-    #[cfg(feature="la2000")]
+    #[cfg(feature = "la2000")]
     use net::init_la2000_net;
+    use task::run_tasks;
     if IS_BOOT
         .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
         .is_ok()
@@ -196,7 +189,7 @@ pub fn rust_main(hart_id: usize) -> ! {
         println!("[kernel] boot hart {}", hart_id);
         #[cfg(feature = "smp")]
         start_other_harts(hart_id);
-        #[cfg(feature="la2000")]
+        #[cfg(feature = "la2000")]
         init_la2000_net();
         enable_timer_interrupt();
         set_next_trigger();

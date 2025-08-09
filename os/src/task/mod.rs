@@ -22,6 +22,7 @@ use crate::{
     },
     loader::get_app_data_by_name,
     mutex::SpinNoIrqLock,
+    syscall::errno::SyscallRet,
     utils::{c_str_to_string, extract_cstrings},
 };
 use alloc::sync::Arc;
@@ -34,20 +35,20 @@ pub use context::TaskContext;
 pub use id::{info_allocator, IdAllocator};
 pub use kstack::{get_stack_top_by_sp, KSTACK_SIZE};
 pub use manager::{
-    add_common_timer, add_group, add_posix_timer, dump_wait_queue, for_each_task, get_all_tasks,
-    get_group, get_task, handle_timeout, new_group, remove_timer, unregister_task,
-    update_common_timer, update_posix_timer, wait, wait_timeout, wakeup, stop_task, continue_task, ITIMER_PROF, ITIMER_REAL,
-    ITIMER_VIRTUAL,
+    add_common_timer, add_group, add_posix_timer, continue_task, dump_wait_queue, for_each_task,
+    get_all_tasks, get_group, get_task, handle_timeout, new_group, remove_timer, stop_task,
+    unregister_task, update_common_timer, update_posix_timer, wait, wait_timeout, wakeup,
+    ITIMER_PROF, ITIMER_REAL, ITIMER_VIRTUAL,
 };
-pub use processor::{current_task, run_tasks, other_run_tasks};
-pub use scheduler::{
-    add_task, dump_scheduler, nice_to_priority, nice_to_rlimit, priority_to_nice,
-    remove_task, schedule, yield_current_task, SchedAttr, WaitOption, MAX_NICE, MAX_PRIO,
-    MAX_RT_PRIO, MIN_NICE, MIN_RT_PRIO, PRIO_PGRP, PRIO_PROCESS, PRIO_USER, SCHED_BATCH,
-    SCHED_DEADLINE, SCHED_EXT, SCHED_FIFO, SCHED_IDLE, SCHED_OTHER, SCHED_RR,
-};
+pub use processor::{current_task, other_run_tasks, run_tasks};
 #[cfg(feature = "cfs")]
-pub use scheduler::{change_task};
+pub use scheduler::change_task;
+pub use scheduler::{
+    add_task, dump_scheduler, nice_to_priority, nice_to_rlimit, priority_to_nice, remove_task,
+    schedule, yield_current_task, SchedAttr, WaitOption, MAX_NICE, MAX_PRIO, MAX_RT_PRIO, MIN_NICE,
+    MIN_RT_PRIO, PRIO_PGRP, PRIO_PROCESS, PRIO_USER, SCHED_BATCH, SCHED_DEADLINE, SCHED_EXT,
+    SCHED_FIFO, SCHED_IDLE, SCHED_OTHER, SCHED_RR,
+};
 pub use task::kernel_exit;
 pub use task::CloneFlags;
 pub use task::{CpuMask, Task, TaskStatus, INIT_PROC_PID};
@@ -61,6 +62,27 @@ pub type Tid = usize;
 lazy_static! {
     /// 初始进程
     pub static ref INITPROC: Arc<Task> = Task::initproc(get_app_data_by_name("initproc").unwrap(), do_ext4_mount(BLOCK_DEVICE.clone()));
+}
+
+pub const KERNEL_EXIT_CODE: i32 = 100;
+
+pub fn kernel_panic() {
+    let exit_code = KERNEL_EXIT_CODE;
+    log::warn!("[kernel_panic] There is something wrong in kernel");
+    let task = current_task();
+    let mut to_exit = vec![];
+    task.op_thread_group_mut(|tg| {
+        for thread in tg.iter() {
+            to_exit.push(thread.tid());
+        }
+    });
+    for tid in to_exit {
+        if let Some(thread) = get_task(tid) {
+            kernel_exit(thread, (exit_code & 0xff) << 8);
+        }
+    }
+    drop(task);
+    schedule();
 }
 
 #[cfg(target_arch = "riscv64")]

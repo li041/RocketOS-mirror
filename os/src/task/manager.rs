@@ -299,7 +299,7 @@ pub fn wakeup(tid: Tid) {
 
 // 将任务从阻塞队列中移除（用于线程异常退出）
 pub fn delete_wait(tid: Tid) {
-    log::warn!("[remove] task{} removed from queue", tid);
+    log::warn!("[delete_wait] task{} removed from queue", tid);
     WAIT_MANAGER.delete(tid);
 }
 

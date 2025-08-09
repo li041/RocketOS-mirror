@@ -33,7 +33,7 @@ pub fn main() -> i32 {
     let mut line: String = String::new();
     let mut history: Vec<String> = Vec::new(); // 存储历史命令
     let mut history_index: usize = 0; // 当前显示的历史命令索引
-    let mut env = shell::environment::Environment::new(); // 初始化环境变量
+    let env = shell::environment::Environment::new(); // 初始化环境变量
     print_prompt();
 
     loop {

@@ -4,7 +4,7 @@ use crate::{
         dentry::{Dentry, DentryFlags},
         dev::{
             invalid::InvalidInode,
-            loop_device::{self, insert_loop_device, LoopDevice, LoopInode},
+            loop_device::{insert_loop_device, LoopDevice, LoopInode},
             null::NullInode,
             rtc::RtcInode,
             tty::TtyInode,
@@ -17,7 +17,7 @@ use crate::{
         uapi::{DevT, FallocFlags, RenameFlags, F_SEAL_SEAL, F_SEAL_WRITE, MFD_ALLOW_SEALING},
     },
     mm::Page,
-    net::socket::{Domain, Protocol, Socket, SocketInode, SocketType},
+    net::socket::SocketInode,
     syscall::errno::{Errno, SyscallRet},
     task::current_task,
     timer::TimeSpec,

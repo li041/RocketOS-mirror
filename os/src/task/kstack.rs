@@ -1,14 +1,10 @@
 //! 用户的内核栈分配
 use crate::{
     arch::config::PAGE_SIZE,
-    fs::kstat,
     mm::{MapPermission, VPNRange, VirtAddr, KERNEL_SPACE},
 };
 
-use super::{
-    id::{kid_alloc, kid_dealloc},
-    wait,
-};
+use super::id::{kid_alloc, kid_dealloc};
 
 pub const KSTACK_TOP: usize = 0xffff_ffff_ffff_f000;
 pub const KSTACK_SIZE: usize = (PAGE_SIZE << 4) - PAGE_SIZE;

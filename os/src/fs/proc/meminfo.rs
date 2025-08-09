@@ -1,7 +1,5 @@
-use core::{default, str};
-
 use lazy_static::lazy_static;
-use spin::{lazy, mutex, Once, RwLock};
+use spin::{Once, RwLock};
 
 use crate::{
     ext4::inode::Ext4InodeDisk,
@@ -11,7 +9,6 @@ use crate::{
         kstat::Kstat,
         path::Path,
         uapi::Whence,
-        FileOld,
     },
     syscall::errno::{Errno, SyscallRet},
     timer::TimeSpec,
@@ -33,6 +30,7 @@ pub struct MemInfoInodeInner {
 }
 
 impl MemInfoInode {
+    #[allow(unused)]
     pub fn new(inode_on_disk: Ext4InodeDisk) -> Arc<Self> {
         Arc::new(MemInfoInode {
             inner: RwLock::new(MemInfoInodeInner { inode_on_disk }),
@@ -100,6 +98,7 @@ impl InodeOp for MemInfoInode {
     }
 }
 
+#[allow(unused)]
 pub struct MemInfoFile {
     pub path: Arc<Path>,
     pub inode: Arc<dyn InodeOp>,

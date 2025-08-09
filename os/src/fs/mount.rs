@@ -4,25 +4,18 @@ use alloc::{
     sync::{Arc, Weak},
     vec::Vec,
 };
-use bitflags::Flag;
 use spin::Mutex;
 
 use crate::{
-    drivers::{block::block_dev::BlockDevice, BLOCK_DEVICE},
-    ext4::{
-        fs::Ext4FileSystem,
-        inode::{Ext4Inode, S_IFDIR, S_IFREG},
-    },
+    drivers::block::block_dev::BlockDevice,
+    ext4::{fs::Ext4FileSystem, inode::Ext4Inode},
     syscall::errno::SyscallRet,
 };
 
 use super::{
     dentry::{insert_dentry, Dentry, DentryFlags},
     dev::init_devfs,
-    etc::init_etcfs,
-    inode::InodeOp,
-    manager::{Fake_FS, FileSystemOp},
-    namei::{filename_create, parse_path_uncheck, Nameidata},
+    manager::{FakeFS, FileSystemOp},
     path::Path,
     proc::init_procfs,
     tmp::init_tmpfs,
@@ -34,6 +27,7 @@ use lazy_static::lazy_static;
 use alloc::vec;
 
 // 对于一个挂载的文件系统有一个VfsMount, 对于其的每一个挂载点有一个Mount
+#[allow(unused)]
 pub struct VfsMount {
     root: Arc<Dentry>,         // root of the mounted tree
     fs: Arc<dyn FileSystemOp>, // 挂载的文件系统(超级块)
@@ -44,7 +38,7 @@ impl VfsMount {
     pub fn zero_init() -> Self {
         VfsMount {
             root: Arc::new(Dentry::zero_init()),
-            fs: Arc::new(Fake_FS),
+            fs: Arc::new(FakeFS),
             flags: 0,
         }
     }
@@ -54,6 +48,7 @@ impl VfsMount {
 }
 
 /// 表示一个挂载点 (相当于 Linux 的 struct mount)
+#[allow(unused)]
 pub struct Mount {
     mountpoint: Arc<Dentry>,         // 挂载点
     vfs_mount: Arc<VfsMount>,        // vfs层
@@ -71,6 +66,7 @@ impl Mount {
         })
     }
     /// 创建一个新的挂载点
+    #[allow(unused)]
     pub fn new(mountpoint: Arc<Dentry>, mnt: Arc<VfsMount>, parent: Arc<Mount>) -> Self {
         Mount {
             mountpoint,
@@ -184,7 +180,7 @@ pub fn do_ext4_mount(block_device: Arc<dyn BlockDevice>) -> Arc<Path> {
         ext4_fs.clone(),
         &ext4_fs.block_groups[0],
     );
-    let mut root_dentry = Dentry::new(
+    let root_dentry = Dentry::new(
         "".to_string(),
         None,
         DentryFlags::DCACHE_DIRECTORY_TYPE,
@@ -206,6 +202,7 @@ pub fn do_ext4_mount(block_device: Arc<dyn BlockDevice>) -> Arc<Path> {
 }
 
 // Todo
+#[allow(unused)]
 pub fn do_mount(
     dev_name: String,
     dir_name: String,

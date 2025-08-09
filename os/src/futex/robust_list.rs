@@ -4,10 +4,7 @@ use crate::{
     task::{current_task, get_task},
 };
 
-use super::{
-    flags::FLAGS_SHARED,
-    futex::{self, futex_wake},
-};
+use super::{flags::FLAGS_SHARED, futex::futex_wake};
 
 // futex word构成:
 // 31: FUTEX_WAITERS

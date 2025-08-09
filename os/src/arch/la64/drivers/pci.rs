@@ -14,15 +14,13 @@ use virtio_drivers::{
     },
 };
 
-use crate::{
-    arch::{
-        config::DEVICE_TREE_ADDR,
-        drivers::mem_allocator::{allocate_bars, dump_bar_contents, PciMemory32Allocator},
-        virtio_blk::HalImpl,
-    },
-    drivers::net::init_net_dev_la,
+use crate::arch::{
+    config::DEVICE_TREE_ADDR,
+    drivers::mem_allocator::{allocate_bars, dump_bar_contents, PciMemory32Allocator},
+    virtio_blk::HalImpl,
 };
 
+#[cfg(feature = "virt")]
 fn virtio_device(transport: impl Transport + 'static) {
     match transport.device_type() {
         DeviceType::Block => virtio_blk(transport),
@@ -35,18 +33,20 @@ fn virtio_device(transport: impl Transport + 'static) {
 }
 
 // 动态的Virtual IO块设备
+#[cfg(feature = "virt")]
 fn virtio_blk<T: Transport>(transport: T) {
     let blk = VirtIOBlk::<HalImpl, T>::new(transport).expect("failed to create blk driver");
     debug_assert!(!blk.readonly());
 }
 //在enumerate_pci过来初始化网络
-#[cfg(target_arch = "loongarch64")]
+#[cfg(all(target_arch = "loongarch64", feature = "virt"))]
 fn virtio_net<T: Transport + 'static>(transport: T) {
     log::trace!("[virtio_net] pci virtio_net device init");
     crate::drivers::net::init_net_dev_la(transport);
 }
 
 // 读取设备树, 识别VirtIO设备
+#[cfg(feature = "virt")]
 pub fn init() {
     let fdt = unsafe {
         Fdt::from_ptr(DEVICE_TREE_ADDR as *const u8).expect("failed to parse device tree")
@@ -106,6 +106,7 @@ pub fn init() {
     }
 }
 
+#[cfg(feature = "virt")]
 fn enumerate_pci(pci_node: FdtNode, cam: Cam) {
     let reg = pci_node.reg().expect("PCI node missing reg property.");
     let mut allocator = PciMemory32Allocator::for_pci_ranges(&pci_node);

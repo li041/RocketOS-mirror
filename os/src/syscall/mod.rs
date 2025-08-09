@@ -45,11 +45,11 @@ use signal::{
     sys_rt_sigsuspend, sys_rt_sigtimedwait, sys_tgkill, sys_tkill,
 };
 use task::{
-    sys_acct, sys_clock_nanosleep, sys_clone, sys_execve, sys_exit_group, sys_futex, sys_get_time,
-    sys_getegid, sys_geteuid, sys_getgid, sys_getgroups, sys_getpgid, sys_getpid, sys_getppid,
-    sys_getresgid, sys_getresuid, sys_gettid, sys_getuid, sys_nanosleep, sys_set_tid_address,
-    sys_setfsgid, sys_setfsuid, sys_setgid, sys_setgroups, sys_setpgid, sys_setregid,
-    sys_setresgid, sys_setresuid, sys_setreuid, sys_setsid, sys_setuid, sys_waitpid, sys_yield,
+    sys_acct, sys_clock_nanosleep, sys_clone, sys_execve, sys_futex, sys_get_time, sys_getegid,
+    sys_geteuid, sys_getgid, sys_getgroups, sys_getpgid, sys_getpid, sys_getppid, sys_getresgid,
+    sys_getresuid, sys_gettid, sys_getuid, sys_nanosleep, sys_set_tid_address, sys_setfsgid,
+    sys_setfsuid, sys_setgid, sys_setgroups, sys_setpgid, sys_setregid, sys_setresgid,
+    sys_setresuid, sys_setreuid, sys_setsid, sys_setuid, sys_waitpid, sys_yield,
 };
 use util::{
     sys_adjtimex, sys_bpf, sys_clock_adjtime, sys_clock_getres, sys_clock_gettime,
@@ -83,7 +83,7 @@ use crate::{
 };
 pub use fs::FcntlOp;
 pub use fs::{AT_SYMLINK_NOFOLLOW, NAME_MAX};
-pub use task::sys_exit;
+pub use task::{sys_exit, sys_exit_group};
 pub mod errno;
 mod fs;
 mod mm;
@@ -548,8 +548,7 @@ pub fn syscall(
         SYSCALL_GETTID => sys_gettid(),
         SYSCALL_SYSINFO => sys_sysinfo(a0 as *mut SysInfo),
         SYCALL_SHMGET => sys_shmget(a0, a1, a2 as i32),
-        // SYSCALL_SHMCTL => sys_shmctl(a0, a1 as i32, a2),
-        SYSCALL_SHMCTL => sys_shmctl(a0, a1 as i32, a2 as *mut ShmId),
+        SYSCALL_SHMCTL => sys_shmctl(a0, a1 as i32, a2),
         SYSCALL_SHMAT => sys_shmat(a0, a1, a2 as i32),
         SYSCALL_SHMDT => sys_shmdt(a0),
         SYSCALL_BRK => sys_brk(a0),

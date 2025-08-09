@@ -29,7 +29,7 @@ pub struct IeGuard(bool);
 impl IeGuard {
     /// Construct an IeGuard
     pub fn new() -> Self {
-        Self(unsafe {
+        Self({
             let mut crmd = CrMd::read();
             let ie_before = crmd.is_interrupt_enabled();
             crmd.set_ie(false);
@@ -42,11 +42,9 @@ impl IeGuard {
 impl Drop for IeGuard {
     fn drop(&mut self) {
         if self.0 {
-            unsafe {
-                let mut crmd = CrMd::read();
-                crmd.set_ie(true);
-                crmd.write();
-            }
+            let mut crmd = CrMd::read();
+            crmd.set_ie(true);
+            crmd.write();
         }
     }
 }

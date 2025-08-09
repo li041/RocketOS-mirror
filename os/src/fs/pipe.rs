@@ -1,17 +1,16 @@
-use alloc::boxed::Box;
 use alloc::sync::{Arc, Weak};
 use alloc::vec;
 use alloc::vec::Vec;
 use core::any::Any;
 use core::ptr::copy_nonoverlapping;
-use core::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize};
+use core::sync::atomic::AtomicI32;
 use spin::{Mutex, RwLock};
 
 use crate::arch::mm::copy_to_user;
-use crate::ext4::inode::{self, Ext4InodeDisk, S_IFIFO};
+use crate::ext4::inode::{Ext4InodeDisk, S_IFIFO};
 use crate::signal::{Sig, SigInfo};
 use crate::syscall::errno::{Errno, SyscallRet};
-use crate::task::{current_task, wait, wakeup, yield_current_task, Tid};
+use crate::task::{current_task, wait, wakeup, Tid};
 use crate::timer::TimeSpec;
 
 use super::file::{FileOp, OpenFlags};
@@ -653,6 +652,7 @@ pub fn make_pipe(flags: OpenFlags) -> (Arc<Pipe>, Arc<Pipe>) {
 /// Pipe IOCTL 命令
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(usize)]
+#[allow(unused)]
 pub enum PipeIoctlCmd {
     FIONREAD = 0x541B, // 获取管道中可读字节数
 }
@@ -686,10 +686,6 @@ impl FileOp for Pipe {
                 copy_to_user(arg_ptr as *mut usize, &used_size, 1)?;
                 Ok(0)
             }
-            _ => {
-                log::error!("[Pipe::ioctl] unsupported ioctl command: {:?}", op);
-                Err(Errno::ENOTTY)
-            }
         }
     }
     // 管道不支持 fsync
@@ -712,7 +708,7 @@ impl FileOp for Pipe {
         log::error!("[Pipe::can_seek] Pipe does not support seeking");
         Err(Errno::ESPIPE) // 管道不支持偏移
     }
-    fn seek(&self, offset: isize, whence: super::uapi::Whence) -> SyscallRet {
+    fn seek(&self, _offset: isize, _whence: super::uapi::Whence) -> SyscallRet {
         return Err(Errno::ESPIPE);
     }
     fn r_ready(&self) -> bool {

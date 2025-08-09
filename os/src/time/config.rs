@@ -57,8 +57,8 @@ bitflags! {
 }
 
 pub const NSEC_PER_SEC: usize = 1_000_000_000;
-/// Supported clock IDs for clock_adjtime and related syscalls
 bitflags! {
+    /// Supported clock IDs for clock_adjtime and related syscalls
     pub struct ClockIdFlags: u32 {
         /// System-wide realtime clock
         const REALTIME               = 1 << 0;  // CLOCK_REALTIME = 0

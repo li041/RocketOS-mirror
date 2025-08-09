@@ -1,18 +1,13 @@
 use alloc::sync::Arc;
 
-use crate::ext4::inode::{S_IFDIR, S_IFREG};
+use crate::ext4::inode::S_IFDIR;
 
 use super::{
-    dentry::{self, insert_core_dentry, Dentry},
-    file::OpenFlags,
-    mount::VfsMount,
-    namei::{filename_create, parse_path_uncheck, path_openat, Nameidata},
+    namei::{filename_create, parse_path_uncheck, Nameidata},
     path::Path,
-    proc::meminfo::MemInfoFile,
-    uapi::DevT,
-    AT_FDCWD,
 };
 
+#[allow(unused)]
 pub fn init_etcfs(root_path: Arc<Path>) {
     let etc_path = "/etc";
     // let mut nd = Nameidata::new(etc_path, AT_FDCWD);

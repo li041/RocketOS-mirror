@@ -83,6 +83,7 @@ impl Display for TidHandle {
 }
 
 impl TidHandle {
+    #[allow(unused)]
     pub fn set(&mut self, tid: Tid) {
         self.0 = tid;
     }

@@ -1,8 +1,5 @@
-use core::{cell::UnsafeCell, time};
-
 use alloc::vec::Vec;
 use rand::{rngs::SmallRng, RngCore, SeedableRng};
-use spin::Mutex;
 
 use super::errno::SyscallRet;
 use crate::{
@@ -16,7 +13,6 @@ use crate::{
         fdtable::FdFlags,
         file::OpenFlags,
         namei::path_openat,
-        proc::tainted,
         uapi::{RLimit, Resource},
     },
     signal::Sig,

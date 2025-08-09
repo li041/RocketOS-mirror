@@ -1,10 +1,16 @@
 use core::sync::atomic::{AtomicI32, Ordering};
 
-use alloc::{collections::{btree_map::BTreeMap, vec_deque::VecDeque}, string::String, sync::Arc};
+use alloc::{
+    collections::{btree_map::BTreeMap, vec_deque::VecDeque},
+    string::String,
+    sync::Arc,
+};
 use spin::{Mutex, RwLock};
 
-use crate::{fs::{file::{FileOp, OpenFlags}, path::Path}, syscall::errno::Errno};
-
+use crate::{
+    fs::file::{FileOp, OpenFlags},
+    syscall::errno::Errno,
+};
 
 pub const IN_NONBLOCK: i32 = 0o0004000;
 pub const IN_CLOEXEC: i32 = 0o02000000;
@@ -29,7 +35,9 @@ impl InotifyHandle {
     /// 添加一个监听对象
     pub fn add_watch(&self, path: String, mask: u32) -> i32 {
         let wd = self.next_wd.fetch_add(1, Ordering::SeqCst);
-        self.watches.write().insert(wd, InotifyWatch { wd, path, mask });
+        self.watches
+            .write()
+            .insert(wd, InotifyWatch { wd, path, mask });
         wd
     }
 
@@ -39,6 +47,7 @@ impl InotifyHandle {
     }
 
     /// 模拟事件推送
+    #[allow(unused)]
     pub fn push_event(&self, event: InotifyEvent) {
         self.events.lock().push_back(event);
     }
@@ -61,7 +70,7 @@ impl FileOp for InotifyHandle {
 
         // Todo：阻塞
         if let Some(event) = self.fetch_event() {
-            return event.serialize(buf);    
+            return event.serialize(buf);
         } else {
             return Err(Errno::EAGAIN);
         }
@@ -93,10 +102,11 @@ impl FileOp for InotifyHandle {
 }
 
 /// 单个监听对象（对应内核的 inotify_watch）
+#[allow(unused)]
 pub struct InotifyWatch {
-    pub wd: i32,    // watch descriptor
+    pub wd: i32,      // watch descriptor
     pub path: String, // 监听的路径
-    pub mask: u32,  // 监听的事件掩码
+    pub mask: u32,    // 监听的事件掩码
 }
 
 /// 事件结构（对应内核的 struct inotify_event）
@@ -112,19 +122,19 @@ impl InotifyEvent {
     pub fn serialize(&self, buf: &mut [u8]) -> Result<usize, Errno> {
         let mut offset = 0;
         // 写 wd
-        buf[offset..offset+4].copy_from_slice(&self.wd.to_ne_bytes());
+        buf[offset..offset + 4].copy_from_slice(&self.wd.to_ne_bytes());
         offset += 4;
 
         // 写 mask
-        buf[offset..offset+4].copy_from_slice(&self.mask.to_ne_bytes());
+        buf[offset..offset + 4].copy_from_slice(&self.mask.to_ne_bytes());
         offset += 4;
 
         // 写 cookie
-        buf[offset..offset+4].copy_from_slice(&self.cookie.to_ne_bytes());
+        buf[offset..offset + 4].copy_from_slice(&self.cookie.to_ne_bytes());
         offset += 4;
 
         // 写 len
-        buf[offset..offset+4].copy_from_slice(&self.len.to_ne_bytes());
+        buf[offset..offset + 4].copy_from_slice(&self.len.to_ne_bytes());
         offset += 4;
 
         // 写 name（含 \0）
@@ -132,7 +142,7 @@ impl InotifyEvent {
         if !name_bytes.ends_with(&[0]) {
             name_bytes.push(0);
         }
-        buf[offset..offset+self.len as usize].copy_from_slice(&name_bytes);
+        buf[offset..offset + self.len as usize].copy_from_slice(&name_bytes);
         offset += self.len as usize;
 
         Ok(offset)

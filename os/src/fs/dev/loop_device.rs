@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use alloc::{sync::Arc, vec::Vec};
 use lazy_static::lazy_static;
 use spin::{Mutex, Once, RwLock};
@@ -148,7 +150,6 @@ impl LoopDevice {
             backend_file: Mutex::new(None),
         })
     }
-
     pub fn id(&self) -> u32 {
         self.device_id
     }

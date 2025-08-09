@@ -78,7 +78,7 @@ impl FdSet {
         }
     }
     pub fn valid(&self) -> bool {
-        log::error!("[Fd_set::valid] addr is {:?}",self.addr);
+        log::error!("[Fd_set::valid] addr is {:?}", self.addr);
         self.addr as usize != 0
     }
     pub fn clear(&self) {

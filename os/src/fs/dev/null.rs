@@ -1,5 +1,4 @@
 use crate::{
-    arch::mm::copy_to_user,
     ext4::inode::{Ext4InodeDisk, S_IFCHR},
     fs::{
         file::{FileOp, OpenFlags},
@@ -10,7 +9,6 @@ use crate::{
     },
     syscall::errno::{Errno, SyscallRet},
     timer::TimeSpec,
-    utils::DateTime,
 };
 
 use alloc::sync::Arc;
@@ -58,7 +56,7 @@ impl InodeOp for NullInode {
         kstat.ino = self.inode_num as u64;
         kstat.dev = 0;
         let (major, minor) = inode_on_disk.get_devt();
-        let devt = DevT::new_encode_dev_old(major, minor);
+        let _devt = DevT::new_encode_dev_old(major, minor);
         kstat.rdev = 259; // 通常特殊文件才会有 rdev
 
         kstat.mode = inode_on_disk.get_mode();
@@ -124,6 +122,7 @@ impl InodeOp for NullInode {
     }
 }
 
+#[allow(unused)]
 pub struct NullFile {
     pub path: Arc<Path>,
     pub inode: Arc<dyn InodeOp>,

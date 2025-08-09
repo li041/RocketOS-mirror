@@ -1,7 +1,4 @@
-use core::{default, mem, str};
-
-use lazy_static::lazy_static;
-use spin::{lazy, mutex, Once, RwLock};
+use spin::{Once, RwLock};
 
 use crate::{
     arch::config::PAGE_SIZE_BITS,
@@ -12,7 +9,6 @@ use crate::{
         kstat::Kstat,
         path::Path,
         uapi::Whence,
-        FileOld,
     },
     mm::MapPermission,
     syscall::errno::{Errno, SyscallRet},
@@ -20,11 +16,7 @@ use crate::{
     timer::TimeSpec,
 };
 
-use alloc::{
-    format,
-    string::{String, ToString},
-    sync::Arc,
-};
+use alloc::{format, string::String, sync::Arc};
 
 pub static MAPS: Once<Arc<dyn FileOp>> = Once::new();
 
@@ -36,6 +28,7 @@ pub struct MapsInodeInner {
 }
 
 impl MapsInode {
+    #[allow(unused)]
     pub fn new(inode_on_disk: Ext4InodeDisk) -> Arc<Self> {
         Arc::new(MapsInode {
             inner: RwLock::new(MapsInodeInner { inode_on_disk }),
@@ -103,6 +96,7 @@ impl InodeOp for MapsInode {
     }
 }
 
+#[allow(unused)]
 pub struct MapsFile {
     pub path: Arc<Path>,
     pub inode: Arc<dyn InodeOp>,

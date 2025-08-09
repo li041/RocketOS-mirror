@@ -1,7 +1,7 @@
 use alloc::vec;
 use num_enum::FromPrimitive;
 
-use crate::{bpf::vec_to_u64, task::current_task, time::KernelTimex};
+use crate::task::current_task;
 
 use super::{iter::LinuxTask, map::BpfMap, uapi::BpfFuncId};
 

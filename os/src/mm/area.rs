@@ -145,7 +145,6 @@ impl MapArea {
     // map the area: [start_va, end_va), 左闭右开
     /// 注意对于文件映射, 不应该使用这个函数分配page, 而是在缺页时处理
     pub fn map(&mut self, page_table: &mut PageTable) {
-        let mut ppn: PhysPageNum;
         let pte_flags = PTEFlags::from(self.map_perm);
         let start_vpn = self.vpn_range.get_start();
         let end_vpn = self.vpn_range.get_end();

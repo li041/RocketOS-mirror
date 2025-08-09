@@ -1,16 +1,9 @@
 extern crate alloc;
 
-use core::time::Duration;
-use log::error;
-
 use flags::*;
 use futex::{futex_cmp_requeue, futex_requeue, futex_wait, futex_wake, futex_wake_bitset};
 
-use crate::{
-    arch::mm::copy_from_user,
-    syscall::errno::{Errno, SyscallRet},
-    timer::TimeSpec,
-};
+use crate::{arch::mm::copy_from_user, syscall::errno::SyscallRet, timer::TimeSpec};
 
 /*
 use axprocess::{
@@ -65,7 +58,7 @@ pub fn do_futex(
                     1,
                 )?;
                 if FLAGS_CLOCKRT & flags != 0 {
-                    Some(timeout_buf)    
+                    Some(timeout_buf)
                 } else {
                     let now = TimeSpec::new_machine_time();
                     if timeout_buf < now {

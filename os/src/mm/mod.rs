@@ -1,9 +1,3 @@
-use core::{
-    arch::asm,
-    mem,
-    slice::{from_raw_parts, from_raw_parts_mut},
-};
-
 #[cfg(feature = "test")]
 use heap_allocator::heap_test;
 
@@ -19,8 +13,7 @@ pub mod shm;
 pub use address::{PhysAddr, PhysPageNum, VPNRange, VirtAddr, VirtPageNum};
 pub use area::{MapArea, MapPermission, MapType};
 pub use frame_allocator::{
-    frame_alloc, frame_alloc_range, frame_dealloc, kbuf_alloc, kbuf_dealloc, FrameTracker,
-    FRAME_ALLOCATOR,
+    frame_alloc, frame_alloc_range, frame_dealloc, FrameTracker, FRAME_ALLOCATOR,
 };
 pub use memory_set::{MemorySet, KERNEL_SATP, KERNEL_SPACE};
 pub use page::{Page, PageKind};

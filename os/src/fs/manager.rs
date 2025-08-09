@@ -1,23 +1,17 @@
-use alloc::sync::Arc;
+use crate::{arch::mm::copy_to_user, ext4::fs::Ext4FileSystem, syscall::errno::SyscallRet};
 
-use crate::{
-    arch::mm::copy_to_user,
-    ext4::{fs::Ext4FileSystem, super_block},
-    syscall::errno::SyscallRet,
-};
+use super::uapi::StatFs;
 
-use super::{dentry::Dentry, uapi::StatFs};
+pub struct FakeFS;
 
-pub struct Fake_FS;
-
-impl FileSystemOp for Fake_FS {
+impl FileSystemOp for FakeFS {
     fn type_name(&self) -> &'static str {
         "fake_fs"
     }
 }
 pub trait FileSystemOp: Send + Sync {
     fn type_name(&self) -> &'static str;
-    fn statfs(&self, buf: *mut StatFs) -> SyscallRet {
+    fn statfs(&self, _buf: *mut StatFs) -> SyscallRet {
         unimplemented!();
     }
 }

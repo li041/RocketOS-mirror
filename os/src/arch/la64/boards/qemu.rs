@@ -5,7 +5,6 @@ pub const MEMORY_SIZE: usize = 0x3000_0000;
 pub const MEMORY_SIZE: usize = 0x3000_0000;
 pub const MEMORY_END: usize = MEMORY_SIZE + MEMORY_START;
 
-pub const DISK_IMAGE_BASE: usize = 0x800_0000 + MEMORY_START;
 /// I/O
 /// 0x800000001fe20000
 /// 0x1fe0_01eo
@@ -15,6 +14,7 @@ pub const UART_BASE: usize = 0x800000001fe20000;
 #[cfg(feature = "virt")]
 pub const UART_BASE: usize = 0x1fe0_01e0;
 
+#[allow(unused)]
 pub const MMIO: &[(usize, usize)] = &[
     (0x0010_0000, 0x00_2000), // VIRT_TEST/RTC  in virt machin
     (0x1000_1000, 0x00_1000), // Virtio Block in virt machine

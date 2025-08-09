@@ -2,11 +2,10 @@ use super::futex::{FutexKey, FutexQ};
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
-use log::{info, warn};
+use log::info;
 use spin::Mutex;
 
 use super::jhash::jhash2;
-use crate::mutex::SpinNoIrqLock;
 
 use lazy_static::lazy_static;
 

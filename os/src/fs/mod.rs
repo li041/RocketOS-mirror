@@ -1,13 +1,6 @@
 //! File system in os
-use core::cell::OnceCell;
-
-use alloc::{string::ToString, sync::Arc};
-use dentry::{insert_dentry, Dentry, DENTRY_CACHE};
-use inode::InodeOp;
-use mount::{add_mount, Mount};
 use spin::RwLock;
 // use alloc::sync::Arc;
-pub use stdio::{Stdin, Stdout};
 
 use lazy_static::lazy_static;
 
@@ -19,6 +12,7 @@ pub mod fd_set;
 pub mod fdtable;
 pub mod file;
 pub mod inode;
+pub mod inotify;
 pub mod kstat;
 pub mod manager;
 pub mod mount;
@@ -29,7 +23,6 @@ pub mod path;
 pub mod pipe;
 mod stdio;
 pub mod tmp;
-pub mod inotify;
 
 #[cfg(not(feature = "la2000"))]
 pub mod dev;
@@ -46,8 +39,8 @@ pub use proc_la2000 as proc;
 
 // pub mod tty;
 // pub mod fd_set;
-pub mod uapi;
 pub mod eventfd;
+pub mod uapi;
 pub type FSMutex<T> = RwLock<T>;
 // Todo: 这里动态初始化一个FS_block_size
 lazy_static! {

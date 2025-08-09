@@ -3,19 +3,17 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
-use universal_hash::typenum::bit;
 
-use crate::drivers::block;
 use crate::drivers::block::block_cache::get_block_cache;
 use crate::drivers::block::block_dev::BlockDevice;
 use crate::ext4::dentry::Ext4DirEntry;
 use crate::fs::dentry::LinuxDirent64;
 use crate::syscall::errno::Errno;
+use crate::task::kernel_panic;
 
 use super::extent_tree::{Ext4Extent, Ext4ExtentHeader, Ext4ExtentIdx};
 use super::{dentry::EXT4_DT_DIR, fs::EXT4_BLOCK_SIZE};
 
-use crate::arch::config::PAGE_SIZE;
 /*
  * 默认情况下，每个目录都以“几乎是线性”数组列出条目。我写“几乎”，因为它不是内存意义上的线性阵列，因为目录条目是跨文件系统块分开。
  * 因此，说目录是一系列数据块，并且每个块包含目录条目的线性阵列。每个块阵列的末端通过到达块的末端来表示；该块中的最后一个条目具有记录长度，将其一直延伸到块的末端。
@@ -65,7 +63,10 @@ impl<'a> Ext4DirContentRO<'a> {
             }
             let null_term_name_len = dentry.name.len() + 1;
             // LinuxDirent64的reclen需要对齐到8字节
-            log::info!("[Ext4DirContentRO::getdents]d_type is {:?}",dentry.file_type);
+            log::info!(
+                "[Ext4DirContentRO::getdents]d_type is {:?}",
+                dentry.file_type
+            );
             let d_reclen: usize = (NAME_OFFSET + null_term_name_len + 7) & !0x7;
             let dirent = LinuxDirent64 {
                 d_ino: dentry.inode_num as u64,
@@ -558,7 +559,7 @@ impl<'a> Ext4Bitmap<'a> {
     pub fn dealloc_contiguous(
         &mut self,
         start_block: usize,
-        mut block_count: usize,
+        block_count: usize,
         bitmap_size: usize,
     ) {
         let mut byte_index = start_block / 8;
@@ -700,15 +701,17 @@ impl<'a> Ext4ExtentBlock<'a> {
     /// 递归遍历整个 extent B+ 树，收集所有叶子节点的 Ext4Extent
     pub fn iter_all_extents(
         &mut self,
-        block_device: Arc<dyn BlockDevice>,
-        block_size: usize,
+        _block_device: Arc<dyn BlockDevice>,
+        _block_size: usize,
         result: &mut Vec<Ext4Extent>,
     ) {
         let header = self.extent_header();
 
         if header.depth > 0 {
             // 当前是索引节点
-            unimplemented!("[Ext4ExtentBlock::iter_all_extents]Iterating over index nodes is not implemented yet");
+            // unimplemented!("[Ext4ExtentBlock::iter_all_extents]Iterating over index nodes is not implemented yet");
+            log::warn!("[Ext4ExtentBlock::iter_all_extents]Iterating over index nodes is not implemented yet");
+            kernel_panic();
             // for idx in self.extent_idxs(&header) {
             //     let child_block = idx.physical_leaf_block();
 

@@ -3,13 +3,8 @@ use alloc::{
     collections::btree_map::BTreeMap,
     sync::{Arc, Weak},
 };
-use spin::RwLock;
 
-use crate::{
-    drivers::block::block_dev::{self, BlockDevice},
-    ext4::MAX_FS_BLOCK_ID,
-    mm::{Page, PageKind},
-};
+use crate::{drivers::block::block_dev::BlockDevice, ext4::MAX_FS_BLOCK_ID, mm::Page};
 
 use super::inode::InodeOp;
 

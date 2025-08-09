@@ -1,6 +1,8 @@
+pub mod backtrace;
 pub mod boards;
 pub mod config;
 pub mod drivers;
+pub mod hart;
 pub mod lang_items;
 pub mod mm;
 mod register;
@@ -12,18 +14,15 @@ mod tlb;
 pub mod trampoline;
 pub mod trap;
 pub mod virtio_blk;
-pub mod hart;
-pub mod backtrace;
 
 global_asm!(include_str!("entry.S"));
 global_asm!(include_str!("tlb_refill.S"));
 
 use core::arch::{asm, global_asm};
 
-use config::{DIR_WIDTH, PAGE_SIZE, PAGE_SIZE_BITS, PTE_WIDTH, SUC_DMW_VESG};
-use lazy_static::lazy_static;
+use config::{DIR_WIDTH, PAGE_SIZE, PAGE_SIZE_BITS, PTE_WIDTH};
 pub use register::*;
-use spin::lazy;
+#[cfg(feature = "virt")]
 pub use virtio_blk::VirtIOBlock;
 
 extern "C" {

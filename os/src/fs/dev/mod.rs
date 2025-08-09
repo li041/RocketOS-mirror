@@ -1,19 +1,16 @@
 use crate::ext4::inode::{S_IFBLK, S_IFCHR, S_IFDIR, S_IFREG};
 
 use super::{
-    dentry::{self, insert_core_dentry, Dentry},
+    dentry::insert_core_dentry,
     file::OpenFlags,
-    mount::VfsMount,
-    namei::{filename_create, parse_path_uncheck, path_openat, Nameidata},
+    namei::{filename_create, parse_path_uncheck, Nameidata},
     path::Path,
     uapi::DevT,
-    AT_FDCWD,
 };
 use alloc::sync::Arc;
-use loop_device::{insert_loop_device, LoopControlFile, LoopDevice, LoopInode, LOOP_CONTROL};
+use loop_device::{insert_loop_device, LoopControlFile, LoopDevice, LOOP_CONTROL};
 use null::{NullFile, NULL};
 use rtc::{RtcFile, RTC};
-use spin::Mutex;
 use tty::{TtyFile, TTY};
 use urandom::{UrandomFile, URANDOM};
 use zero::{ZeroFile, ZERO};

@@ -18,7 +18,6 @@ use bitflags::bitflags;
 
 use alloc::{string::String, vec};
 use alloc::{sync::Arc, vec::Vec};
-use riscv::{addr::page, paging};
 
 bitflags! {
     #[derive(Clone, Copy)]

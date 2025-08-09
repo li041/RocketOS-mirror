@@ -84,9 +84,9 @@ impl OSInodeOld {
 // }
 /// List all files in the filesystems
 
-struct FAKE_ROOT_INODE;
+struct FakeRootInode;
 
-impl InodeTrait for FAKE_ROOT_INODE {
+impl InodeTrait for FakeRootInode {
     fn read<'a>(&'a self, _offset: usize, _buf: &'a mut [u8]) -> usize {
         todo!()
     }

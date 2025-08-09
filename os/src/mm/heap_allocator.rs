@@ -1,12 +1,7 @@
 //! The global allocator
-use core::ptr::NonNull;
 
 use crate::arch::config::KERNEL_HEAP_SIZE;
 use buddy_system_allocator::LockedHeap;
-
-use alloc::alloc::{Allocator, GlobalAlloc, Layout};
-use buddy_system_allocator::Heap;
-use spin::Mutex;
 
 /// heap allocator instance
 #[global_allocator]

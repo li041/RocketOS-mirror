@@ -91,7 +91,7 @@ impl TryFrom<i32> for BpfCmd {
     }
 }
 
-// Todo:
+#[allow(unused)]
 pub struct BtfObject {
     pub data: Vec<u8>, // 原始 BTF 数据
 }

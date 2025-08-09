@@ -1,7 +1,7 @@
 use core::arch::global_asm;
 
 use crate::{
-     arch::{mm::copy_to_user, CrMd, EStat, Interrupt, TLBRBadV, TLBRPrMd, PGD, PGDH, PGDL, PWCH, PWCL, TLBRERA}, fs::{dentry::clean_dentry_cache, proc::interrupts::record_interrupt}, mm::VirtAddr, signal::{handle_signal, SiField, Sig, SigInfo}, syscall::syscall, task::{current_task, handle_timeout, yield_current_task}
+     arch::{mm::copy_to_user, CrMd, EStat, Interrupt, TLBRBadV, TLBRPrMd, PGD, PGDH, PGDL, PWCH, PWCL, TLBRERA}, fs::{dentry::clean_dentry_cache, proc::interrupts::record_interrupt}, mm::VirtAddr, signal::{handle_signal, SiField, Sig, SigInfo}, syscall::syscall, task::{current_task, handle_timeout, kernel_panic, yield_current_task}
 };
 
 use super::{mm::copy_from_user, register, BadV, Exception, TIClr, Trap, ERA};
@@ -143,7 +143,9 @@ pub fn trap_handler(cx: &mut TrapContext) {
         Trap::Exception(Exception::AddressNotAligned) => {
             let pc = cx.era;
             let mut ins = 0u32;
-            copy_from_user(pc as *const u32 , &mut ins as *mut u32, 1);
+            if let Err(_e) = copy_from_user(pc as *const u32 , &mut ins as *mut u32, 1) {
+                kernel_panic();
+            }
             let ins = Instruction::from(ins);
             let op = ins.get_op_code();
             // 解析op_code
@@ -163,7 +165,9 @@ pub fn trap_handler(cx: &mut TrapContext) {
                     let mut rd = if rd_num != 0 { cx.r[rd_num] } else { 0 };
                     for i in 0..sz {
                         let mut seg = rd as u8;
-                        copy_to_user((addr + i) as *mut u8, &mut seg as *mut u8, 1);
+                        if let Err(_e) = copy_to_user((addr + i) as *mut u8, &mut seg as *mut u8, 1) {
+                            kernel_panic();
+                        }
                         rd >>= 8;
                     }
                 } else { // 读取操作
@@ -171,7 +175,10 @@ pub fn trap_handler(cx: &mut TrapContext) {
                     for i in (0..sz).rev() {
                         rd <<= 8;
                         let mut read_byte = 0u8;
-                        copy_from_user((addr + i) as *const u8, &mut read_byte as *mut u8, 1);
+                        if let Err(_e) = copy_from_user((addr + i) as *const u8, &mut read_byte as *mut u8, 1) {
+                            kernel_panic();
+                        }
+
                         rd |= read_byte as usize;
                         //debug!("{:#x}, {:#x}", rd, read_byte);
                     }

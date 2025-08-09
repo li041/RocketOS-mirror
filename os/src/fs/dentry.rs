@@ -1,9 +1,8 @@
 use core::fmt::{Debug, Formatter};
 
 use alloc::{
-    collections::{btree_map::BTreeMap, vec_deque::VecDeque},
     format,
-    string::{String, ToString},
+    string::String,
     sync::{Arc, Weak},
     vec::Vec,
 };
@@ -19,7 +18,7 @@ use crate::{
     timer::TimeSpec,
 };
 
-use super::{file::OpenFlags, inode::InodeOp, tmp};
+use super::{file::OpenFlags, inode::InodeOp};
 
 bitflags::bitflags! {
     #[derive(Debug)]

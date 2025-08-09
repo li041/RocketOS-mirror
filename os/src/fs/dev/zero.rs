@@ -2,7 +2,6 @@ use alloc::sync::Arc;
 use spin::{Once, RwLock};
 
 use crate::{
-    arch::mm::copy_to_user,
     ext4::inode::{Ext4InodeDisk, S_IFCHR},
     fs::{
         file::{FileOp, OpenFlags},
@@ -12,9 +11,8 @@ use crate::{
         uapi::DevT,
     },
     mm::Page,
-    syscall::errno::{Errno, SyscallRet},
+    syscall::errno::SyscallRet,
     timer::TimeSpec,
-    utils::DateTime,
 };
 pub static ZERO: Once<Arc<ZeroFile>> = Once::new();
 
@@ -28,12 +26,14 @@ pub struct ZeroInodeInner {
 }
 
 impl ZeroInodeInner {
+    #[allow(unused)]
     pub fn new(inode_on_disk: Ext4InodeDisk) -> Self {
         Self { inode_on_disk }
     }
 }
 
 impl ZeroInode {
+    #[allow(unused)]
     pub fn new(ino: usize, inode_mode: u16, major: u32, minor: u32) -> Arc<Self> {
         debug_assert!(inode_mode & S_IFCHR == S_IFCHR);
         let inner = ZeroInodeInner::new(Ext4InodeDisk::new_chr(inode_mode, major, minor));
@@ -105,6 +105,7 @@ impl InodeOp for ZeroInode {
     }
 }
 
+#[allow(unused)]
 pub struct ZeroFile {
     pub path: Arc<Path>,
     pub inode: Arc<dyn InodeOp>,
@@ -128,7 +129,7 @@ impl FileOp for ZeroFile {
     fn write(&self, buf: &[u8]) -> SyscallRet {
         Ok(buf.len())
     }
-    fn get_page<'a>(&'a self, page_offset: usize) -> Option<Arc<Page>> {
+    fn get_page<'a>(&'a self, _page_offset: usize) -> Option<Arc<Page>> {
         let page = Page::new_framed(None);
         Some(Arc::new(page))
     }
