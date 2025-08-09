@@ -2,7 +2,7 @@ use alloc::sync::Arc;
 
 use crate::{
     signal::{ActionType, Sig, SigAction, SigInfo, SigSet, SIG_IGN},
-    task::{add_task, dump_wait_queue, manager::delete_wait},
+    task::{add_task, continue_task, dump_wait_queue, manager::delete_wait},
 };
 
 use super::task::Task;
@@ -28,6 +28,10 @@ impl Task {
                     self.set_ready();
                     add_task(self.clone());
                 }
+                if self.is_stopped() && siginfo.signo == Sig::SIGCONT.raw() {
+                    // 如果任务被停止，则将其状态设置为继续
+                    continue_task(self.tid());
+                }
             }
             // 进程级信号
             false => {
@@ -39,10 +43,13 @@ impl Task {
                         });
                         if task.check_interrupt() {
                             task.set_interrupted();
-
                             delete_wait(task.tid());
                             task.set_ready();
                             add_task(task.clone());
+                        }
+                        if task.is_stopped() && siginfo.signo == Sig::SIGCONT.raw() {
+                            // 如果任务被停止，则将其状态设置为继续
+                            continue_task(task.tid());
                         }
                     }
                 })

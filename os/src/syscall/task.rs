@@ -1,3 +1,4 @@
+use core::future::pending;
 use core::sync::atomic::{compiler_fence, Ordering};
 use core::time;
 
@@ -7,14 +8,19 @@ use crate::arch::trap::context::{dump_trap_context, get_trap_context, save_trap_
 use crate::ext4::fs;
 use crate::fs::dentry::X_OK;
 use crate::fs::file::OpenFlags;
+use crate::fs::namei::{filename_lookup, Nameidata};
 use crate::futex::do_futex;
 use crate::mm::FRAME_ALLOCATOR;
-use crate::signal::Sig;
+use crate::signal::{LinuxSigInfo, SiField, Sig, SigInfo};
 use crate::syscall::errno::Errno;
 use crate::syscall::fs::{AT_EMPTY_PATH, NAME_MAX};
 use crate::syscall::util::{CLOCK_MONOTONIC, CLOCK_REALTIME};
+use crate::syscall::AT_SYMLINK_NOFOLLOW;
 use crate::task::{
-    add_group, dump_scheduler, for_each_task, get_all_tasks, get_group, get_task, info_allocator, new_group, nice_to_priority, nice_to_rlimit, priority_to_nice, unregister_task, wait, wait_timeout, CloneFlags, Task, MAX_NICE, MAX_PRIO, MIN_NICE, PRIO_PGRP, PRIO_PROCESS, PRIO_USER
+    add_group, dump_scheduler, for_each_task, get_all_tasks, get_group, get_task, info_allocator,
+    new_group, nice_to_priority, nice_to_rlimit, priority_to_nice, unregister_task, wait,
+    wait_timeout, CloneFlags, Task, MAX_NICE, MAX_PRIO, MIN_NICE, PRIO_PGRP, PRIO_PROCESS,
+    PRIO_USER,
 };
 use crate::timer::{TimeSpec, TimeVal};
 use crate::{
@@ -34,6 +40,7 @@ use alloc::task;
 use alloc::vec::Vec;
 use alloc::{sync::Arc, vec};
 use bitflags::bitflags;
+use universal_hash::typenum::bit;
 
 use super::errno::SyscallRet;
 
@@ -416,6 +423,19 @@ pub fn sys_execveat(
     if path.len() >= NAME_MAX {
         return Err(Errno::ENAMETOOLONG);
     }
+    let mut nd = Nameidata::new(&path, dirfd)?;
+    let follow_symlink = flags & AT_SYMLINK_NOFOLLOW == 0;
+    match filename_lookup(&mut nd, follow_symlink) {
+        Ok(dentry) => {
+            if dentry.is_symlink() && !follow_symlink {
+                return Err(Errno::ELOOP);
+            }
+        }
+        Err(e) => {
+            return Err(e);
+        }
+    }
+
     // OpenFlags::empty() = RDONLY = 0, 以只读方式打开文件
     match path_openat(&path, OpenFlags::empty(), AT_FDCWD, X_OK) {
         Ok(file) => {
@@ -708,7 +728,88 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: usize, option: i32) -> SyscallRet 
     }
 }
 
-// 用于waitpid选择目标任务
+// Todo: 支持WCONTINUED
+pub fn sys_waitid(idtype: i32, pid: isize, infop: usize, option: i32) -> SyscallRet {
+    log::warn!(
+        "[sys_waitid] idtype: {}, pid: {}, infop: {:x}, option: {}",
+        idtype,
+        pid,
+        infop,
+        option
+    );
+
+    // option 必须合法
+    if option < 0 {
+        return Err(Errno::EINVAL);
+    }
+    // option 必须包含 WEXITED, WSTOPPED 或 WCONTINUED
+    if option & (WaitOption::WEXITED | WaitOption::WSTOPPED | WaitOption::WCONTINUED).bits() == 0 {
+        return Err(Errno::EINVAL);
+    }
+
+    // idtype 必须合法
+    if idtype < 0 || idtype > 3 {
+        log::error!("[sys_waitid] Invalid idtype: {}", idtype);
+        return Err(Errno::EINVAL);
+    }
+
+    let wait_option = WaitOption::from_bits(option).unwrap_or_else(|| {
+        log::error!("[sys_waitid] Invalid wait option: {}", option);
+        WaitOption::empty()
+    });
+
+    let cur_task = current_task();
+    loop {
+        // 先检查当前进程是否存在满足目标子进程
+        let target_task = waitid_prepare(idtype, pid, option);
+
+        match target_task {
+            Some(child) => {
+                let tid = child.tid();
+
+                // 神奇小咒语
+                log::trace!("waitpid");
+                // 如果子进程已经退出，直接回收资源并返回
+                if (option & WaitOption::WEXITED.bits() != 0) && child.is_zombie() {
+                    return deal_zombie_task(&cur_task, &child, infop);
+                }
+                // 如果子进程被暂停，直接返回
+                else if (option & WaitOption::WSTOPPED.bits() != 0) && child.is_stopped() {
+                    return deal_stopped_task(&child, infop);
+                }
+                // 如果子进程被继续，直接返回
+                // else if (option & WaitOption::WCONTINUED.bits() != 0) && child.is_continued() {
+                //     // return deal_continued_task(&cur_task, &child, infop);
+                // }
+
+                // 子进程未退出
+                log::trace!("[sys_waitpid] child {} is not zombie, waiting...", tid);
+                if wait_option.contains(WaitOption::WNOHANG) {
+                    return Ok(0); // 非阻塞返回
+                }
+
+                // 阻塞等待被中断时，需要判断是否继续等待
+                if wait() == -1 {
+                    log::trace!("[sys_waitpid] wait interrupted");
+                    // 如果因为 SIGCHLD 被中断，继续 loop 检查
+                    if let Some(_sig) = cur_task
+                        .op_sig_pending_mut(|pending| pending.find_signal(Sig::SIGCHLD.into()))
+                    {
+                        cur_task.set_uninterrupted();
+                        continue;
+                    }
+                    return Err(Errno::EINTR);
+                }
+            }
+            None => {
+                // 没有任何符合条件的子进程
+                return Err(Errno::ECHILD);
+            }
+        }
+    }
+}
+
+/// 用于waitpid选择结束的目标任务
 fn select_task(pid: isize) -> Option<Arc<Task>> {
     let mut target_task: Option<Arc<Task>> = None;
     let cur_task = current_task();
@@ -754,6 +855,185 @@ fn select_task(pid: isize) -> Option<Arc<Task>> {
     });
 
     target_task
+}
+
+/// 用于waitpid选择暂停的目标任务
+fn select_stopped_task(pid: isize) -> Option<Arc<Task>> {
+    let mut target_task: Option<Arc<Task>> = None;
+    let cur_task = current_task();
+
+    cur_task.op_children_mut(|children| {
+        for child in children.values() {
+            log::error!(
+                "child: {}, pid: {}, pgid: {}, tgid: {}, is_stopped: {}",
+                child.tid(),
+                pid,
+                child.pgid(),
+                child.tgid(),
+                child.is_stopped()
+            );
+            let matches = match pid {
+                -1 => child.is_stopped(), // 等待任意停止子进程
+                0 => child.is_stopped() && child.pgid() == cur_task.pgid(), // 当前进程组的停止子进程
+                p if p > 0 => child.tgid() == p as usize, // 等待 tid 为 pid 的子进程
+                p if p < -1 => child.pgid() == (-p) as usize, // 等待 pgid 为 -pid 的子进程
+                _ => false,
+            };
+
+            if matches {
+                target_task = Some(child.clone());
+                return; // 找到第一个符合条件的立即返回
+            }
+        }
+
+        // 如果找不到符合条件的僵尸子进程，也可以选择任意一个非僵尸子进程（作为 fallback）
+        if pid == -1 || pid == 0 {
+            for child in children.values() {
+                let fallback = match pid {
+                    -1 => true,
+                    0 => child.pgid() == cur_task.pgid(),
+                    _ => false,
+                };
+                if fallback {
+                    target_task = Some(child.clone());
+                    break;
+                }
+            }
+        }
+    });
+
+    target_task
+}
+
+/// waitid 的任务选择逻辑
+fn waitid_prepare(idtype: i32, pid: isize, option: i32) -> Option<Arc<Task>> {
+    const P_ALL: i32 = 0; // 所有子进程
+    const P_PID: i32 = 1; // 进程 ID
+    const P_PGID: i32 = 2; // 进程组 ID
+    const P_PIDFD: i32 = 3; // 进程文件描述符
+
+    match idtype {
+        P_ALL => {
+            // waitid() 将等待所有子进程，并且 id 将被忽略
+            select_with_option(-1, option)
+        }
+        P_PID => {
+            // waitid() 将等待进程 ID 等于 id 的子进程
+            select_with_option(pid, option)
+        }
+        P_PGID => {
+            // waitid() 应等待进程组 ID 等于 (pid_t)id 的任何子进程。
+            select_with_option(-pid, option)
+        }
+        P_PIDFD => {
+            // 等待指定 PIDFD 的进程
+            log::error!("[sys_waitid] P_PIDFD is not supported yet");
+            return None;
+        }
+        _ => {
+            log::error!("[sys_waitid] invalid idtype: {}", idtype);
+            return None;
+        }
+    }
+}
+
+/// 根据option来选择对应的任务选取方式
+/// 注：优先处理退出的任务，如果没有退出的任务，则处理暂停的任务
+fn select_with_option(pid: isize, option: i32) -> Option<Arc<Task>> {
+    if option & WaitOption::WEXITED.bits() != 0 {
+        select_task(pid)
+    } else if option & WaitOption::WSTOPPED.bits() != 0 {
+        select_stopped_task(pid)
+    } else {
+        select_task(pid)
+    }
+}
+
+/// 处理僵尸任务的逻辑
+fn deal_zombie_task(cur_task: &Arc<Task>, child: &Arc<Task>, infop: usize) -> SyscallRet {
+    cur_task.remove_child_task(child.tid());
+    debug_assert_eq!(Arc::strong_count(&child), 1);
+    // 注销任务
+    unregister_task(child.tid());
+
+    let child_exitcode = child.exit_code();
+    println!(
+        "[sys_waitpid] child {} exited with code: {}",
+        child.tid(),
+        child_exitcode
+    );
+    let exit_code;
+    let si_code;
+    if child_exitcode < 0x7f && child_exitcode > 0 {
+        log::warn!(
+            "[sys_waitid] child {} exited by kill: {}",
+            child.tid(),
+            child_exitcode
+        );
+        exit_code = child_exitcode;
+        si_code = crate::signal::SigInfo::CLD_KILLED;
+    } else {
+        log::warn!(
+            "[sys_waitid] child {} exited normally: {}",
+            child.tid(),
+            child_exitcode
+        );
+        exit_code = (child_exitcode >> 8) & 0xff; // 获取实际的退出码
+        si_code = crate::signal::SigInfo::CLD_EXITED;
+    }
+
+    let siginfo: LinuxSigInfo = SigInfo::new(
+        Sig::SIGCHLD.raw(),
+        si_code,
+        SiField::SIGCHILD {
+            tid: child.tid() as i32,
+            uid: child.uid(),
+            status: exit_code,
+            // utime: child.time_stat().user_time().as_ticks() as u64,
+            // stime: child.time_stat().sys_time().as_ticks() as u64,
+        },
+    )
+    .into();
+
+    if infop != 0 {
+        if let Err(e) = copy_to_user(
+            infop as *mut LinuxSigInfo,
+            &siginfo as *const LinuxSigInfo,
+            1,
+        ) {
+            log::warn!("[sys_waitpid] failed to copy siginfo to user: {:?}", e);
+            return Err(e);
+        }
+    }
+    return Ok(0);
+}
+
+// 处理停止任务的逻辑
+fn deal_stopped_task(child: &Arc<Task>, infop: usize) -> SyscallRet {
+    let siginfo: LinuxSigInfo = SigInfo::new(
+        Sig::SIGCHLD.raw(),
+        crate::signal::SigInfo::CLD_STOPPED,
+        SiField::SIGCHILD {
+            tid: child.tid() as i32,
+            uid: child.uid(),
+            status: Sig::SIGSTOP.raw(),
+            // utime: child.time_stat().user_time().as_ticks() as u64,
+            // stime: child.time_stat().sys_time().as_ticks() as u64,
+        },
+    )
+    .into();
+
+    if infop != 0 {
+        if let Err(e) = copy_to_user(
+            infop as *mut LinuxSigInfo,
+            &siginfo as *const LinuxSigInfo,
+            1,
+        ) {
+            log::warn!("[sys_waitpid] failed to copy siginfo to user: {:?}", e);
+            return Err(e);
+        }
+    }
+    return Ok(0);
 }
 
 pub fn sys_futex(
@@ -1325,7 +1605,7 @@ pub fn sys_getegid() -> SyscallRet {
 pub fn sys_setgroups(size: usize, list: usize) -> SyscallRet {
     log::info!("[sys_setgroups] size: {}, list: {:x}", size, list);
     let task = current_task();
-    const NGROUPS_MAX: usize = 32; // 最大补充组数(为了过ltp，目前已经应是65536)
+    const NGROUPS_MAX: usize = 65536; // 最大补充组数(为了过ltp，目前已经应是65536)
     if size > NGROUPS_MAX {
         return Err(Errno::EINVAL);
     }
@@ -1334,14 +1614,14 @@ pub fn sys_setgroups(size: usize, list: usize) -> SyscallRet {
         return Err(Errno::EPERM);
     }
     let mut groups = vec![0u32; size as usize];
-    copy_from_user(list as *const u32, groups.as_mut_ptr(), size)?;
-    if size == 0 {
+    if size == 0 && list == 0 {
         // 清空补充组
         task.op_sup_groups_mut(|groups| {
             groups.clear();
         });
         return Ok(0);
     }
+    copy_from_user(list as *const u32, groups.as_mut_ptr(), size)?;
     task.op_sup_groups_mut(|sup_groups| {
         sup_groups.clear();
         for group in groups {

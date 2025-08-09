@@ -36,7 +36,7 @@ pub use kstack::{get_stack_top_by_sp, KSTACK_SIZE};
 pub use manager::{
     add_common_timer, add_group, add_posix_timer, dump_wait_queue, for_each_task, get_all_tasks,
     get_group, get_task, handle_timeout, new_group, remove_timer, unregister_task,
-    update_common_timer, update_posix_timer, wait, wait_timeout, wakeup, ITIMER_PROF, ITIMER_REAL,
+    update_common_timer, update_posix_timer, wait, wait_timeout, wakeup, stop_task, continue_task, ITIMER_PROF, ITIMER_REAL,
     ITIMER_VIRTUAL,
 };
 pub use processor::{current_task, run_tasks, other_run_tasks};

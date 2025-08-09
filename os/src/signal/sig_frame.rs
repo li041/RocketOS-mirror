@@ -131,6 +131,13 @@ pub enum SiField {
         sival_int: i32,
         sival_ptr: usize,
     },
+    SIGCHILD {
+        tid: i32, // 子进程的 TID
+        uid: u32, // 子进程的 UID
+        status: i32, // 子进程的退出状态
+        // utime: u64, // 用户态 CPU 时间
+        // stime: u64, // 内核态 CPU 时间
+    }
 }
 
 impl SiField {
@@ -157,6 +164,22 @@ impl SiField {
                 let ptr = *sival_ptr as u64;
                 arr[4] = (ptr & 0xFFFFFFFF) as i32;
                 arr[5] = (ptr >> 32) as i32;
+            }
+            SiField::SIGCHILD {
+                tid,
+                uid,
+                status,
+                // utime,
+                // stime,
+            } => {
+                arr[1] = *tid;
+                arr[2] = *uid as i32;
+                arr[3] = *status;
+                // 将 u64 拆成两个 i32 存储（在 64 位平台）
+                // arr[4] = (*utime & 0xFFFFFFFF) as i32;
+                // arr[5] = (*utime >> 32) as i32;
+                // arr[6] = (*stime & 0xFFFFFFFF) as i32;
+                // arr[7] = (*stime >> 32) as i32;
             }
         }
         arr

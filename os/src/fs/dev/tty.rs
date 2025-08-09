@@ -286,7 +286,9 @@ impl FileOp for TtyFile {
                 inner.last_char = console_getchar() as u8;
                 // opensbi returns usize::MAX if no char available
                 if inner.last_char == u8::MAX {
+                    drop(inner);
                     yield_current_task();
+                    inner = self.inner.write();
                     continue;
                 } else {
                     break;

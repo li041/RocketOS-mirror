@@ -1386,6 +1386,9 @@ impl Task {
     pub fn is_zombie(&self) -> bool {
         self.status() == TaskStatus::Zombie
     }
+    pub fn is_stopped(&self) -> bool {
+        self.status() == TaskStatus::Stopped
+    }
     pub fn set_ready(&self) {
         *self.status.lock() = TaskStatus::Ready;
     }
@@ -1401,6 +1404,9 @@ impl Task {
     pub fn set_zombie(&self) {
         *self.status.lock() = TaskStatus::Zombie;
     }
+    pub fn set_stopped(&self) {
+        *self.status.lock() = TaskStatus::Stopped;
+    }
     /******************************** 任务信息提供 **************************************/
 
     pub fn info(&self) -> String {
@@ -1415,6 +1421,7 @@ impl Task {
             TaskStatus::Interruptable => "S (sleeping)",
             TaskStatus::UnInterruptable => "D (Uninterruptible sleep)",
             TaskStatus::Zombie => "Z (zombie)",
+            TaskStatus::Stopped => "T (stopped)",
         };
         let tgid = self.tgid();
         let ngid = 0; // NUMA 组 ID（如果没有则为 0）
@@ -1631,6 +1638,7 @@ impl Task {
             TaskStatus::Interruptable => 'S',
             TaskStatus::UnInterruptable => 'D',
             TaskStatus::Zombie => 'Z',
+            TaskStatus::Stopped => 'T',
         };
 
         let ppid = self.op_parent(|parent| {
@@ -1834,9 +1842,12 @@ pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
                     SigInfo {
                         signo: Sig::SIGCHLD.raw(),
                         code: SigInfo::CLD_EXITED,
-                        fields: SiField::Kill {
-                            tid: current_task().tid() as i32,
-                            uid: current_task().uid(),
+                        fields: SiField::SIGCHILD {
+                            tid: task.tid() as i32,
+                            uid: task.uid(),
+                            status: exit_code,
+                            // utime: task.time_stat().user_time().as_ticks(),
+                            // stime: task.time_stat().sys_time().as_ticks(),
                         },
                     },
                     false,
@@ -2098,6 +2109,7 @@ pub enum TaskStatus {
     UnInterruptable,
     Interruptable,
     Zombie,
+    Stopped,
 }
 
 bitflags! {

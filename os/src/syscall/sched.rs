@@ -351,7 +351,7 @@ pub fn sys_sched_setparam(mut pid: isize, param: usize) -> SyscallRet {
                     );
                     return Err(Errno::EINVAL);
                 }
-                if cur_task.euid() != 0 && (priority as i32) < priority_to_nice(task.priority()) {
+                if cur_task.euid() != 0 || (priority as i32) < priority_to_nice(task.priority()) {
                     log::error!(
                         "[sched_setparam] permission denied for policy {}: {}",
                         task.policy(),

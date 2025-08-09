@@ -29,6 +29,7 @@ pub mod path;
 pub mod pipe;
 mod stdio;
 pub mod tmp;
+pub mod inotify;
 
 #[cfg(not(feature = "la2000"))]
 pub mod dev;

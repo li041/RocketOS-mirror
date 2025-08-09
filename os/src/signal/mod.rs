@@ -5,7 +5,7 @@ mod sig_struct;
 
 use core::arch::global_asm;
 
-use alloc::sync::Arc;
+use alloc::{sync::Arc, task};
 pub use sig_frame::*;
 pub use sig_handler::*;
 pub use sig_stack::*;
@@ -23,7 +23,7 @@ use crate::{
     },
     mm::VirtAddr,
     syscall::errno::Errno,
-    task::{current_task, get_stack_top_by_sp, kernel_exit, remove_task, schedule, Task},
+    task::{continue_task, current_task, get_stack_top_by_sp, kernel_exit, remove_task, schedule, stop_task, Task},
 };
 
 // 用户栈构造如下
@@ -129,8 +129,8 @@ pub fn handle_signal() {
             match sig.get_default_type() {
                 ActionType::Ignore => {}
                 ActionType::Term => terminate(task, sig),
-                ActionType::Stop => stop(),
-                ActionType::Cont => cont(),
+                ActionType::Stop => stop(task, sig),
+                ActionType::Cont => cont(task, sig),
                 ActionType::Core => core(task, sig),
             }
         }
@@ -234,9 +234,50 @@ fn terminate(task: Arc<Task>, sig: Sig) {
     kernel_exit(task, sig.raw() as i32 & 0x7F);
     schedule();
 }
-// Todo:
-fn stop() {}
-fn cont() {}
+
+fn stop(task: Arc<Task>, sig: Sig) {
+    task.op_parent(|parent|{
+        // 向父进程发送SIGCHLD
+        if let Some(parent) = parent {
+            log::warn!("[stop] task{} stopped, send SIGCHLD to parent", current_task().tid());
+            let siginfo = SigInfo::new(
+                Sig::SIGCHLD.raw(),
+                crate::signal::SigInfo::CLD_STOPPED,
+                SiField::SIGCHILD {
+                    tid: task.tid() as i32,
+                    uid: task.uid(),
+                    status: sig.raw() as i32,
+                    // utime: task.time_stat().user_time().as_ticks() as u64,
+                    // stime: task.time_stat().sys_time().as_ticks() as u64,
+                },
+            );
+            parent.upgrade().unwrap().receive_siginfo(siginfo, false);
+        }
+    });
+    stop_task();
+}
+
+fn cont(task: Arc<Task>, sig: Sig) {
+    task.op_parent(|parent|{
+        // 向父进程发送SIGCHLD
+        if let Some(parent) = parent {
+            log::warn!("[cont] task{} continued, send SIGCHLD to parent", current_task().tid());
+            let siginfo = SigInfo::new(
+                Sig::SIGCHLD.raw(),
+                crate::signal::SigInfo::CLD_CONTINUED,
+                SiField::SIGCHILD {
+                    tid: task.tid() as i32,
+                    uid: task.uid(),
+                    status: sig.raw() as i32,
+                    // utime: task.time_stat().user_time().as_ticks() as u64,
+                    // stime: task.time_stat().sys_time().as_ticks() as u64,
+                },
+            );
+            parent.upgrade().unwrap().receive_siginfo(siginfo, false);
+        }
+    });
+}
+
 // Todo: 转储任务崩溃时的内存快照
 // 目前只有page fault恢复失败时, 内核会发送SIGSEGV信号
 fn core(task: Arc<Task>, sig: Sig) {

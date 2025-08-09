@@ -68,13 +68,11 @@ use crate::{
     mm::shm::{ShmGetFlags, ShmId},
     signal::{SigInfo, SigSet},
     syscall::{
-        sched::{
+        fs::{sys_inotify_add_watch, sys_inotify_init, sys_inotify_rm_watch}, sched::{
             sys_getpriority, sys_sched_get_priority_max, sys_sched_get_priority_min,
             sys_sched_getattr, sys_sched_rr_get_interval, sys_sched_setattr, sys_sched_setparam,
             sys_setpriority,
-        },
-        signal::{sys_rt_sigqueueinfo, sys_sigaltstack},
-        task::{sys_execveat, sys_getcpu},
+        }, signal::{sys_rt_sigqueueinfo, sys_sigaltstack}, task::{sys_execveat, sys_getcpu, sys_waitid}
     },
     task::rusage::RUsage,
     time::KernelTimex,
@@ -112,6 +110,9 @@ const SYSCALL_DUP: usize = 23;
 const SYSCALL_DUP3: usize = 24;
 const SYSCALL_FCNTL: usize = 25;
 // inotify一族
+const SYSCALL_INOTIFY_INIT: usize = 26;
+const SYSCALL_INOTIFY_ADD_WATCH: usize = 27;
+const SYSCALL_INOTIFY_REMOVE_WATCH: usize = 28;
 const SYSCALL_IOCTL: usize = 29;
 // ioprio一族
 const SYSCALL_FLOCK: usize = 32;
@@ -384,6 +385,9 @@ pub fn syscall(
         SYSCALL_DUP => sys_dup(a0),
         SYSCALL_DUP3 => sys_dup3(a0, a1, a2 as i32),
         SYSCALL_FCNTL => sys_fcntl(a0 as i32, a1 as i32, a2),
+        SYSCALL_INOTIFY_INIT => sys_inotify_init(a0 as i32),
+        SYSCALL_INOTIFY_ADD_WATCH => sys_inotify_add_watch(a0, a1 as *const u8, a2 as u32),
+        SYSCALL_INOTIFY_REMOVE_WATCH => sys_inotify_rm_watch(a0, a1 as i32),
         SYSCALL_IOCTL => sys_ioctl(a0, a1, a2),
         SYSCALL_FLOCK => sys_flock(a0, a1 as i32),
         SYSCALL_MKNODAT => sys_mknodat(a0 as i32, a1 as *const u8, a2, a3 as u64),
@@ -463,6 +467,7 @@ pub fn syscall(
         // SYSCALL_CAPSET => sys_capset(a0, a1),
         SYSCALL_EXIT => sys_exit(a0 as i32),
         SYSCALL_EXIT_GROUP => sys_exit_group(a0 as i32),
+        SYSCALL_WAITID => sys_waitid(a0 as i32, a1 as isize, a2, a3 as i32),
         SYSCALL_SET_TID_ADDRESS => sys_set_tid_address(a0),
         SYSCALL_SET_ROBUST_LIST => sys_set_robust_list(a0, a1),
         SYSCALL_FUTEX => sys_futex(a0, a1 as i32, a2 as u32, a3, a4, a5 as u32),

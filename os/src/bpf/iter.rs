@@ -126,6 +126,7 @@ impl LinuxTask {
 const TASK_RUNNING: u64 = 0;
 const TASK_INTERRUPTIBLE: u64 = 1;
 const TASK_UNINTERRUPTIBLE: u64 = 2;
+const TASK_STOPPED: u64 = 4;
 const EXIT_ZOMBIE: u64 = 0x20;
 
 impl LinuxTask {
@@ -143,6 +144,7 @@ impl LinuxTask {
             TaskStatus::Interruptable => TASK_INTERRUPTIBLE,
             TaskStatus::UnInterruptable => TASK_UNINTERRUPTIBLE,
             TaskStatus::Zombie => EXIT_ZOMBIE,
+            TaskStatus::Stopped => TASK_STOPPED,
         };
         LinuxTask {
             padding0: [0; 24], // 填充到24字节

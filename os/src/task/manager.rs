@@ -8,7 +8,7 @@ use crate::{
 };
 use alloc::{
     boxed::Box,
-    collections::btree_map::BTreeMap,
+    collections::{btree_map::BTreeMap, vec_deque::VecDeque},
     string::{String, ToString},
     sync::{Arc, Weak},
     vec::Vec,
@@ -42,6 +42,11 @@ lazy_static! {
 // 时间管理器
 lazy_static! {
     static ref TIME_MANAGER: TimeManager = TimeManager::new();
+}
+
+// 暂停管理器
+lazy_static! {
+    static ref STOP_MANAGER: StopManager = StopManager::init();
 }
 
 /************************************** 核心管理器 **************************************/
@@ -200,8 +205,6 @@ impl ProcessGroupManager {
 }
 
 /************************************** 阻塞管理器 **************************************/
-// Todo: 为可中断的任务的支持
-
 // 将当前任务加入到basic队列并阻塞
 // 返回值：0：正常被唤醒； -1：被中断唤醒
 pub fn wait() -> isize {
@@ -737,5 +740,66 @@ pub fn dump_time_manager() {
         for (tid, clock_id, _) in entries {
             log::info!("  Task ID: {}, Clock ID: {}", tid, clock_id);
         }
+    }
+}
+
+/************************************** 暂停管理器 **************************************/
+/// 向暂停管理器中添加一个任务
+pub fn stop_task() -> isize {
+    let task = current_task();
+    task.set_stopped();
+    STOP_MANAGER.add(task);
+    log::warn!("[stop] task{} stopped", current_task().tid());
+    schedule(); // 调度其他任务
+    return 0;
+}
+
+/// 从暂停管理器中恢复某一个任务
+pub fn continue_task(tid: Tid) {
+    if let Ok(task) = STOP_MANAGER.remove(tid) {
+        #[cfg(feature = "cfs")]
+        {
+            // 保证任务在阻塞期间vruntime不变
+            let se = task.sched_entity();
+            se.update_exec_start(TimeSpec::new_machine_time());
+        }
+        task.set_ready();
+        add_task(task);
+    }
+}
+
+pub struct StopManager {
+    // 暂停队列
+    pub stop_queue: Mutex<VecDeque<Arc<Task>>>,
+}
+
+impl StopManager {
+    // 创建一个新的暂停队列
+    fn init() -> Self {
+        let stop_queue = VecDeque::new();
+        StopManager {
+            stop_queue: Mutex::new(stop_queue),
+        }
+    }
+
+    // 向暂停队列中添加一个任务
+    fn add(&self, task: Arc<Task>) {
+        let mut queue = self.stop_queue.lock();
+        queue.push_back(task);
+    }
+
+    // 从暂停队列中取出特定任务
+    fn remove(&self, tid: Tid) -> Result<Arc<Task>, ()> {
+        let mut queue = self.stop_queue.lock();
+        if let Some(pos) = queue.iter().position(|task| task.tid() == tid) {
+            return Ok(queue.remove(pos).unwrap());
+        }
+        Err(())
+    }
+
+    // 从暂停队列中删除特定任务
+    fn delete(&self, tid: Tid) {
+        let mut queue = self.stop_queue.lock();
+        queue.retain(|task| task.tid() != tid);
     }
 }

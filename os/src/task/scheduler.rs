@@ -546,11 +546,15 @@ bitflags! {
         /// 这个选项告诉 wait 或 waitpid 也报告那些已经停止（stopped），但尚未终止的子进程的状态。默认情况下，
         /// 只有当子进程终止时，它们的结束状态才会被报告。如果子进程被某种信号（如 SIGSTOP 或 SIGTSTP）停止，
         /// 并且父进程没有设置 WUNTRACED 选项，那么父进程将不会感知到子进程的停止状态，直到子进程被继续执行或终止。
+        const WSTOPPED = 1 << 1;
         const WUNTRACED = 1 << 1;
+        /// 这个选项用于等待子进程的终止状态。它会使 wait 或 waitpid 阻塞，直到至少一个子进程终止。
+        const WEXITED = 1 << 2; 
         /// 当子进程被停止后又继续执行时，使用这个选项。如果子进程之前被一个停止信号（如SIGSTOP 或 SIGTSTP）暂停，
         /// 然后通过继续信号（如 SIGCONT）被继续执行，那么 wait 或 waitpid 将报告这个子进程的状态，
         /// 即使它还没有终止。这允许父进程知道子进程已经从停止状态恢复。
         const WCONTINUED = 1 << 3;
+
     }
 }
 impl Debug for WaitOption {

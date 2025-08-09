@@ -19,6 +19,7 @@ use crate::fs::dentry::{
 use crate::fs::fd_set::init_fdset;
 use crate::fs::fdtable::{FdFlags, FdTable};
 use crate::fs::file::OpenFlags;
+use crate::fs::inotify::{InotifyHandle, IN_CLOEXEC};
 use crate::fs::kstat::Statx;
 use crate::fs::mount::get_mount_by_dentry;
 use crate::fs::namei::{
@@ -3850,5 +3851,44 @@ pub fn sys_flock(fd: usize, operation: i32) -> SyscallRet {
         log::error!("[sys_flock] invalid file descriptor");
         return Err(Errno::EBADF);
     };
+}
+
+pub fn sys_inotify_init(flags: i32) -> SyscallRet {
+    let fd_flags = if flags & IN_CLOEXEC != 0 {
+        FdFlags::FD_CLOEXEC
+    } else {
+        FdFlags::empty()
+    };
+    let task = current_task();
+    let inotify = InotifyHandle::new(flags)?;
+    let fd = task.fd_table().alloc_fd(inotify, fd_flags)?;
+    Ok(fd)
+}
+
+pub fn sys_inotify_add_watch(fd: usize, pathname: *const u8, mask: u32) -> SyscallRet {
+    let task = current_task();
+    let path = c_str_to_string(pathname)?;
+    log::info!("[sys_inotify_add_watch] fd: {}, pathname: {}, mask: {}", fd, path, mask);
+    // 获取inotify实例
+    let inotify_fd = task.fd_table().get_file(fd).ok_or(Errno::EBADF)?;
+    let inotify = inotify_fd
+        .as_any()
+        .downcast_ref::<InotifyHandle>()
+        .ok_or(Errno::EINVAL)?;
+    let wd = inotify.add_watch(path, mask);
+    Ok(wd as usize)
+}
+
+pub fn sys_inotify_rm_watch(fd: usize, wd: i32) -> SyscallRet {
+    let task = current_task();
+    log::info!("[sys_inotify_rm_watch] fd: {}, wd: {}", fd, wd);
+    // 获取inotify实例
+    let inotify_fd = task.fd_table().get_file(fd).ok_or(Errno::EBADF)?;
+    let inotify = inotify_fd
+        .as_any()
+        .downcast_ref::<InotifyHandle>()
+        .ok_or(Errno::EINVAL)?;
+    inotify.remove_watch(wd);
+    Ok(0)
 }
 /* fake end */
