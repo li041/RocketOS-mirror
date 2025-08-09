@@ -11,7 +11,8 @@
 //! submodules, and you should also implement syscalls this way.
 
 use errno::{Errno, SyscallRet};
-use fs::{
+use fs::sys_faccessat2;
+pub use fs::{
     sys_chdir, sys_chroot, sys_close, sys_close_range, sys_copy_file_range, sys_dup, sys_dup3,
     sys_faccessat, sys_fadvise64, sys_fallocate, sys_fchdir, sys_fchmod, sys_fchmodat, sys_fchown,
     sys_fchownat, sys_fcntl, sys_fdatasync, sys_fgetxattr, sys_flistxattr, sys_flock,
@@ -64,7 +65,7 @@ use crate::{
         uapi::{IoVec, OpenHow, PollFd, RLimit, StatFs},
     },
     futex::robust_list::{sys_get_robust_list, sys_set_robust_list},
-    mm::shm::ShmId,
+    mm::shm::{ShmGetFlags, ShmId},
     signal::{SigInfo, SigSet},
     syscall::{
         sched::{
@@ -536,7 +537,8 @@ pub fn syscall(
         SYSCALL_GETTID => sys_gettid(),
         SYSCALL_SYSINFO => sys_sysinfo(a0 as *mut SysInfo),
         SYCALL_SHMGET => sys_shmget(a0, a1, a2 as i32),
-        SYSCALL_SHMCTL => sys_shmctl(a0, a1 as i32, a3 as *mut ShmId),
+        // SYSCALL_SHMCTL => sys_shmctl(a0, a1 as i32, a2),
+        SYSCALL_SHMCTL => sys_shmctl(a0, a1 as i32, a2 as *mut ShmId),
         SYSCALL_SHMAT => sys_shmat(a0, a1, a2 as i32),
         SYSCALL_SHMDT => sys_shmdt(a0),
         SYSCALL_BRK => sys_brk(a0),
@@ -605,7 +607,7 @@ pub fn syscall(
         SYSCALL_RECVMSG => syscall_recvmsg(a0, a1, a2),
         SYSCALL_CLOSE_RANGE => sys_close_range(a0, a1, a2 as i32),
         SYSCALL_OPENAT2 => sys_openat2(a0 as i32, a1 as *const u8, a2 as *const u8, a3 as usize),
-        SYSCALL_FACCESSAT2 => sys_faccessat(a0 as usize, a1 as *const u8, a2 as i32, a3 as i32),
+        SYSCALL_FACCESSAT2 => sys_faccessat2(a0 as usize, a1 as *const u8, a2 as i32, a3 as i32),
         SYSCALL_SETDOMAINNAME => syscall_setdomainname(a0 as *const u8, a1),
         SYSCALL_GETRLIMIT => sys_getrlimit(a0 as i32, a1 as *mut RLimit),
         SYSCALL_SETRLIMIT => sys_setrlimit(a0 as i32, a1 as *const RLimit),

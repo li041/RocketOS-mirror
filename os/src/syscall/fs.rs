@@ -2761,29 +2761,11 @@ pub const AT_EACCESS: i32 = 0x200;
 
 /// 检查进程是否可以访问指定的文件
 /// Todo: 目前只检查pathname指定的文件是否存在, 没有检查权限
+/// riscv没有flags这个参数
 pub fn sys_faccessat(fd: usize, pathname: *const u8, mode: i32, flags: i32) -> SyscallRet {
     let path = c_str_to_string(pathname)?;
     if path.is_empty() {
         log::error!("[sys_faccessat] pathname is empty");
-        return Err(Errno::EINVAL);
-    }
-    // 检查 mode 是否合法：只能包含 F_OK, R_OK, W_OK, X_OK
-    if mode & !(F_OK | R_OK | W_OK | X_OK) != 0 {
-        log::error!("[sys_faccessat] Invalid mode: {}", mode);
-        return Err(Errno::EINVAL);
-    }
-    // 检查 flags 是否只包含支持的标志
-    let supported_flags = AT_EACCESS
-        | AT_SYMLINK_NOFOLLOW
-        | AT_EMPTY_PATH
-        | 0x60
-        | 0x2
-        | 0xfffe
-        | 0x1
-        | 0xca4b2
-        | 0x404658;
-    if flags & !supported_flags != 0 {
-        log::error!("[sys_faccessat] Unsupported flags: {:#x}", flags);
         return Err(Errno::EINVAL);
     }
     log::info!(
@@ -2793,6 +2775,56 @@ pub fn sys_faccessat(fd: usize, pathname: *const u8, mode: i32, flags: i32) -> S
         mode,
         flags
     );
+    // 检查 mode 是否合法：只能包含 F_OK, R_OK, W_OK, X_OK
+    if mode & !(F_OK | R_OK | W_OK | X_OK) != 0 {
+        log::error!("[sys_faccessat] Invalid mode: {}", mode);
+        return Err(Errno::EINVAL);
+    }
+    // 检查 flags 是否只包含支持的标志
+    // let supported_flags =
+    //     AT_EACCESS | AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH | 0x60 | 0x2 | 0xfffe | 0x1 | 0xca4b2;
+    // if flags & !supported_flags != 0 {
+    //     log::error!("[sys_faccessat] Unsupported flags: {:#x}", flags);
+    //     return Err(Errno::EINVAL);
+    // }
+
+    let mut nd = Nameidata::new(&path, fd as i32)?;
+    // let follow_symlink = flags & AT_SYMLINK_NOFOLLOW == 0;
+    let dentry = filename_lookup(&mut nd, true)?;
+    if mode == 0 {
+        // mode为0表示只检查文件是否存在
+        return Ok(0);
+    }
+    let use_effective = flags & AT_EACCESS != 0;
+    dentry_check_access(&dentry, mode, use_effective)
+}
+
+pub fn sys_faccessat2(fd: usize, pathname: *const u8, mode: i32, flags: i32) -> SyscallRet {
+    let path = c_str_to_string(pathname)?;
+    if path.is_empty() {
+        log::error!("[sys_faccessat] pathname is empty");
+        return Err(Errno::EINVAL);
+    }
+    log::info!(
+        "[sys_faccessat] fd: {}, pathname: {:?}, mode: {}, flags: {}",
+        fd,
+        path,
+        mode,
+        flags
+    );
+    // 检查 mode 是否合法：只能包含 F_OK, R_OK, W_OK, X_OK
+    if mode & !(F_OK | R_OK | W_OK | X_OK) != 0 {
+        log::error!("[sys_faccessat] Invalid mode: {}", mode);
+        return Err(Errno::EINVAL);
+    }
+    // 检查 flags 是否只包含支持的标志
+    let supported_flags =
+        AT_EACCESS | AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH | 0x60 | 0x2 | 0xfffe | 0x1 | 0xca4b2;
+    if flags & !supported_flags != 0 {
+        log::error!("[sys_faccessat] Unsupported flags: {:#x}", flags);
+        return Err(Errno::EINVAL);
+    }
+
     let mut nd = Nameidata::new(&path, fd as i32)?;
     let follow_symlink = flags & AT_SYMLINK_NOFOLLOW == 0;
     let dentry = filename_lookup(&mut nd, follow_symlink)?;

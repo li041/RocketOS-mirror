@@ -7,14 +7,17 @@ use crate::{
     },
 };
 
+use alloc::vec;
+
 use super::{
-    dentry::{self, insert_core_dentry, Dentry},
-    file::OpenFlags,
+    dentry::{self, delete_dentry, insert_core_dentry, Dentry},
+    file::{FileOp, OpenFlags},
+    inode::InodeOp,
     mount::VfsMount,
-    namei::{filename_create, parse_path_uncheck, path_openat, Nameidata},
+    namei::{filename_create, filename_lookup, parse_path_uncheck, path_openat, Nameidata},
     path::Path,
     pipe::PipeInode,
-    uapi::DevT,
+    uapi::{DevT, RenameFlags},
     AT_FDCWD,
 };
 use alloc::sync::Arc;
@@ -22,6 +25,8 @@ use exe::{ExeFile, ExeInode, EXE};
 use fd::FdDirInode;
 use meminfo::{MemInfoFile, MEMINFO};
 use mounts::{MountsFile, MOUNTS};
+use smoltcp::config;
+use spin::Once;
 use tainted::{TaintedFile, TAINTED};
 
 pub mod cpuinfo;
@@ -37,6 +42,8 @@ pub mod pid_max;
 pub mod smaps;
 pub mod status;
 pub mod tainted;
+
+pub static SHMMAX: Once<Arc<dyn InodeOp>> = Once::new();
 
 pub fn init_procfs(root_path: Arc<Path>) {
     let proc_path = "/proc";
@@ -58,6 +65,57 @@ pub fn init_procfs(root_path: Arc<Path>) {
             panic!("create {} failed: {:?}", proc_path, e);
         }
     };
+    // rename, 把/config.gz重命名为/proc/config
+    let oldpath = "/config.gz";
+    let newpath = "/proc/config.gz";
+    let mut old_nd = Nameidata {
+        path_segments: parse_path_uncheck(oldpath),
+        dentry: root_path.dentry.clone(),
+        mnt: root_path.mnt.clone(),
+        depth: 0,
+    };
+    match filename_lookup(&mut old_nd, true) {
+        Ok(old_dentry) => {
+            let mut new_nd = Nameidata {
+                path_segments: parse_path_uncheck(newpath),
+                dentry: root_path.dentry.clone(),
+                mnt: root_path.mnt.clone(),
+                depth: 0,
+            };
+            let new_dentry = filename_create(&mut new_nd, 0).unwrap();
+            let old_dir_entry = old_dentry.get_parent();
+            let new_dir_entry = new_dentry.get_parent();
+            let old_dir_inode = old_dir_entry.get_inode();
+            let new_dir_inode = new_dir_entry.get_inode();
+            match old_dir_inode.rename(
+                new_dir_inode,
+                old_dentry.clone(),
+                new_dentry.clone(),
+                RenameFlags::empty(),
+                true,
+            ) {
+                Ok(_) => {
+                    delete_dentry(old_dentry);
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[init_procfs] rename {} to {} failed: {:?}",
+                        oldpath,
+                        newpath,
+                        e
+                    );
+                }
+            }
+        }
+        Err(_e) => {
+            log::warn!(
+                "[init_procfs] rename {} to {} failed, no config.gz file",
+                oldpath,
+                newpath,
+            );
+        }
+    }
+
     let sys_path = "/proc/sys";
     let mut nd = Nameidata {
         path_segments: parse_path_uncheck(sys_path),
@@ -148,6 +206,28 @@ pub fn init_procfs(root_path: Arc<Path>) {
             panic!("create {} failed: {:?}", domain_path, e);
         }
     };
+
+    let shmmax_path = "/proc/sys/kernel/shmmax";
+    let shmmax_mode = S_IFREG as u16 | 0o444;
+    let mut nd = Nameidata {
+        path_segments: parse_path_uncheck(shmmax_path),
+        dentry: root_path.dentry.clone(),
+        mnt: root_path.mnt.clone(),
+        depth: 0,
+    };
+    match filename_create(&mut nd, 0) {
+        Ok(dentry) => {
+            let parent_inode = nd.dentry.get_inode();
+            parent_inode.create(dentry.clone(), shmmax_mode);
+            // 现在dentry的inode指向/proc/sys/kernel/shmmax
+            dentry.get_inode().write(0, b"8192"); // 设置默认的共享内存最大值为8192
+            insert_core_dentry(dentry.clone());
+            SHMMAX.call_once(|| dentry.get_inode().clone());
+        }
+        Err(e) => {
+            panic!("create {} failed: {:?}", shmmax_path, e);
+        }
+    }
 
     let taint_path = "/proc/sys/kernel/tainted";
     let mut nd = Nameidata {
@@ -593,4 +673,18 @@ pub fn init_procfs(root_path: Arc<Path>) {
             panic!("create {} failed: {:?}", mounts_path, e);
         }
     };
+}
+
+pub fn get_shm_max() -> usize {
+    let shmmax_inode = SHMMAX.get().unwrap();
+    let mut buf = vec![0; 32];
+    shmmax_inode.read(0, &mut buf);
+    let shmmax_str = core::str::from_utf8(&buf).unwrap_or("8192");
+    match shmmax_str.trim().parse::<usize>() {
+        Ok(size) => size,
+        Err(_) => {
+            log::error!("Failed to parse shmmax value, using default 8192");
+            8192 // 默认值
+        }
+    }
 }
