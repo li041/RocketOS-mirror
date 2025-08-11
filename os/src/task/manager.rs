@@ -114,10 +114,18 @@ impl TaskManager {
 
     pub fn for_each<T>(&self, f: impl Fn(&Arc<Task>) -> T) -> Vec<T> {
         let mut results = Vec::new();
-        for task in self.0.lock().values() {
-            let task = task.upgrade().unwrap();
-            results.push(f(&task));
-        }
+        self.0.lock().retain(|_, task| {
+            if let Some(task) = task.upgrade() {
+                results.push(f(&task));
+                true // 保持迭代器有效
+            } else {
+                false // 移除已被释放的任务
+            }
+        });
+        // for task in self.0.lock().values() {
+        //     let task = task.upgrade().unwrap();
+        //     results.push(f(&task));
+        // }
         results
     }
 }
@@ -178,7 +186,19 @@ impl ProcessGroupManager {
     }
 
     pub fn get_group(&self, pgid: usize) -> Option<Vec<Weak<Task>>> {
-        self.0.lock().get(&pgid).cloned()
+        let mut map = self.0.lock();
+        if let Some(tasks) = map.get_mut(&pgid) {
+            // 清理已经 drop 的任务
+            tasks.retain(|weak| weak.upgrade().is_some());
+            // 如果清理后为空，可以选择删除整个 entry
+            if tasks.is_empty() {
+                map.remove(&pgid);
+                return None;
+            }
+            // 返回当前有效的 Weak<Task> 列表
+            return Some(tasks.clone());
+        }
+        None
     }
 
     pub fn remove(&self, process: &Arc<Task>) {

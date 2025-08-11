@@ -313,7 +313,7 @@ fn core(task: Arc<Task>, sig: Sig) {
     task.close_thread();
     // 将信号放入低7位 (第8位是core dump标志,在gdb调试崩溃程序中用到)
     kernel_exit(task, sig.raw() as i32 & 0x7F | 0x80);
-    panic!("core dump: {:?}", sig);
-    // log::error!("[core] core dump: {:?}", sig);
+    // panic!("core dump: {:?}", sig); //调试使用
+    log::error!("[core] core dump: {:?}", sig);
     schedule();
 }

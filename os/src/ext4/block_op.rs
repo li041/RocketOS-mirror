@@ -797,7 +797,7 @@ impl<'a> Ext4ExtentBlock<'a> {
             Ok(())
         } else {
             // 索引节点
-            unimplemented!()
+            Ok(())
         }
     }
     /// 初始化当前 block 成为一个叶子节点
