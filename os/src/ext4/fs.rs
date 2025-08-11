@@ -1,4 +1,4 @@
-use super::super_block::Ext4SuperBlockDisk;
+use super::{inode, super_block::Ext4SuperBlockDisk};
 use alloc::{sync::Arc, vec::Vec};
 
 use crate::{
@@ -91,8 +91,9 @@ impl Ext4FileSystem {
             ) {
                 // 修改super_block的free_inodes_count
                 self.super_block.inner.write().free_inodes_count -= 1;
+                // 注意inode_num是从1开始的, 而local_inode_num是bit所在索引, 从0开始的
                 let global_inode_num =
-                    local_inode_num + self.super_block.inodes_per_group as usize * i;
+                    local_inode_num + self.super_block.inodes_per_group as usize * i + 1;
                 return global_inode_num;
             }
         }
@@ -104,8 +105,9 @@ impl Ext4FileSystem {
         global_inode_num: usize,
         is_dir: bool,
     ) {
-        let group_id = global_inode_num / self.super_block.inodes_per_group as usize;
-        let local_inode_num = global_inode_num % self.super_block.inodes_per_group as usize;
+        let inode_index = global_inode_num - 1; // inode_num从1开始, 索引从0开始
+        let group_id = inode_index / self.super_block.inodes_per_group as usize;
+        let local_inode_num = inode_index % self.super_block.inodes_per_group as usize;
         let block_bitmap_size = self.super_block.inodes_per_group as usize / 8;
         self.block_groups[group_id].dealloc_inode(
             block_device.clone(),
