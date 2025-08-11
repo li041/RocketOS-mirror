@@ -356,7 +356,7 @@ impl Page {
             PageKind::Filebe(info) => {
                 let guard = info.write(); // 加写锁
                 if guard.modified {
-                    // println!("[Page::modified]sync page: {:#x}", self.vaddr);
+                    // println!("[Page::sync] sync Filebe page: {:#x}", self.vaddr);
                     if let Some(block_device) = guard.block_device.upgrade() {
                         let cache = unsafe {
                             core::slice::from_raw_parts_mut(self.vaddr as *mut u8, PAGE_SIZE)

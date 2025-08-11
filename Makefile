@@ -14,21 +14,31 @@ ARCH ?= riscv64
 MODE ?= release
 
 # all: clean run
-all : 
-	cd ./img && make unpack
-	mkdir ./increment -p && mkdir ./oscamp -p 
-	cp /coursegrader/testdata/sdcard-rv.img.gz . && gunzip sdcard-rv.img.gz
-	cp /coursegrader/testdata/sdcard-la.img.gz . && gunzip sdcard-la.img.gz
-	mount ./sdcard-rv.img ./oscamp && mount ./disk.img ./increment 
-	./copy_tests.sh ./ltp_test.txt ./oscamp/musl/ltp/testcases/bin ./increment/musl/ltp/testcases/bin
-	./copy_tests.sh ./ltp_test.txt ./oscamp/glibc/ltp/testcases/bin ./increment/glibc/ltp/testcases/bin
-	umount ./oscamp && umount ./increment
-	mount ./sdcard-la.img ./oscamp && mount ./disk-la.img ./increment 
-	./copy_tests.sh ./ltp_test.txt ./oscamp/musl/ltp/testcases/bin ./increment/musl/ltp/testcases/bin
-	./copy_tests.sh ./ltp_test.txt ./oscamp/glibc/ltp/testcases/bin ./increment/glibc/ltp/testcases/bin
-	umount ./oscamp && umount ./increment
-	rm -rf sdcard-rv.img sdcard-rv.img.gz    
-	rm -rf sdcard-la.img sdcard-la.img.gz
+# all : 
+# 	cd ./img && make unpack
+# 	mkdir ./increment -p && mkdir ./oscamp -p 
+# 	cp /coursegrader/testdata/sdcard-rv.img.gz . && gunzip sdcard-rv.img.gz
+# 	cp /coursegrader/testdata/sdcard-la.img.gz . && gunzip sdcard-la.img.gz
+# 	mount ./sdcard-rv.img ./oscamp && mount ./disk.img ./increment 
+# 	./copy_tests.sh ./ltp_test.txt ./oscamp/musl/ltp/testcases/bin ./increment/musl/ltp/testcases/bin
+# 	./copy_tests.sh ./ltp_test.txt ./oscamp/glibc/ltp/testcases/bin ./increment/glibc/ltp/testcases/bin
+# 	umount ./oscamp && umount ./increment
+# 	mount ./sdcard-la.img ./oscamp && mount ./disk-la.img ./increment 
+# 	./copy_tests.sh ./ltp_test.txt ./oscamp/musl/ltp/testcases/bin ./increment/musl/ltp/testcases/bin
+# 	./copy_tests.sh ./ltp_test.txt ./oscamp/glibc/ltp/testcases/bin ./increment/glibc/ltp/testcases/bin
+# 	umount ./oscamp && umount ./increment
+# 	rm -rf sdcard-rv.img sdcard-rv.img.gz    
+# 	rm -rf sdcard-la.img sdcard-la.img.gz
+# 	cd ./user && make build ARCH=riscv64 MODE=release
+# 	cd ./os && make build ARCH=riscv64 MODE=release 
+# 	cd ./user && make build ARCH=loongarch64 MODE=release
+# 	cd ./os && make build ARCH=loongarch64 MODE=release
+# 	cp ./os/target/riscv64gc-unknown-none-elf/release/os.bin ./kernel-rv && cp ./os/target/loongarch64-unknown-none/release/os ./kernel-la
+
+# 决赛一阶段
+all: 
+	cd ./img && make unpack-final
+	cp ./img/sdcard-rv-final.img ./disk.img && cp ./img/sdcard-la-final.img ./disk-la.img
 	cd ./user && make build ARCH=riscv64 MODE=release
 	cd ./os && make build ARCH=riscv64 MODE=release 
 	cd ./user && make build ARCH=loongarch64 MODE=release

@@ -436,7 +436,7 @@ impl<'a> Ext4Bitmap<'a> {
     }
     // 分配一个位
     // 返回分配的位的编号(是一个块内的偏移, 需要转换为inode_bitmap中的编号), 由上层调用者负责转换
-    /// 注意: inode_num从1开始, 而bitmap的索引从0开始, bit_index = inode_num - 1
+    /// 注意: inode_num从1开始, 而bitmap的索引从0开始, bit_index = inode_num - 1, 这个在上层处理
     /// 注意: inode_bitmap_size的单位是byte
     pub fn alloc(&mut self, inode_bitmap_size: usize) -> Option<usize> {
         log::info!(
@@ -452,8 +452,7 @@ impl<'a> Ext4Bitmap<'a> {
                     if (byte & (1 << j)) == 0 {
                         *byte_ptr |= 1 << j;
                         if i <= inode_bitmap_size {
-                            // 这里加1是因为inode_num从1开始
-                            return Some(i * 8 + j + 1);
+                            return Some(i * 8 + j);
                         } else {
                             // 找到第一个未使用的位时, 已经超出了inode_bitmap的大小, 说明inode_bitmap不够用
                             log::error!("i byte, j bit: {}, {}", i, j);
@@ -501,8 +500,7 @@ impl<'a> Ext4Bitmap<'a> {
                         let bj = b % 8;
                         self.bitmap[bi] |= 1 << bj;
                     }
-                    // 如果分配的是 inode bitmap，要从 1 开始编号
-                    return Some((start_bit + 1, max_count as u32));
+                    return Some((start_bit, max_count as u32));
                 }
             } else {
                 current_run = 0;
@@ -516,7 +514,7 @@ impl<'a> Ext4Bitmap<'a> {
                 let bj = b % 8;
                 self.bitmap[bi] |= 1 << bj;
             }
-            return Some((longest_start + 1, longest_run as u32));
+            return Some((longest_start, longest_run as u32));
         }
 
         None

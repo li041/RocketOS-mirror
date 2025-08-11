@@ -53,6 +53,11 @@ all:
 	cp -r ./custom-la/* mnt
 	umount mnt
 
+pack-final:
+	tar -cJf sdcard-images.tar.xz sdcard-rv-final.img sdcard-la-final.img
+unpack-final:
+	tar -xf sdcard-images.tar.xz -C .
+
 pack: 
 	tar -cJvf disk.tar.xz disk.img
 	tar -cJvf disk-la.tar.xz disk-la.img

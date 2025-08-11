@@ -640,7 +640,8 @@ impl MemorySet {
             {
                 let prepend_args = vec![String::from("/glibc/busybox"), String::from("sh")];
                 argv.splice(0..0, prepend_args);
-                if let Ok(busybox) = path_openat("/glibc/busybox", OpenFlags::empty(), AT_FDCWD, 0) {
+                if let Ok(busybox) = path_openat("/glibc/busybox", OpenFlags::empty(), AT_FDCWD, 0)
+                {
                     elf_file = busybox;
                 }
             }
@@ -654,6 +655,7 @@ impl MemorySet {
         let ph_entsize = u16::from_le_bytes(elf_head[54..56].try_into().unwrap());
 
         if elf_head[0..4] != [0x7f, 0x45, 0x4c, 0x46] {
+            log::error!("[from_elf] invalid elf magic: {:?}", &elf_head[0..4]);
             return Err(Errno::ENOEXEC);
         }
 
@@ -1890,13 +1892,18 @@ impl MemorySet {
                                                 vpn.0,
                                                 page.ppn().0
                                             );
-                                            #[cfg(target_arch = "riscv64")]{
+                                            #[cfg(target_arch = "riscv64")]
+                                            {
                                                 *pte = PageTableEntry::new(
                                                     page.ppn(),
-                                                    pte_flags | PTEFlags::V | PTEFlags::A | PTEFlags::D,
+                                                    pte_flags
+                                                        | PTEFlags::V
+                                                        | PTEFlags::A
+                                                        | PTEFlags::D,
                                                 );
                                             }
-                                            #[cfg(target_arch = "loongarch64")]{
+                                            #[cfg(target_arch = "loongarch64")]
+                                            {
                                                 *pte = PageTableEntry::new(
                                                     page.ppn(),
                                                     pte_flags | PTEFlags::V,
@@ -1905,13 +1912,18 @@ impl MemorySet {
                                             area.pages.insert(vpn, page);
                                         } else {
                                             let ppn = page.ppn();
-                                            #[cfg(target_arch = "riscv64")]{
+                                            #[cfg(target_arch = "riscv64")]
+                                            {
                                                 *pte = PageTableEntry::new(
                                                     page.ppn(),
-                                                    pte_flags | PTEFlags::V | PTEFlags::A | PTEFlags::D,
+                                                    pte_flags
+                                                        | PTEFlags::V
+                                                        | PTEFlags::A
+                                                        | PTEFlags::D,
                                                 );
                                             }
-                                            #[cfg(target_arch = "loongarch64")]{
+                                            #[cfg(target_arch = "loongarch64")]
+                                            {
                                                 *pte = PageTableEntry::new(
                                                     page.ppn(),
                                                     pte_flags | PTEFlags::V,
@@ -1930,10 +1942,15 @@ impl MemorySet {
                                     map_perm.insert(MapPermission::W);
                                     let pte_flags = PTEFlags::from(map_perm);
                                     let ppn = page.ppn();
-                                    #[cfg(target_arch = "riscv64")]{
-                                        *pte = PageTableEntry::new(ppn, pte_flags | PTEFlags::V | PTEFlags::A | PTEFlags::D);
+                                    #[cfg(target_arch = "riscv64")]
+                                    {
+                                        *pte = PageTableEntry::new(
+                                            ppn,
+                                            pte_flags | PTEFlags::V | PTEFlags::A | PTEFlags::D,
+                                        );
                                     }
-                                    #[cfg(target_arch = "loongarch64")]{
+                                    #[cfg(target_arch = "loongarch64")]
+                                    {
                                         *pte = PageTableEntry::new(ppn, pte_flags | PTEFlags::V);
                                     }
                                     area.pages.insert(vpn, Arc::new(page));
