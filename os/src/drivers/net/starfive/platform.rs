@@ -9,7 +9,7 @@ const QUEUE_SIZE: usize = 16;
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-08-10 11:39:56
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-08-12 00:25:09
+ * @LastEditTime: 2025-08-12 16:29:18
  * @FilePath: /RocketOS_netperfright/os/src/drivers/net/starfive/platform.rs
  * @Description: 
  * 
@@ -203,7 +203,7 @@ impl <const QS:usize> NetDevice for VisionFive2_NetDevice<QS> {
         Ok(())
     }
 
-    fn send(&mut self,ptr:NetBufPtr) {
+    fn send(&mut self,ptr:NetBufPtr)->usize {
         log::info!("[VisionFive2_NetDevice_send]begin send");
         let send_netbuf = NetBuf::from_ptr_into_netbuf(ptr);
         log::error!(
@@ -268,6 +268,7 @@ impl <const QS:usize> NetDevice for VisionFive2_NetDevice<QS> {
             }
         }
         log::info!("[VisionFive2_NetDevice_send] send complete");
+        return 0;
     }
 
     fn recv(&mut self)->Option<NetBufPtr> {

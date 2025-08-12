@@ -1,5 +1,7 @@
 use core::fmt::{Debug, Formatter};
 
+#[cfg(feature = "board")]
+use alloc::collections::btree_map::BTreeMap;
 use alloc::{
     format,
     string::String,

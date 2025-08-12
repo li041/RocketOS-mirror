@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-30 16:26:09
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-08-08 17:30:49
+ * @LastEditTime: 2025-08-12 17:21:17
  * @FilePath: /RocketOS_netperfright/os/src/net/tcp.rs
  * @Description: tcp file 
  * 
@@ -137,7 +137,12 @@ impl TcpSocket {
         //确保addr不是0.0.0.0
         let addr=if is_unspecified(local_addr.addr) {
             #[cfg(feature="vf2")]
-            {Some(smoltcp::wire::IpAddress::Ipv4(Ipv4Address::new(127, 0, 0, 1)))}
+            if task.exe_path().contains("git")|| task.exe_path().contains("curl"){
+                Some(smoltcp::wire::IpAddress::Ipv4(Ipv4Address::new(192, 168, 5, 100)))
+            }
+            else {
+                Some(smoltcp::wire::IpAddress::Ipv4(Ipv4Address::new(127, 0, 0, 1)))
+            }
             #[cfg(feature = "la2000")]
             if task.exe_path().contains("git")|| task.exe_path().contains("curl"){
                 Some(smoltcp::wire::IpAddress::Ipv4(Ipv4Address::new(192, 168, 5, 100)))
@@ -579,6 +584,7 @@ impl TcpSocket {
         }
         let handle=unsafe { self.handle.get().read().unwrap() };
         let mut times=0;
+        let task=current_task();
         self.block_on(||{
             log::trace!("[block_on]");
             // log::error!("[]")
@@ -614,7 +620,7 @@ impl TcpSocket {
                     // socket.close();
                     Ok(0)
                 }
-                else if socket.recv_queue()==0{
+                else if (socket.recv_queue()==0)&&(task.exe_path().contains("git")||task.exe_path().contains("curl")){
                     Ok(0)
                 }
                 else{

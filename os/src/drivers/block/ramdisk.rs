@@ -10,7 +10,7 @@ use crate::mm::VirtAddr;
 use super::block_dev::BlockDevice;
 
 const BLOCK_SIZE: usize = 512;
-#[cfg(feature = "la2000")]
+// #[cfg(feature = "la2000")]
 pub const RAMDISK_BASE: usize = 0xA0000000; // RamDisk 基地址
 pub const RAMDISK_SIZE: usize = 0x80000000; // RamDisk 大小为 2GB
 
