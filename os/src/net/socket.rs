@@ -19,7 +19,7 @@ use core::{
 
 use crate::{
     arch::{config::SysResult, mm::copy_to_user},
-    ext4::inode::{S_IFDIR, S_IFSOCK},
+    ext4::inode::{self, Ext4InodeDisk, S_IFDIR, S_IFIFO, S_IFSOCK},
     fs::{
         fdtable::FdFlags, file::OpenFlags, inode::InodeOp, namei::path_openat, path::Path,
         pipe::Pipe, uapi::IoVec, AT_FDCWD,
@@ -41,7 +41,7 @@ use smoltcp::{
     socket::tcp::{self, State},
     wire::{IpAddress, Ipv4Address},
 };
-use spin::{Mutex, MutexGuard};
+use spin::{Mutex, MutexGuard, Once, RwLock};
 // use crate::{arch::{config::SysResult, mm::copy_to_user}, fs::{fdtable::FdFlags, file::{File, OpenFlags}, namei::path_openat, pipe::Pipe, uapi::IoVec}, net::{alg::{encode_text, AlgType}, udp::get_ephemeral_port, unix::PasswdEntry, SOCKET_SET}, task::{current_task, yield_current_task}, timer::TimeSpec};
 
 use crate::{
@@ -62,16 +62,25 @@ use super::{
     IP,
 };
 
-lazy_static::lazy_static! {
-    pub static ref SOCKET_INODE: Arc<SocketInode> = Arc::new(SocketInode { inode_num: 123456});
-}
+pub static SOCKET_INODE: Once<Arc<SocketInode>> = Once::new();
+
 pub struct SocketInode {
     inode_num: usize,
+    pub inner: RwLock<SocketInodeInner>,
+}
+
+pub struct SocketInodeInner {
+    pub inode_on_disk: Ext4InodeDisk,
 }
 
 impl SocketInode {
     pub fn new(inode_num: usize) -> Arc<Self> {
-        Arc::new(SocketInode { inode_num })
+        let mut inode_on_disk = Ext4InodeDisk::default();
+        inode_on_disk.set_mode(S_IFIFO);
+        Arc::new(SocketInode {
+            inode_num,
+            inner: RwLock::new(SocketInodeInner { inode_on_disk }),
+        })
     }
 }
 
@@ -1696,7 +1705,7 @@ impl FileOp for Socket {
         panic!("can not get offset socket");
     }
     fn get_inode(&self) -> Arc<dyn InodeOp> {
-        SOCKET_INODE.clone()
+        SOCKET_INODE.get().unwrap().clone()
     }
     fn r_ready(&self) -> bool {
         log::error!("[sokcet_readable]:poll readable");
@@ -1834,9 +1843,9 @@ pub enum SocketOption {
 pub enum TcpSocketOption {
     TCP_NODELAY = 1, // disable nagle algorithm and flush
     TCP_MAXSEG = 2,
-    TCP_KEEPIDLE=4,
-    TCP_KEEPINTVL=5,
-    TCP_KEEPCNT=6,
+    TCP_KEEPIDLE = 4,
+    TCP_KEEPINTVL = 5,
+    TCP_KEEPCNT = 6,
     TCP_INFO = 11,
     SO_OOBINLINE = 10,
     TCP_CONGESTION = 13,
@@ -2198,41 +2207,47 @@ impl TcpSocketOption {
 
         match self {
             TcpSocketOption::TCP_NODELAY => {
-                        if opt.len() < 4 {
-                            panic!("can't read a int from socket opt value");
-                        }
-                        let opt_value = u32::from_be_bytes(<[u8; 4]>::try_from(&opt[0..4]).unwrap());
-                        socket.set_nagle_enabled(opt_value == 0);
-                        Ok(0)
-                    }
+                if opt.len() < 4 {
+                    panic!("can't read a int from socket opt value");
+                }
+                let opt_value = u32::from_be_bytes(<[u8; 4]>::try_from(&opt[0..4]).unwrap());
+                socket.set_nagle_enabled(opt_value == 0);
+                Ok(0)
+            }
             TcpSocketOption::TCP_MAXSEG => {
-                        unimplemented!()
-                    }
+                unimplemented!()
+            }
             TcpSocketOption::TCP_INFO => Ok(0),
             TcpSocketOption::TCP_CONGESTION => {
-                        rawsocket.set_congestion(String::from_utf8(Vec::from(opt)).unwrap());
-                        Ok(0)
-                    }
+                rawsocket.set_congestion(String::from_utf8(Vec::from(opt)).unwrap());
+                Ok(0)
+            }
             TcpSocketOption::SO_OOBINLINE => Ok(0),
             TcpSocketOption::TCP_KEEPIDLE => {
                 let opt_value = u32::from_le_bytes(<[u8; 4]>::try_from(&opt[0..4]).unwrap());
-                log::error!("[TcpSocketOption::TCP_KEEPIDLE]opt_value is {:?}",opt_value);
+                log::error!(
+                    "[TcpSocketOption::TCP_KEEPIDLE]opt_value is {:?}",
+                    opt_value
+                );
                 socket.set_keep_alive();
                 socket.set_tcp_keepidle(opt_value as u64);
                 Ok(0)
-            },
+            }
             TcpSocketOption::TCP_KEEPINTVL => {
                 let opt_value = u32::from_le_bytes(<[u8; 4]>::try_from(&opt[0..4]).unwrap());
-                log::error!("[TcpSocketOption::TCP_KEEPINTVL]opt_value is {:?}", opt_value);
+                log::error!(
+                    "[TcpSocketOption::TCP_KEEPINTVL]opt_value is {:?}",
+                    opt_value
+                );
                 socket.set_tcp_keepintvl(opt_value as u64);
                 Ok(0)
-            },
+            }
             TcpSocketOption::TCP_KEEPCNT => {
                 let opt_value = u32::from_le_bytes(<[u8; 4]>::try_from(&opt[0..4]).unwrap());
                 log::error!("[TcpSocketOption::TCP_KEEPCNT]opt_value is {:?}", opt_value);
                 socket.set_tcp_keepcnt(opt_value as u64);
                 Ok(0)
-            },
+            }
         }
     }
 
@@ -2244,47 +2259,47 @@ impl TcpSocketOption {
         let buf_len = unsafe { *opt_len };
         match self {
             TcpSocketOption::TCP_NODELAY => {
-                        if buf_len < 4 {
-                            panic!("can't read a int from socket opt value");
-                        }
-                        let value: i32 = if socket.nagle_enabled() { 0 } else { 1 };
+                if buf_len < 4 {
+                    panic!("can't read a int from socket opt value");
+                }
+                let value: i32 = if socket.nagle_enabled() { 0 } else { 1 };
 
-                        let value = value.to_ne_bytes();
+                let value = value.to_ne_bytes();
 
-                        unsafe {
-                            #[cfg(target_arch = "riscv64")]
-                            copy_nonoverlapping(&value as *const u8, opt_addr, 4);
-                            #[cfg(target_arch = "loongarch64")]
-                            copy_to_user(opt_addr, &value as *const u8, 4);
-                            *opt_len = 4;
-                        }
-                    }
+                unsafe {
+                    #[cfg(target_arch = "riscv64")]
+                    copy_nonoverlapping(&value as *const u8, opt_addr, 4);
+                    #[cfg(target_arch = "loongarch64")]
+                    copy_to_user(opt_addr, &value as *const u8, 4);
+                    *opt_len = 4;
+                }
+            }
             TcpSocketOption::TCP_MAXSEG => {
-                        let len = size_of::<usize>();
+                let len = size_of::<usize>();
 
-                        let value: usize = 1500;
+                let value: usize = 1500;
 
-                        unsafe {
-                            #[cfg(target_arch = "riscv64")]
-                            copy_nonoverlapping(&value as *const usize as *const u8, opt_addr, len);
-                            #[cfg(target_arch = "loongarch64")]
-                            copy_to_user(opt_addr, &value as *const usize as *const u8, len);
-                            *opt_len = len as u32;
-                        };
-                    }
+                unsafe {
+                    #[cfg(target_arch = "riscv64")]
+                    copy_nonoverlapping(&value as *const usize as *const u8, opt_addr, len);
+                    #[cfg(target_arch = "loongarch64")]
+                    copy_to_user(opt_addr, &value as *const usize as *const u8, len);
+                    *opt_len = len as u32;
+                };
+            }
             TcpSocketOption::TCP_INFO => {}
             TcpSocketOption::TCP_CONGESTION => {
-                        let bytes = rawsocket.get_congestion();
-                        let bytes = bytes.as_bytes();
+                let bytes = rawsocket.get_congestion();
+                let bytes = bytes.as_bytes();
 
-                        unsafe {
-                            #[cfg(target_arch = "riscv64")]
-                            copy_nonoverlapping(bytes.as_ptr(), opt_addr, bytes.len());
-                            #[cfg(target_arch = "loongarch64")]
-                            copy_to_user(opt_addr, bytes.as_ptr(), bytes.len());
-                            *opt_len = bytes.len() as u32;
-                        };
-                    }
+                unsafe {
+                    #[cfg(target_arch = "riscv64")]
+                    copy_nonoverlapping(bytes.as_ptr(), opt_addr, bytes.len());
+                    #[cfg(target_arch = "loongarch64")]
+                    copy_to_user(opt_addr, bytes.as_ptr(), bytes.len());
+                    *opt_len = bytes.len() as u32;
+                };
+            }
             TcpSocketOption::SO_OOBINLINE => {}
             TcpSocketOption::TCP_KEEPIDLE => {
                 if buf_len < 4 {
@@ -2300,7 +2315,7 @@ impl TcpSocketOption {
                     copy_to_user(opt_addr, &value as *const u8, 4);
                     *opt_len = 4;
                 }
-            },
+            }
             TcpSocketOption::TCP_KEEPINTVL => {
                 if buf_len < 4 {
                     panic!("can't read a int from socket opt value");
@@ -2314,7 +2329,7 @@ impl TcpSocketOption {
                     copy_to_user(opt_addr, &value as *const u8, 4);
                     *opt_len = 4;
                 }
-            },
+            }
             TcpSocketOption::TCP_KEEPCNT => {
                 if buf_len < 4 {
                     panic!("can't read a int from socket opt value");
@@ -2328,7 +2343,7 @@ impl TcpSocketOption {
                     copy_to_user(opt_addr, &value as *const u8, 4);
                     *opt_len = 4;
                 }
-            },
+            }
         }
     }
 }

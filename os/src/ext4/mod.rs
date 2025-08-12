@@ -22,13 +22,13 @@ use crate::{
     task::current_task,
     timer::TimeSpec,
 };
-use alloc::vec;
 use alloc::vec::Vec;
 use alloc::{
     format,
     string::{String, ToString},
     sync::Arc,
 };
+use alloc::{rc::Weak, vec};
 use block_op::Ext4DirContentWE;
 use dentry::{EXT4_DT_CHR, EXT4_DT_DIR, EXT4_DT_FIFO, EXT4_DT_LNK, EXT4_DT_SOCK};
 use fs::EXT4_BLOCK_SIZE;
@@ -170,12 +170,26 @@ impl InodeOp for Ext4Inode {
                             pipe_inode,
                         );
                     }
+                    S_IFSOCK => {
+                        // 处理socket
+                        dentry_flags = DentryFlags::DCACHE_SPECIAL_TYPE;
+                        let socket_inode = SocketInode::new(inode_num);
+                        return Dentry::new(
+                            absolute_path,
+                            Some(parent_entry.clone()),
+                            dentry_flags,
+                            socket_inode,
+                        );
+                    }
                     _ => {
                         log::error!("inode: {:?}", inode.inner.write().inode_on_disk);
-                        panic!(
-                            "[InodeOp::lookup] unknown inode type: {}, path: {:?}",
-                            inode_mode, absolute_path
+                        // 8.12 Debug
+                        println!(
+                            "[InodeOp::lookup] unknown inode type: {}, inode_num: {},path: {:?}",
+                            inode_mode, inode_num, absolute_path
                         );
+                        log::warn!("[lookup] fake inode num: {}", inode_num);
+                        dentry_flags = DentryFlags::DCACHE_MISS_TYPE;
                     }
                 }
                 // 2. 关联到Dentry
@@ -737,6 +751,13 @@ impl InodeOp for Ext4Inode {
                     .unwrap()
                     .alloc_inode(self.block_device.clone(), false);
                 let socket_inode = SocketInode::new(new_inode_num);
+                // 写回inode
+                write_inode_on_disk(
+                    self,
+                    &socket_inode.inner.read().inode_on_disk,
+                    new_inode_num,
+                    self.block_device.clone(),
+                );
                 self.add_entry(dentry.clone(), new_inode_num as u32, EXT4_DT_SOCK);
                 dentry.inner.lock().inode = Some(socket_inode);
             }

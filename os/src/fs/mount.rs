@@ -7,14 +7,19 @@ use alloc::{
 use spin::Mutex;
 
 use crate::{
-    drivers::block::block_dev::BlockDevice,
-    ext4::{fs::Ext4FileSystem, inode::Ext4Inode},
+    drivers::block::block_dev::{self, BlockDevice},
+    ext4::{
+        fs::Ext4FileSystem,
+        inode::{write_inode_on_disk, Ext4Inode},
+    },
+    net::socket::{SocketInode, SOCKET_INODE},
     syscall::errno::SyscallRet,
 };
 
 use super::{
     dentry::{insert_dentry, Dentry, DentryFlags},
     dev::init_devfs,
+    inode::InodeOp,
     manager::{FakeFS, FileSystemOp},
     path::Path,
     proc::init_procfs,
@@ -188,6 +193,15 @@ pub fn do_ext4_mount(block_device: Arc<dyn BlockDevice>) -> Arc<Path> {
     );
     root_dentry.inner.lock().parent = Some(root_dentry.clone());
     insert_dentry(root_dentry.clone());
+    let inode_num = ext4_fs.alloc_inode(block_device.clone(), false);
+    let socket_inode = SocketInode::new(inode_num);
+    write_inode_on_disk(
+        &root_inode,
+        &socket_inode.inner.read().inode_on_disk,
+        inode_num,
+        block_device.clone(),
+    );
+    SOCKET_INODE.call_once(|| socket_inode.clone());
     // 创建根目录的Mount, 并加入全局Mount表
     let fake_mount_flag = 0;
     let root_vfs_mount = VfsMount::new(root_dentry.clone(), ext4_fs, fake_mount_flag);
