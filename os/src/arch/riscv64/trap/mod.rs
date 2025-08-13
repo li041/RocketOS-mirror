@@ -237,9 +237,9 @@ pub fn kernel_trap_handler(cx: &mut TrapContext) {
         }
         Trap::Exception(Exception::InstructionPageFault) => {
             panic!(
-                "Instruction page fault at 0x{:x}, badaddr = {:#x}",
-                cx.sepc,
-                stval::read()
+            "Instruction page fault at 0x{:x}, badaddr = {:#x}",
+            cx.sepc,
+            stval::read()
             );
         }
         Trap::Exception(Exception::UserEnvCall) => {
@@ -257,5 +257,5 @@ pub fn kernel_trap_handler(cx: &mut TrapContext) {
             );
         }
     }
-    // return to the next instruction
+// return to the next instruction
 }

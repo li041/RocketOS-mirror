@@ -305,9 +305,9 @@ pub fn eth_init(gmacdev: &mut net_device) -> net_device {
     println!("[eth_init]eth_mac_set_addr complete");
     eth_phy_init(gmacdev);
     println!("[eth_init]eth_phy_init complete");
-    eth_setup_rx_desc_queue(gmacdev, 128);
+    eth_setup_rx_desc_queue(gmacdev, 300);
     println!("[eth_init]eth_setup_rx_desc_queue complete");
-    eth_setup_tx_desc_queue(gmacdev,128);
+    eth_setup_tx_desc_queue(gmacdev,300);
     println!("[eth_init]eth_setup_tx_desc_queue complete");
 
     eth_dma_reg_init(gmacdev);

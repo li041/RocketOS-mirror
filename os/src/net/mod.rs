@@ -4,7 +4,7 @@ use alloc::borrow::ToOwned;
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-30 16:26:05
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-08-12 12:00:58
+ * @LastEditTime: 2025-08-13 16:27:34
  * @FilePath: /RocketOS_netperfright/os/src/net/mod.rs
  * @Description: net mod for interface wrapper,socketset
  *
@@ -318,13 +318,13 @@ pub fn init_la2000_net() {
             }
             unsafe {
                 // 把 stack_route.prefix 按位写入 raw.prefix
-                ptr::write(&mut (*raw).cidr, IPV4_DEFAULT);
-                log::error!("[init_la2000_net] write cidr end");
-                // 把 stack_route.gateway 按位写入 raw.gateway
-                ptr::write(&mut (*raw).expires_at, None);
-                log::error!("[init_la2000_net] write expires_at end");
-                // 把 stack_route.metric  按位写入 raw.metric
-                ptr::write(&mut (*raw).preferred_until, None);
+                // ptr::write(&mut (*raw).cidr, IPV4_DEFAULT);
+                // log::error!("[init_la2000_net] write cidr end");
+                // // 把 stack_route.gateway 按位写入 raw.gateway
+                // ptr::write(&mut (*raw).expires_at, None);
+                // log::error!("[init_la2000_net] write expires_at end");
+                // // 把 stack_route.metric  按位写入 raw.metric
+                // ptr::write(&mut (*raw).preferred_until, None);
                 log::error!("[init_la2000_net] write preferred_until end");
                 let gateway=Ipv4Address::GATEWAY;
                 log::info!("[init_la2000_net] gateway is {:?}",gateway);
@@ -534,6 +534,7 @@ impl Device for NetDeviceWrapper {
         _timestamp: smoltcp::time::Instant,
     ) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
         let mut dev = self.inner.borrow_mut();
+        #[cfg(not(feature="la2000"))]
         if !dev.isok_recv() {
             return None;
         }

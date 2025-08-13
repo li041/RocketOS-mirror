@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-02 23:04:54
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-08-12 17:02:32
+ * @LastEditTime: 2025-08-14 17:37:48
  * @FilePath: /RocketOS_netperfright/os/src/syscall/net.rs
  * @Description: net syscall
  *
@@ -27,7 +27,7 @@ use crate::{
         socketpair::create_buffer_ends,
     },
     syscall::task::{sys_getresgid, sys_nanosleep},
-    task::{current_task, yield_current_task},
+    task::{current_task, yield_current_task}, timer::TimeSpec,
 };
 use alloc::vec;
 use alloc::{sync::Arc, task, vec::Vec};
@@ -616,6 +616,9 @@ pub fn syscall_recvfrom(
     if buf as usize == 0xffffffffffffffff {
         return Err(Errno::EFAULT);
     }
+    // if socketaddr== 0xffffffffffffffff{
+    //     return Err(Errno::ENOTSOCK);
+    // }
 
     //check flag is valid
     let flags = MsgFlags::from_bits(flag as u32).ok_or(Errno::EINVAL)?; // 如果有未定义的位，直接当 EINVAL
@@ -1061,7 +1064,11 @@ pub fn syscall_sendmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallR
         msg_ptr,
         flag
     );
-
+    let flags = MsgFlags::from_bits(flag as u32).ok_or(Errno::EINVAL)?; // 如果有未定义的位，直接当 EINVAL
+    log::error!("[syscall_sendmsg] flag is {:#x},flags is {:?}", flag, flags);
+    if flags.contains(MsgFlags::MSG_OOB) {
+        return Err(Errno::EOPNOTSUPP);
+    }
     let task = current_task();
     let file = match task.fd_table().get_file(socketfd) {
         Some(f) => f,
@@ -1151,6 +1158,13 @@ pub fn syscall_sendmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallR
 
     // 4. 从用户空间复制控制数据（control）
     let mut kernel_control = Vec::new();
+    if user_hdr.control_len==0&&!user_hdr.control.is_null() {
+        return Err(Errno::EOPNOTSUPP);
+    }
+    if user_hdr.control as usize==0xffffffff {
+        return Err(Errno::EFAULT);
+    }
+
     if user_hdr.control_len > 0 {
         kernel_control.resize(user_hdr.control_len as usize, 0);
         copy_from_user(
@@ -1223,6 +1237,7 @@ pub fn syscall_sendmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallR
         if peer_path.len() == 0 {
             peer_path = socket.get_socket_peer_path();
         }
+        socket.set_socket_peer_path(peer_path.as_slice());
         let s_path = core::str::from_utf8(peer_path.as_slice()).unwrap();
         if s_path.eq("/var/run/nscd/socket") {
             return socket.unix_send(kernel_buf.as_slice());
@@ -1297,7 +1312,7 @@ pub fn syscall_sendmmsg(
             }
         }
     }
-    Ok(0)
+    Ok(any_sent)
 }
 
 pub fn syscall_recvmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallRet {
@@ -1457,6 +1472,76 @@ pub fn syscall_recvmsg(socketfd: usize, msg_ptr: usize, flag: usize) -> SyscallR
     // 8. 返回接收的字节数
     Ok(copied)
 }
+pub fn syscall_recvmmsg(
+    socketfd: usize,
+    mmsghdr_ptr: usize,
+    vlen: usize,
+    flags: usize,
+    timeout_ptr: *const TimeSpec, // 目前不支持 timeout，可忽略
+) -> SyscallRet {
+    log::error!(
+        "[syscall_recvmmsg]: begin fd={}, ptr={:#x}, vlen={}, flags={}, timeout_ptr={:#x}",
+        socketfd,
+        mmsghdr_ptr,
+        vlen,
+        flags,
+        timeout_ptr as usize
+    );
+
+    let mut timeout=TimeSpec::default();
+    copy_from_user(timeout_ptr, &mut timeout as *mut TimeSpec, 1)?;
+    if timeout.sec>1000000000||timeout.nsec> 1000000000{
+        return Err(Errno::EINVAL)
+    }
+    let hdr_size = 64; // 你 sendmmsg 中的假定
+    let mut msgs_received = 0usize;
+
+    for idx in 0..vlen {
+        let this_ptr = unsafe { (mmsghdr_ptr as *mut u8).add(idx * hdr_size) } as *mut MMsgHdrRaw;
+
+        // 从用户拷贝当前 mmsghdr
+        let mut user_mhdr = MMsgHdrRaw::default();
+        copy_from_user(this_ptr, &mut user_mhdr as *mut MMsgHdrRaw, 1)?;
+        log::error!("[syscall_recvmmsg]: user_mhdr[{}] = {:?}", idx, user_mhdr);
+
+        // 调用 recvmsg（只传递 msghdr 部分指针）
+        let msghdr_ptr = this_ptr as usize; // 在 MMsgHdrRaw 里，msghdr 是第一个字段
+        match syscall_recvmsg(socketfd, msghdr_ptr, flags) {
+            Ok(received) => {
+                log::error!(
+                    "[syscall_recvmmsg]: message {} received {} bytes",
+                    idx,
+                    received
+                );
+                // 把长度写回 mmsghdr 的 msg_len
+                let len_ptr = unsafe { (this_ptr as *mut u8).add(32) } as *mut u32;
+                let to_copy: u32 = received as u32;
+                copy_to_user(len_ptr, &to_copy as *const u32, 1)?;
+
+                msgs_received += 1;
+
+                if received == 0 {
+                    break; // EOF
+                }
+            }
+            Err(e) => {
+                log::error!(
+                    "[syscall_recvmmsg]: recvmsg failed at index {}: {:?}",
+                    idx,
+                    e
+                );
+                if msgs_received > 0 {
+                    break; // 返回已经收到的数量
+                } else {
+                    return Err(e); // 第一个就出错，直接返回
+                }
+            }
+        }
+    }
+
+    Ok(msgs_received)
+}
+
 
 pub fn syscall_setdomainname(domainname: *const u8, len: usize) -> SyscallRet {
     log::error!(

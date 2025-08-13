@@ -50,17 +50,17 @@ pub fn plat_phys_to_uncached(pa: u64) -> u64 {
 
 // 分配按align字节对齐的内存
 pub fn plat_malloc_align(size: u64, align: u32) -> u64 {
-    // println!("[plat_malloc_align] alloc begin");
+    // log::info!("[plat_malloc_align] alloc begin");
     let size = size as usize;
     let align = align as usize;
     // 构造带对齐要求的 Layout
     let layout = Layout::from_size_align(size, align)
         .expect("plat_malloc_align: invalid size/align");
-    // println!("[plat_malloc_align] Layout size align complete");
+    // log::info!("[plat_malloc_align] Layout size align complete");
     unsafe {
         // alloc_zeroed 会返回对齐到 `align` 的内存
         let ptr = alloc_zeroed(layout);
-        // println!("[plat_malloc_align] alloc complete");
+        // log::info!("[plat_malloc_align] alloc complete");
         if ptr.is_null() {
             handle_alloc_error(layout);
         }
@@ -223,11 +223,11 @@ impl <const QS:usize> NetDevice for La2k1000_NetDevice<QS> {
             panic!("gmac fatal bus error interrupt");
         }
         if dma_status & DmaIntRxStopped != 0 {
-            println!("gmac receive process stopped");
+            log::info!("gmac receive process stopped");
             eth_dma_enable_rx(&device);
         }
         if dma_status & DmaIntRxNoBuffer != 0 {
-            println!("gmac receive buffer unavailable");
+            log::info!("gmac receive buffer unavailable");
             dma_int_enable &= !DmaIntRxNoBuffer;
             eth_gmac_resume_dma_rx(&device);
             // unsafe { plat_rx_ready(device) };
@@ -235,7 +235,7 @@ impl <const QS:usize> NetDevice for La2k1000_NetDevice<QS> {
         }
         if dma_status & DmaIntRxCompleted != 0 {
             dma_int_enable &= !DmaIntRxCompleted;
-            println!("gmac receive buffer complete");
+            log::info!("gmac receive buffer complete");
             // unsafe { plat_rx_ready(device) };
             flag=true;
         }
@@ -246,15 +246,15 @@ impl <const QS:usize> NetDevice for La2k1000_NetDevice<QS> {
             panic!("gmac receive underflow");
         }
         if dma_status & DmaIntTxNoBuffer != 0 {
-            println!("La2k1000_NetDevice_is_ok_recv no txbuffer");
+            log::info!("La2k1000_NetDevice_is_ok_recv no txbuffer");
             // dma_int_enable &= !DmaIntTxNoBuffer;
             // eth_gmac_resume_dma_tx(&device);
         }
         if dma_status & DmaIntTxStopped != 0 {
-            println!("gmac transmit process stopped");
+            log::info!("gmac transmit process stopped");
         }
         if dma_status & DmaIntTxCompleted != 0 {
-            println!("gmac send buffer complete");
+            log::info!("gmac send buffer complete");
             eth_handle_tx_over(&mut device);
         }
         //eth_dma_enable_interrupt(&device, dma_int_enable);

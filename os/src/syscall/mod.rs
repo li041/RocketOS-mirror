@@ -68,8 +68,7 @@ use crate::{
     mm::shm::{ShmGetFlags, ShmId},
     signal::{SigInfo, SigSet},
     syscall::{
-        fs::{sys_inotify_add_watch, sys_inotify_init, sys_inotify_rm_watch},
-        sched::{
+        fs::{sys_inotify_add_watch, sys_inotify_init, sys_inotify_rm_watch}, net::syscall_recvmmsg, sched::{
             sys_getpriority, sys_sched_get_priority_max, sys_sched_get_priority_min,
             sys_sched_getattr, sys_sched_rr_get_interval, sys_sched_setattr, sys_sched_setparam,
             sys_setpriority,
@@ -316,6 +315,7 @@ const SYSCALL_REMAP_FILE_PAGES: usize = 234;
 const SYSCALL_MBIND: usize = 235;
 const SYSCALL_GET_MEMPOLICY: usize = 236;
 const SYSCALL_ACCEPT4: usize = 242;
+const SYSCALL_RECVMMSG:usize=243;
 const SYSCALL_WAIT4: usize = 260;
 const SYSCALL_PRLIMIT: usize = 261;
 const SYSCALL_FANOTIFY: usize = 262;
@@ -620,6 +620,7 @@ pub fn syscall(
         SYSCALL_SENDMSG => syscall_sendmsg(a0, a1, a2),
         SYSCALL_RECVMSG => syscall_recvmsg(a0, a1, a2),
         SYSCALL_CLONE3 => sys_clone3(a0, a1),
+        SYSCALL_RECVMMSG=>syscall_recvmmsg(a0, a1, a2, a3, a4 as *const TimeSpec),
         SYSCALL_CLOSE_RANGE => sys_close_range(a0, a1, a2 as i32),
         SYSCALL_OPENAT2 => sys_openat2(a0 as i32, a1 as *const u8, a2 as *const u8, a3 as usize),
         SYSCALL_FACCESSAT2 => sys_faccessat2(a0 as usize, a1 as *const u8, a2 as i32, a3 as i32),

@@ -109,7 +109,7 @@ impl VisionfiveGmac{
 //ARCH_DMA_MINALIGN   64
 pub const DMA_ALIGN:u64=64;
 pub const EQOS_MAX_PACKET_SIZE:u32=1568;
-pub const GMAC_DESC_NUM:usize=256;
+pub const GMAC_DESC_NUM:usize=300;
 // ///pub const EQOS_MAC_REGS_BASE 0x000
 // typedef struct gmac_mac_regs {
 //     uint32_t configuration;             /* 0x000 */

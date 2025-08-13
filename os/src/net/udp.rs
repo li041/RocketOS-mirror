@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-02 12:09:33
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-08-12 17:12:53
+ * @LastEditTime: 2025-08-14 16:27:21
  * @FilePath: /RocketOS_netperfright/os/src/net/udp.rs
  * @Description: udp socket
  * 
@@ -342,7 +342,21 @@ use super::SOCKET_SET;
                 }
                 else if socket.can_send() {
                     // println!("[udp_send]");
-                    socket.send_slice(buf, remote_addr).expect("socket send failed");
+                    // match socket.send_slice(buf, remote_addr) {
+                    //     Ok(s) =>{},
+                    //     Err(e) => {
+                    //         match e {
+                    //             udp::SendError::Unaddressable => return Err(Errno::EADDRNOTAVAIL),
+                    //             udp::SendError::BufferFull => return Err(Errno::EMSGSIZE),
+                    //         }
+                    //     },
+                    // }
+                    socket.send_slice(buf,remote_addr).map_err(|e|{
+                        match e {
+                            udp::SendError::Unaddressable => Errno::EADDRNOTAVAIL,
+                            udp::SendError::BufferFull => Errno::EMSGSIZE,
+                        }
+                    })?;
                     Ok(buf.len())
                 }
                 else {

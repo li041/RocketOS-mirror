@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-03 16:40:04
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-08-13 17:18:03
+ * @LastEditTime: 2025-08-15 13:23:25
  * @FilePath: /RocketOS_netperfright/os/src/net/socket.rs
  * @Description: socket file
  *
@@ -334,7 +334,7 @@ impl Socket {
             SocketType::SOCK_STREAM | SocketType::SOCK_SEQPACKET | SocketType::SOCK_RAW => {
                 if protocol != Protocol::TCP
                     && protocol != Protocol::IP
-                    && protocol != Protocol::ETH_P_ALL
+                    && protocol != Protocol::ETH_P_ALL&&protocol!=Protocol::IPPROTO_SCTP
                 {
                     return false;
                 }
@@ -517,7 +517,13 @@ impl Socket {
         self.socket_file_unix.lock().clone().unwrap()
     }
     pub fn get_peer_unix_file(&self) -> Arc<dyn FileOp> {
-        self.socket_peer_file_unix.lock().clone().unwrap()
+        self.socket_peer_file_unix.lock().clone().unwrap_or_else(||{
+            let peer_path=self.get_socket_peer_path();
+            let s_path = core::str::from_utf8(peer_path.as_slice()).unwrap();
+            log::info!("[get_peer_unix_file] path is {:?}",s_path);
+            let peer_file=path_openat(s_path, OpenFlags::O_CREAT, AT_FDCWD, 0).unwrap();
+            peer_file
+        })
     }
     pub fn set_unix_file(&self, file: Arc<dyn FileOp>) {
         *self.socket_file_unix.lock() = Some(file);
@@ -1260,6 +1266,9 @@ pub unsafe fn socket_address_from(
     if addr as usize == 0xffffffffffffffff {
         return Err(Errno::EFAULT);
     }
+    if len<2 {
+        return Err(Errno::EINVAL);
+    }
     let mut kernel_addr_from_user: Vec<u8> = vec![0; len];
     copy_from_user(addr, kernel_addr_from_user.as_mut_ptr(), len)?;
     let family_bytes = [kernel_addr_from_user[0], kernel_addr_from_user[1]];
@@ -1541,9 +1550,14 @@ impl FileOp for Socket {
             }
             let self_path = self.get_socket_path();
             let s_self = core::str::from_utf8(self_path.as_slice()).unwrap();
+            let mut times=0;
             loop {
                 let file = path_openat(s_self, OpenFlags::O_CLOEXEC, AT_FDCWD, 0)?;
                 log::error!("[socket_read]s_self path is {:?}", s_self);
+                if times>10{
+                    break;
+                }
+                times+=1;
                 if file.r_ready() {
                     let mut flag: Vec<u8> = vec![0; 1];
                     file.pread(flag.as_mut_slice(), 128)?;
@@ -1729,7 +1743,18 @@ impl FileOp for Socket {
             } else {
                 let path = self.get_socket_path();
                 let s_path = core::str::from_utf8(path.as_slice()).unwrap();
-                let file = path_openat(s_path, OpenFlags::O_CLOEXEC, AT_FDCWD, 0).unwrap();
+                // let file = path_openat(s_path, OpenFlags::O_CLOEXEC, AT_FDCWD, 0).unwrap_or_else(|_|{
+                //     return false;
+                // });
+                let mut file;
+                match path_openat(s_path, OpenFlags::O_CLOEXEC, AT_FDCWD, 0) {
+                    Ok(f) => {
+                        file=f
+                    },
+                    Err(e) => {
+                        return false;
+                    },
+                }
                 return file.get_offset() > 0;
             }
         }
@@ -1798,6 +1823,9 @@ impl FileOp for Socket {
     }
     fn get_path(&self) -> Arc<crate::fs::path::Path> {
         Path::zero_init()
+    }
+    fn ioctl(&self, _op: usize, _arg_ptr: usize) -> SyscallRet {
+        Ok(0)
     }
 }
 
@@ -2029,8 +2057,10 @@ impl SocketOption {
 
     //配合getsockopt函数
     pub fn get(&self, socket: &Socket, opt_value: *mut u8, opt_len: *mut u32) {
+        #[cfg(target_arch="riscv64")]
         let buf_len = unsafe { *opt_len } as usize;
-        log::error!("[get_socket_option]buf_len is {:?}", buf_len);
+        #[cfg(target_arch="loongarch64")]
+        let buf_len=opt_len as usize;
         match self {
             SocketOption::SO_REUSEADDR => {
                 let value: i32 = if socket.get_reuse_addr() { 1 } else { 0 };

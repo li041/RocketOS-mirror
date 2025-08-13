@@ -23,10 +23,10 @@ pub struct net_device {
     pub TxBusy: u32,
     pub TxNext: u32,
     pub RxBusy: u32,
-    pub TxDesc: [*mut DmaDesc; 128],
-    pub RxDesc: [*mut DmaDesc; 128],
-    pub TxBuffer: [u64; 128],
-    pub RxBuffer: [u64; 128],
+    pub TxDesc: [*mut DmaDesc; 300],
+    pub RxDesc: [*mut DmaDesc; 300],
+    pub TxBuffer: [u64; 300],
+    pub RxBuffer: [u64; 300],
     pub rx_packets: u64,
     pub tx_packets: u64,
     pub rx_bytes: u64,
@@ -101,22 +101,22 @@ impl net_device{
             TxNext: 0,
             RxBusy: 0,
             TxDesc: {
-                let a=[0 as *mut DmaDesc; 128];
+                let a=[0 as *mut DmaDesc; 300];
                 println!("net_device init txdesc");
                 a
             },
             RxDesc: {
-                let a=[0 as *mut DmaDesc; 128];
+                let a=[0 as *mut DmaDesc; 300];
                 println!("net_device init rxdesc");
                 a
             },
             TxBuffer: {
-                let a=[0; 128];
+                let a=[0; 300];
                 println!("net_device init txbuffer complete");
                 a
             },
             RxBuffer: {
-                let a=[0; 128];
+                let a=[0; 300];
                 println!("net_device init rxbuffer complete");
                 a
             },
