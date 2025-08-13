@@ -11,7 +11,7 @@
 # ARCH ?= loongarch64
 ARCH ?= riscv64
 MODE := release
-FEATURES := virt
+FEATURES ?= virt
 BACKTRACE_FEATURES = virt,debug-symbols
 #ip option not unspecified
 IP ?= 10.0.2.15
@@ -123,9 +123,17 @@ build-vf2:
 	USER_TARGET_PATH=$(USER_TARGET_PATH) LOG=$(LOG) cargo build $(MODE_ARG) --features vf2 --target $(TARGET)
 	@$(OBJCOPY) $(KERNEL_ELF) --strip-all -O binary $(KERNEL_BIN)
 
+build-la2000:
+	@rm -rf .cargo
+	@mkdir .cargo
+	@cp cargo/config_vf2.toml .cargo/config.toml
+	USER_TARGET_PATH=$(USER_TARGET_PATH) LOG=$(LOG) cargo build $(MODE_ARG) --features la2000 --target $(TARGET)
+	@$(OBJCOPY) $(KERNEL_ELF) --strip-all -O binary $(KERNEL_BIN)
+
 build: move-cargo
 	USER_TARGET_PATH=$(USER_TARGET_PATH) LOG=$(LOG) cargo build $(MODE_ARG) --features $(FEATURES) --target $(TARGET)
 	@$(OBJCOPY) $(KERNEL_ELF) --strip-all -O binary $(KERNEL_BIN)
+
 
 build-debug: move-cargo
 	USER_TARGET_PATH=$(USER_TARGET_PATH) LOG=$(LOG) cargo build $(MODE_ARG) --features $(BACKTRACE_FEATURES) --target $(TARGET)
@@ -146,10 +154,23 @@ backtrace: build-debug
 clean:
 	@$(shell which cargo)  clean
 
+# move-cargo:
+# 	@rm -rf .cargo
+# 	@mkdir .cargo
+# 	cp cargo/config_$(ARCH).toml .cargo/config.toml
 move-cargo:
 	@rm -rf .cargo
 	@mkdir .cargo
-	cp cargo/config_$(ARCH).toml .cargo/config.toml
+	@if echo "$(FEATURES)" | grep -qw virt; then \
+		cp cargo/config_$(ARCH).toml .cargo/config.toml; \
+	elif echo "$(FEATURES)" | grep -qw la2000; then \
+		cp cargo/config_la2000.toml .cargo/config.toml; \
+	elif echo "$(FEATURES)" | grep -qw vf2; then \
+		cp cargo/config_vf2.toml .cargo/config.toml; \
+	else \
+		echo "No matching FEATURES found" && exit 1; \
+	fi
+
 
 make-user:
 	@cd ../user && make ARCH=$(ARCH)

@@ -1128,11 +1128,7 @@ pub fn sys_chroot(pathname: *const u8) -> SyscallRet {
 // Todo: 直接往用户地址空间写入, 没有检查
 pub fn sys_pipe2(fdset_ptr: *mut i32, flags: i32) -> SyscallRet {
     log::trace!("[sys_pipe2]");
-    log::info!(
-        "[sys_pipe2] fdset_ptr: {:?}, flags: {}",
-        fdset_ptr,
-        flags
-    );
+    log::info!("[sys_pipe2] fdset_ptr: {:?}, flags: {}", fdset_ptr, flags);
     let flags = OpenFlags::from_bits(flags).unwrap();
     let task = current_task();
     let pipe_pair = make_pipe(flags);
@@ -1468,7 +1464,7 @@ pub fn sys_pselect6(
         if sec_signed < 0 {
             return Err(Errno::EINVAL);
         }
-        (tmo.sec * 1000000 + tmo.nsec/1000 ) as isize
+        (tmo.sec * 1000000 + tmo.nsec / 1000) as isize
     };
     log::error!("[sys_pselect6] timeout is {:?}", timeout);
     let mut readfditer = match init_fdset(readfds, nfds) {
@@ -3346,12 +3342,13 @@ pub fn sys_flistxattr(fd: usize, list_ptr: *mut u8, size: usize) -> SyscallRet {
         }
         // 将属性名列表复制到用户空间
         let mut offset = 0;
-        for name in xattrs {
+        for mut name in xattrs {
+            // 添加空字符结尾
+            name.push('\0');
             unsafe {
                 copy_to_user(list_ptr.add(offset), name.as_ptr(), name.len())?;
             }
-            unsafe { *(list_ptr.add(offset + name.len())) = 0 }; // 添加空字符结尾
-            offset += name.len() + 1;
+            offset += name.len();
         }
         return Ok(total_size);
     }
@@ -3886,7 +3883,12 @@ pub fn sys_inotify_init(flags: i32) -> SyscallRet {
 pub fn sys_inotify_add_watch(fd: usize, pathname: *const u8, mask: u32) -> SyscallRet {
     let task = current_task();
     let path = c_str_to_string(pathname)?;
-    log::info!("[sys_inotify_add_watch] fd: {}, pathname: {}, mask: {}", fd, path, mask);
+    log::info!(
+        "[sys_inotify_add_watch] fd: {}, pathname: {}, mask: {}",
+        fd,
+        path,
+        mask
+    );
     // 获取inotify实例
     let inotify_fd = task.fd_table().get_file(fd).ok_or(Errno::EBADF)?;
     let inotify = inotify_fd
@@ -3913,7 +3915,7 @@ pub fn sys_inotify_rm_watch(fd: usize, wd: i32) -> SyscallRet {
 
 pub fn sys_eventfd(initval: u64, flags: u32) -> SyscallRet {
     log::info!("[sys_eventfd2] initval: {}, flags: {}", initval, flags);
-    let task=current_task();
+    let task = current_task();
     let fd_table = task.fd_table();
     let eventfd = Arc::new(EventFd::new(initval as u64, flags));
     //分配fd并插入文件

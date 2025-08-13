@@ -192,6 +192,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
 pub fn kernel_trap_handler(cx: &mut TrapContext) {
     log::warn!("[kernel_trap_handler]");
     let scause = scause::read();
+    let stval = stval::read();
     match scause.cause() {
         Trap::Exception(Exception::Breakpoint) => {
             log::info!("Breakpoint at 0x{:x}", cx.sepc);
@@ -201,19 +202,38 @@ pub fn kernel_trap_handler(cx: &mut TrapContext) {
             log::error!("IllegalInstruction at 0x{:x}", cx.sepc);
             panic!("IllegalInstruction");
         }
-        Trap::Exception(Exception::LoadPageFault)
-        | Trap::Exception(Exception::LoadFault)
-        | Trap::Exception(Exception::StorePageFault)
-        | Trap::Exception(Exception::StoreFault) => {
-            let satp = satp::read().bits();
-            let page_table = PageTable::from_token(satp);
-            page_table.dump_all_user_mapping();
-            panic!(
-                "page fault in kernel, bad addr = {:#x}, scause = {:?}, sepc = {:#x}",
-                stval::read(),
+        Trap::Exception(Exception::LoadPageFault) | Trap::Exception(Exception::StorePageFault) => {
+            // stval is the faulting virtual address
+            // recoverable page fault:
+            // 1. fork COW area
+            // 2. lazy allocation
+            let va = VirtAddr::from(stval);
+            let casue = PageFaultCause::from(scause.cause());
+            log::error!(
+                "page fault cause {:?}, bad_addr = {:#x}, sepc = {:#x}",
                 scause.cause(),
+                stval,
                 sepc::read()
             );
+            let task = current_task();
+            task.op_memory_set_mut(|memory_set| {
+                if let Err(sig) = memory_set.handle_recoverable_page_fault(va, casue) {
+                    memory_set.page_table.dump_all_user_mapping();
+                    // dump_trap_context(&current_task());
+                    // panic!(
+                    log::error!(
+                        "Unrecoverble page fault in application, bad addr = {:#x}, scause = {:?}, sepc = {:#x}",
+                        stval,
+                        scause.cause(),
+                        sepc::read()
+                    );
+                    task.receive_siginfo(
+                        SigInfo::new(sig.raw(), SigInfo::KERNEL, SiField::NULL),
+                        false,
+                    );
+                }
+            })
+            // we should jump back to the faulting instruction after handling the page fault
         }
         Trap::Exception(Exception::InstructionPageFault) => {
             panic!(

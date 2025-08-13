@@ -10,6 +10,7 @@ use crate::{
 
 #[cfg(target_arch = "riscv64")]
 /// Convert C-style string(end with '\0') to rust string
+/// ptr跨页时懒分配由`kernel_trap_handler`处理
 pub fn c_str_to_string(ptr: *const u8) -> Result<String, Errno> {
     use crate::{mm::VirtAddr, task::current_task};
     if ptr as usize >= USER_MAX_VA || ptr as usize == 0 {
@@ -28,9 +29,6 @@ pub fn c_str_to_string(ptr: *const u8) -> Result<String, Errno> {
     let mut ret = String::new();
     log::error!("[c_str_to_string] convert ptr at {:#x} to string", ptr);
     // trace!("[c_str_to_string] convert ptr at {:#x} to string", ptr);
-    if ptr == 0x2000143ff0 {
-        return Ok(String::from("/sys/devices/system/cpu/online"));
-    }
     loop {
         let ch: u8 = unsafe { *(ptr as *const u8) };
         if ch == 0 {
