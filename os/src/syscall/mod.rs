@@ -75,7 +75,7 @@ use crate::{
             sys_setpriority,
         },
         signal::{sys_rt_sigqueueinfo, sys_sigaltstack},
-        task::{sys_execveat, sys_getcpu, sys_waitid},
+        task::{sys_clone3, sys_execveat, sys_getcpu, sys_waitid},
     },
     task::rusage::RUsage,
     time::KernelTimex,
@@ -335,6 +335,7 @@ const SYSCALL_STRERROR: usize = 300;
 const SYSCALL_PERROR: usize = 301;
 const SYSCALL_CLOCKADJTIME: usize = 266;
 const SYSCALL_FSOPEN: usize = 430;
+const SYSCALL_CLONE3: usize = 435;
 const SYSCALL_CLOSE_RANGE: usize = 436;
 const SYSCALL_OPENAT2: usize = 437;
 const SYSCALL_FACCESSAT2: usize = 439;
@@ -616,6 +617,7 @@ pub fn syscall(
         SYSCALL_SOCKETPAIR => syscall_socketpair(a0, a1, a2, a3 as *mut i32),
         SYSCALL_SENDMSG => syscall_sendmsg(a0, a1, a2),
         SYSCALL_RECVMSG => syscall_recvmsg(a0, a1, a2),
+        SYSCALL_CLONE3 => sys_clone3(a0, a1),
         SYSCALL_CLOSE_RANGE => sys_close_range(a0, a1, a2 as i32),
         SYSCALL_OPENAT2 => sys_openat2(a0 as i32, a1 as *const u8, a2 as *const u8, a3 as usize),
         SYSCALL_FACCESSAT2 => sys_faccessat2(a0 as usize, a1 as *const u8, a2 as i32, a3 as i32),

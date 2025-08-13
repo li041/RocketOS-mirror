@@ -37,6 +37,18 @@ impl FileOp for BpfMap {
     fn as_any(&self) -> &dyn core::any::Any {
         self
     }
+
+    fn get_flags(&self) -> crate::fs::file::OpenFlags {
+        crate::fs::file::OpenFlags::O_RDWR
+    }
+
+    fn readable(&self) -> bool {
+        true
+    }
+
+    fn writable(&self) -> bool {
+        true
+    }
 }
 
 impl BpfMap {

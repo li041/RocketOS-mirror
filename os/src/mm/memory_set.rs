@@ -2101,7 +2101,7 @@ impl MemorySet {
                 pte
             );
             if pte.is_valid() && pte.writable() {
-                println!(
+                log::error!(
                     "[handle_recoverable_page_fault] page fault find pte, not COW, but writable"
                 );
                 // 刷新下tlb看看

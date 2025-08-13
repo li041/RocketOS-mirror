@@ -1,6 +1,6 @@
 use core::future::pending;
 use core::sync::atomic::{compiler_fence, Ordering};
-use core::time;
+use core::{clone, default, time};
 
 use crate::arch::config::USER_MAX;
 use crate::arch::mm::copy_from_user;
@@ -9,6 +9,7 @@ use crate::ext4::fs;
 use crate::fs::dentry::X_OK;
 use crate::fs::file::OpenFlags;
 use crate::fs::namei::{filename_lookup, Nameidata};
+use crate::fs::proc::pid;
 use crate::futex::do_futex;
 use crate::mm::FRAME_ALLOCATOR;
 use crate::signal::{LinuxSigInfo, SiField, Sig, SigInfo};
@@ -178,12 +179,10 @@ pub const IGNOER_TEST: &[&str] = &[
     "ltp/testcases/bin/writetest",
     "ltp/testcases/bin/cpuset_cpu_hog",
     "ltp/testcases/bin/nfs04_create_file",
-
     /* 由于OS原因, 先不跑的 */
     "ltp/testcases/bin/mmap1",
     "ltp/testcases/bin/mmap2",
     "ltp/testcases/bin/mmap3",
-    
     // 暂时不测
     // "ltp/testcases/bin/af_alg02",
     // "ltp/testcases/bin/af_alg04",
@@ -224,9 +223,7 @@ pub const IGNOER_TEST: &[&str] = &[
     // 需要check_envvak
     "ltp/testcases/bin/check_netem",
     "ltp/testcases/bin/check_setkey",
-
     //暂且有问题的
-    "ltp/testcases/bin/accept03",
     "ltp/testcases/bin/crash01",
     "ltp/testcases/bin/crash02",
     "ltp/testcases/bin/bind05",
@@ -255,10 +252,8 @@ pub const IGNOER_TEST: &[&str] = &[
     "ltp/testcases/bin/send02",
     "ltp/testcases/bin/fsync02",
     "ltp/testcases/bin/mmap09",
-
     //真的有问题的
     "ltp/testcases/bin/clone04",
-
     //时间问题
     "ltp/testcases/bin/clock_settime03",
     "ltp/testcases/bin/ebizzy",
@@ -266,7 +261,6 @@ pub const IGNOER_TEST: &[&str] = &[
     "ltp/testcases/bin/sigtimedwait01",
     "ltp/testcases/bin/sigwaitinfo01",
 ];
-
 
 pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> SyscallRet {
     let path = c_str_to_string(path)?;
@@ -1784,6 +1778,111 @@ pub fn sys_getcpu(cpu: usize, node: usize) -> SyscallRet {
         copy_to_user(node as *mut u32, &node_id, 1)?;
     }
     Ok(0)
+}
+
+pub fn sys_clone3(clone_args: usize, size: usize) -> SyscallRet {
+    const CLONE_ARGS_MINIMAL: usize = 64;
+
+    if size < CLONE_ARGS_MINIMAL {
+        log::error!("[sys_clone3] size is too small: {}", size);
+        return Err(Errno::EINVAL);
+    }
+    // 获取参数
+    let mut args = CloneArgs::default();
+    let args_ptr = &mut args as *mut CloneArgs as *mut u8;
+    copy_from_user(clone_args as *const u8, args_ptr, size)?;
+    log::info!("[sys_clone3] args: {:?}", args);
+    // 提取参数
+    let flags = args.flags;
+    let stack_ptr = args.stack;
+    let children_tid_ptr = args.child_tid;
+    let parent_tid_ptr = args.parent_tid;
+    let tls_ptr = args.tls;
+    let exit_signal = Sig::from(args.exit_signal as i32);
+    let stack_size = args.stack_size;
+    //按照clone的逻辑先处理
+    let flags = match CloneFlags::from_bits(flags as u32) {
+        None => {
+            log::error!("clone flags is None: {}", flags);
+            return Err(Errno::EINVAL);
+        }
+        Some(flag) => flag,
+    };
+    // 对一些flags做特殊处理
+    if flags.contains(CloneFlags::CLONE_SIGHAND) {
+        if !flags.contains(CloneFlags::CLONE_VM) {
+            return Err(Errno::EINVAL);
+        }
+    }
+    if flags.contains(CloneFlags::CLONE_THREAD) {
+        if !flags.contains(CloneFlags::CLONE_SIGHAND) {
+            return Err(Errno::EINVAL);
+        }
+    }
+    if flags.contains(CloneFlags::CLONE_FS) && flags.contains(CloneFlags::CLONE_NEWNS) {
+        return Err(Errno::EINVAL);
+    }
+    // 暂不支持pidfd
+    if flags.contains(CloneFlags::CLONE_PIDFD) {
+        let pidfd = args.pidfd;
+        let fake_pidfd = 0u8; // fake pidfd
+        copy_to_user(pidfd as *mut u8, &fake_pidfd as *const u8, 1)?;
+        log::warn!("[sys_clone3] CLONE_PIDFD is not supported");
+        return Err(Errno::ENOSYS);
+    }
+    if !exit_signal.is_valid() {
+        return Err(Errno::EINVAL);
+    }
+    if (stack_ptr == 0 && stack_size != 0) || (stack_ptr != 0 && stack_size == 0) {
+        return Err(Errno::EINVAL);
+    }
+    log::error!("[sys_clone] flags: {:?}", flags);
+    let task = current_task();
+    let new_task = task.kernel_clone(&flags, stack_ptr as usize, children_tid_ptr as usize)?;
+    let new_task_tid = new_task.tid();
+
+    if flags.contains(CloneFlags::CLONE_PARENT_SETTID) {
+        log::warn!("[sys_clone] handle CLONE_PARENT_SETTID");
+        let content = (new_task_tid as u64).to_le_bytes();
+        log::error!("parent_tid_ptr: {:x}", parent_tid_ptr);
+        copy_to_user(parent_tid_ptr as *mut u8, &content as *const u8, 8)?;
+    }
+    if flags.contains(CloneFlags::CLONE_CHILD_CLEARTID) {
+        log::warn!("[sys_clone] handle CLONE_CHILD_CLEARTID");
+        new_task.set_tac(children_tid_ptr as usize);
+    }
+    if flags.contains(CloneFlags::CLONE_SETTLS) {
+        log::warn!("[sys_clone] handle CLONE_SETTLS");
+        log::error!("tls_ptr: {:x}", tls_ptr);
+        let mut trap_cx = get_trap_context(&new_task);
+        trap_cx.set_tp(tls_ptr as usize);
+        save_trap_context(&new_task, trap_cx);
+    }
+    add_task(new_task);
+    if flags.contains(CloneFlags::CLONE_VFORK) {
+        log::warn!("[sys_clone] handle CLONE_VFORK");
+        // vfork的特殊处理, 需要阻塞父进程直到子进程调用execve或exit
+        wait();
+    }
+    drop(task);
+    // yield_current_task();
+    Ok(new_task_tid)
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+struct CloneArgs {
+    flags: u64,
+    pidfd: u64,
+    child_tid: u64,
+    parent_tid: u64,
+    exit_signal: u64,
+    stack: u64,
+    stack_size: u64,
+    tls: u64,
+    set_tid: u64,
+    set_tid_size: u64,
+    cgroups: u64,
 }
 
 // //fake

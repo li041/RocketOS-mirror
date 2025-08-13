@@ -16,9 +16,9 @@ use crate::{
         config::{PAGE_SIZE_BITS, USER_MAX},
         mm::copy_from_user,
     },
-    futex::queue::futex_hash,
+    futex::queue::{display_futexqueues, futex_hash},
     syscall::errno::{Errno, SyscallRet},
-    task::{current_task, wait, wait_timeout, wakeup, yield_current_task, Task, ITIMER_REAL},
+    task::{current_task, dump_scheduler, wait, wait_timeout, wakeup, yield_current_task, Task, ITIMER_REAL},
     timer::TimeSpec,
 };
 use alloc::{
@@ -225,13 +225,14 @@ pub fn futex_wait(
                 // 超时
                 log::error!("[futex_wait] task{} wakeup by timeout", task.tid());
                 let mut hash_bucket = FUTEXQUEUES.buckets[futex_hash(&key)].lock();
-                hash_bucket.retain(|futex_q| {
-                    if let Some(futex_q) = futex_q.task.upgrade() {
-                        futex_q.tid() != current_task().tid()
-                    } else {
-                        false
-                    }
-                });
+                // hash_bucket.retain(|futex_q| {
+                //     if let Some(task) = futex_q.task.upgrade() {
+                //         task.tid() != current_task().tid()
+                //     } else {
+                //         false
+                //     }
+                // });
+                hash_bucket.retain(|futex_q| futex_q.task.upgrade().unwrap().tid() != task.tid());
                 return Err(Errno::ETIMEDOUT);
             }
             return Ok(0);
@@ -245,8 +246,13 @@ pub fn futex_wait(
                     futex_q.task.upgrade().unwrap().tid() != current_task().tid()
                 });
                 return Err(Errno::EINTR);
-            }
-            return Ok(0);
+            } else {
+                let mut hash_bucket = FUTEXQUEUES.buckets[futex_hash(&key)].lock();
+                hash_bucket.retain(|futex_q| {
+                    futex_q.task.upgrade().unwrap().tid() != current_task().tid()
+                });
+                return Ok(0);
+            } 
         }
     }
 }
