@@ -96,6 +96,9 @@ impl InodeOp for PipeInode {
     fn get_inode_num(&self) -> usize {
         self.inode_num
     }
+    fn set_perm(&self, perm: u16) {
+        self.inner.write().inode_on_disk.set_perm(perm);
+    }
     fn get_mode(&self) -> u16 {
         self.inner.read().inode_on_disk.get_mode()
     }
@@ -334,6 +337,12 @@ impl Pipe {
         }
     }
     pub fn read(&self, buf: &mut [u8]) -> SyscallRet {
+        // 8.13 Debug
+        log::info!(
+            "[Pipe::read] Entering read, buf len: {}, pipe size: {}",
+            buf.len(),
+            self.get_size()
+        );
         debug_assert!(self.readable);
         let mut read_size = 0usize;
         let nonblock = self.flags.load(core::sync::atomic::Ordering::Relaxed)
@@ -400,6 +409,12 @@ impl Pipe {
         }
     }
     pub fn write(&self, buf: &[u8]) -> SyscallRet {
+        // 8.13 Debug
+        log::info!(
+            "[Pipe::write] Entering write, buf len: {}, pipe size: {}",
+            buf.len(),
+            self.get_size()
+        );
         debug_assert!(self.writable);
         let mut write_size = 0;
         let nonblock = self.flags.load(core::sync::atomic::Ordering::Relaxed)

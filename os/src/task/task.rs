@@ -1910,7 +1910,7 @@ pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
     //     pending.clear();
     // });
     // 清空计时器
-    remove_all_timer(task.tid());
+    // remove_all_timer(task.tid());
 
     // 向父进程发送SIGCHID
     if task.thread_group.lock().len() == 0 {

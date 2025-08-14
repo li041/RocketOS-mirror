@@ -468,7 +468,15 @@ impl TimeManager {
     where
         F: Fn() + Send + 'static,
     {
+        // 8.14 Debug
+        log::info!(
+            "[add_timer] tid: {}, clock_id: {}, dur: {:?}",
+            tid,
+            clock_id,
+            dur
+        );
         let mut alarm = self.alarms.lock();
+        log::info!("[add_timer] after lock, alarms len: {}", alarm.len());
         let deadline = TimeSpec::new_machine_time() + dur;
         alarm
             .entry(deadline)
@@ -619,12 +627,23 @@ pub fn common_timer_callback(tid: Tid, signo: i32, clock_id: ClockId) {
 }
 
 pub fn posix_timer_callback(tid: Tid, timerid: usize) {
+    // 8.14 Debug
+    log::info!("[posix_timer_callback] tid: {}, timerid: {}", tid, timerid);
     if let Some(task) = get_task(tid) {
         task.op_timers_mut(|timers| {
             if timerid >= MAX_POSIX_TIMER_COUNT {
                 return;
             }
             let timer = &mut timers[timerid];
+            // 8.14 Debug
+            log::info!(
+                "[posix_timer_callback] timerid: {}, clock_id: {:?}, it_value: {:?}, it_interval: {:?}, sigev_notify: {}",
+                timerid,
+                timer.clock_id,
+                timer.itimer_sepc.it_value,
+                timer.itimer_sepc.it_interval,
+                timer.event.sigev_notify
+            );
             match timer.event.sigev_notify {
                 SIGEV_SIGNAL => {
                     log::info!(
@@ -745,6 +764,12 @@ pub fn posix_timer_callback(tid: Tid, timerid: usize) {
                     },
                 );
             } else {
+                // 8.14 Debug
+                log::info!(
+                    "[posix_timer_callback] timer {} for task {} is one-shot, not re-registering",
+                    timerid,
+                    tid
+                );
                 return; // 如果是单次定时器，不再设置
             }
         });

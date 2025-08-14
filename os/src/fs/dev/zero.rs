@@ -2,16 +2,17 @@ use alloc::sync::Arc;
 use spin::{Once, RwLock};
 
 use crate::{
+    arch::config::{PAGE_SIZE, PAGE_SIZE_BITS},
     ext4::inode::{Ext4InodeDisk, S_IFCHR},
     fs::{
         file::{FileOp, OpenFlags},
         inode::InodeOp,
         kstat::Kstat,
         path::Path,
-        uapi::DevT,
+        uapi::{DevT, Whence},
     },
     mm::Page,
-    syscall::errno::SyscallRet,
+    syscall::errno::{Errno, SyscallRet},
     timer::TimeSpec,
 };
 pub static ZERO: Once<Arc<ZeroFile>> = Once::new();
@@ -110,11 +111,29 @@ pub struct ZeroFile {
     pub path: Arc<Path>,
     pub inode: Arc<dyn InodeOp>,
     pub flags: OpenFlags,
+    inner: RwLock<ZeroFileInner>,
 }
+
+pub struct ZeroFileInner {
+    pub offset: usize, // 文件偏移量
+}
+
 // 读时返回无限个 0，写时忽略内容（通常成功返回写入长度但不实际存储）
 impl ZeroFile {
     pub fn new(path: Arc<Path>, inode: Arc<dyn InodeOp>, flags: OpenFlags) -> Arc<Self> {
-        Arc::new(Self { path, inode, flags })
+        Arc::new(Self {
+            path,
+            inode,
+            flags: flags | OpenFlags::O_NOSPLICE,
+            inner: RwLock::new(ZeroFileInner { offset: 0 }),
+        })
+    }
+    pub fn inner_handler<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut ZeroFileInner) -> R,
+    {
+        let mut inner = self.inner.write();
+        f(&mut inner)
     }
 }
 
@@ -144,5 +163,28 @@ impl FileOp for ZeroFile {
     }
     fn get_inode(&self) -> Arc<dyn InodeOp> {
         self.inode.clone()
+    }
+    fn seek(&self, offset: isize, whence: Whence) -> SyscallRet {
+        self.inner_handler(|inner| {
+            match whence {
+                Whence::SeekSet => {
+                    if offset < 0 {
+                        return Err(Errno::EINVAL);
+                    }
+                    inner.offset = offset as usize;
+                }
+                Whence::SeekCur => {
+                    inner.offset = inner
+                        .offset
+                        .checked_add_signed(offset)
+                        .ok_or(Errno::EINVAL)?;
+                }
+                _ => {
+                    log::warn!("Unsupported whence: {:?}", whence);
+                    return Err(Errno::EINVAL); // Invalid argument
+                }
+            }
+            return Ok(inner.offset);
+        })
     }
 }

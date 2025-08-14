@@ -3,7 +3,10 @@ use core::fmt::Debug;
 use alloc::{collections::btree_map::BTreeMap, vec::Vec};
 use spin::RwLock;
 
-use crate::{fs::file::FileOp, syscall::errno::Errno};
+use crate::{
+    fs::{file::FileOp, inode::InodeOp},
+    syscall::errno::Errno,
+};
 
 #[derive(Debug)]
 pub struct BpfMap {
@@ -39,7 +42,7 @@ impl FileOp for BpfMap {
     }
 
     fn get_flags(&self) -> crate::fs::file::OpenFlags {
-        crate::fs::file::OpenFlags::O_RDWR
+        crate::fs::file::OpenFlags::O_RDWR | crate::fs::file::OpenFlags::O_NOSPLICE
     }
 
     fn readable(&self) -> bool {
@@ -48,6 +51,9 @@ impl FileOp for BpfMap {
 
     fn writable(&self) -> bool {
         true
+    }
+    fn get_inode(&self) -> alloc::sync::Arc<dyn InodeOp> {
+        crate::fs::DUMMY_INODE.clone()
     }
 }
 

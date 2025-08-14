@@ -119,7 +119,7 @@ pub fn trap_handler(cx: &mut TrapContext) {
             // 2. lazy allocation
             let va = VirtAddr::from(stval);
             let casue = PageFaultCause::from(scause.cause());
-            log::error!(
+            log::debug!(
                 "page fault cause {:?}, bad_addr = {:#x}, sepc = {:#x}",
                 scause.cause(),
                 stval,

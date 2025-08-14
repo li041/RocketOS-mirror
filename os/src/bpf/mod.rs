@@ -64,7 +64,7 @@ pub fn bpf_prog_load(bpf_attr_ptr: usize, size: usize) -> Result<usize, Errno> {
         insn_cnt
     );
     for insn in &prog.instructions {
-        println!("BPF Instruction: {:?}", insn);
+        log::info!("BPF Instruction: {:?}", insn);
     }
     current_task()
         .fd_table()
@@ -107,6 +107,10 @@ pub fn bpf_map_create(bpf_attr_ptr: usize, size: usize) -> Result<usize, Errno> 
         }
         BpfMapType::StackTrace => {
             log::info!("[bpf_map_create]: Created a StackTrace map");
+        }
+        BpfMapType::Hash => {
+            log::info!("[bpf_map_create]: Created a Hash map");
+            // 默认是空的, 按需插入
         }
         _ => {
             log::warn!("[bpf_map_create]: Unsupported map type: {:?}", map_type);

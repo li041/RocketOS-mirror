@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-03 16:40:04
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-07-21 12:27:07
+ * @LastEditTime: 2025-08-13 17:18:03
  * @FilePath: /RocketOS_netperfright/os/src/net/socket.rs
  * @Description: socket file
  *
@@ -1506,7 +1506,16 @@ impl FileOp for Socket {
             // log::trace!("[recv_from]");
             yield_current_task();
             //  log::trace!("[recv_from]");
-            let path = self.socket_path_unix.lock().clone().unwrap();
+            // let path = self.socket_path_unix.lock().clone().unwrap_or_else(||)
+            let mut path=Vec::new();
+            match self.socket_path_unix.lock().clone() {
+                Some(p) => {
+                    path=p
+                },
+                None =>{
+                    return Err(Errno::EBADF);
+                },
+            }
             let s_path = core::str::from_utf8(path.as_slice()).unwrap();
             if s_path.contains("/etc") || s_path.contains("/var/run/nscd/socket") {
                 let passwd_blob = PasswdEntry::passwd_lookup(self, buf.len())?;
@@ -1773,6 +1782,7 @@ impl FileOp for Socket {
         self.r_ready()
     }
     fn get_flags(&self) -> OpenFlags {
+        // let mut flag = OpenFlags::O_NOSPLICE;
         let mut flag = OpenFlags::empty();
         if self.close_exec.load(core::sync::atomic::Ordering::Acquire) {
             flag |= OpenFlags::O_CLOEXEC;

@@ -91,6 +91,7 @@ pub trait FileOp: Any + Send + Sync {
         unimplemented!();
     }
     fn fadvise(&self, _offset: usize, _len: usize, _advice: i32) -> SyscallRet {
+        // unimplemented!();
         Ok(0)
     }
     // Get the file offset
@@ -492,6 +493,8 @@ bitflags::bitflags! {
         // 打开一个文件但不获取对该文件的读写权限，而是仅获取对文件路径本身的一个引用
         const O_PATH        = 0o10000000;
         const O_TMPFILE     = 0o20200000;
+        // 仅用于文件系统的内部操作, 不允许用户空间使用
+        const O_NOSPLICE   = 0o40000000; // 不允许使用splice系统调用
     }
 }
 

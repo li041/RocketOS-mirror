@@ -245,8 +245,8 @@ pub const IGNOER_TEST: &[&str] = &[
     "ltp/testcases/bin/setfsgid03",
     "ltp/testcases/bin/setfsgid03_16",
     "ltp/testcases/bin/setpgid03",
-    "ltp/testcases/bin/splice07",
-    "ltp/testcases/bin/statx01",
+    // "ltp/testcases/bin/splice07",
+    // "ltp/testcases/bin/statx01",
     "ltp/testcases/bin/send02",
     "ltp/testcases/bin/fsync02",
     "ltp/testcases/bin/mmap09",
@@ -264,116 +264,116 @@ pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> Sy
     let path = c_str_to_string(path)?;
 
     // 过滤掉一些不必要的测试
-    if path.starts_with("ltp/testcases/bin/") {
-        // if path.ends_with(".sh") {
-        //     log::warn!("[sys_execve] ignore shell script: {}", path);
-        //     sys_exit(666);
-        // }
-        if path.ends_with("loop") {
-            log::warn!("[sys_execve] ignore loop test: {}", path);
-            sys_exit(666);
-        }
-        if path.starts_with("ltp/testcases/bin/dio") {
-            log::warn!("[sys_execve] ignore dio test: {}", path);
-            sys_exit(666);
-        }
-        if path.starts_with("ltp/testcases/bin/dirty") {
-            log::warn!("[sys_execve] ignore dirty test: {}", path);
-            sys_exit(666);
-        }
-        if path.starts_with("ltp/testcases/bin/setsockopt") {
-            log::warn!("[sys_execve] ignore setsockopt test: {}", path);
-            sys_exit(666);
-        }
-        if path.starts_with("ltp/testcases/bin/cpuset") {
-            log::warn!("[sys_execve] ignore cpuset test: {}", path);
-            sys_exit(666);
-        }
-        if path.starts_with("ltp/testcases/bin/mount") {
-            log::warn!("[sys_execve] ignore mount test: {}", path);
-            sys_exit(666);
-        }
-        if path.starts_with("ltp/testcases/bin/crypto_user") {
-            log::warn!("[sys_execve] ignore crypto_user test: {}", path);
-            sys_exit(666);
-        }
-        // if path.starts_with("ltp/testcases/bin/fstatfs") {
-        //     log::warn!("[sys_execve] ignore crypto_user test: {}", path);
-        //     sys_exit(666);
-        // }
-        if path.starts_with("ltp/testcases/bin/ftest") {
-            log::warn!("[sys_execve] ignore crypto_user test: {}", path);
-            sys_exit(666);
-        }
-        // if path.starts_with("ltp/testcases/bin/ftruncate") {
-        //     log::warn!("[sys_execve] ignore ftruncate test: {}", path);
-        //     sys_exit(666);
-        // }
-        if path.starts_with("ltp/testcases/bin/memcg") {
-            log::warn!("[sys_execve] ignore memcg_subgroup test: {}", path);
-            sys_exit(666);
-        }
-        if path.starts_with("ltp/testcases/bin/mmapstress") {
-            log::warn!("[sys_execve] ignore mmapstress test: {}", path);
-            sys_exit(666);
-        }
-        if path.starts_with("ltp/testcases/bin/mmstress") {
-            log::warn!("[sys_execve] ignore mmstress test: {}", path);
-            sys_exit(666);
-        }
-        // if path.starts_with("ltp/testcases/bin/mtest") {
-        //     log::warn!("[sys_execve] ignore mtest test: {}", path);
-        //     sys_exit(666);
-        // }
-        if path.starts_with("ltp/testcases/bin/pcrypt") {
-            log::warn!("[sys_execve] ignore pcrypt test: {}", path);
-            sys_exit(666);
-        }
-        if path.starts_with("ltp/testcases/bin/pidns") {
-            log::warn!("[sys_execve] ignore pidns test: {}", path);
-            sys_exit(666);
-        }
-        if path.starts_with("ltp/testcases/bin/pids") {
-            log::warn!("[sys_execve] ignore pids test: {}", path);
-            sys_exit(666);
-        }
-        // if path.starts_with("ltp/testcases/bin/ppoll") {
-        //     log::warn!("[sys_execve] ignore ppoll test: {}", path);
-        //     sys_exit(666);
-        // }
-        if path.starts_with("ltp/testcases/bin/proc") {
-            log::warn!("[sys_execve] ignore proc test: {}", path);
-            sys_exit(666);
-        }
-        if path.starts_with("ltp/testcases/bin/pth") {
-            log::warn!("[sys_execve] ignore pth test: {}", path);
-            sys_exit(666);
-        }
-        if path.starts_with("ltp/testcases/bin/setxattr") {
-            log::warn!("[sys_execve] ignore setxattr test: {}", path);
-            sys_exit(666);
-        }
-        // if path.starts_with("ltp/testcases/bin/shmt") {
-        //     log::warn!("[sys_execve] ignore shmt test: {}", path);
-        //     sys_exit(666);
-        // }
-        if path.starts_with("ltp/testcases/bin/tst") {
-            log::warn!("[sys_execve] ignore tst test: {}", path);
-            sys_exit(666);
-        }
-        if path.starts_with("ltp/testcases/bin/cve") {
-            log::warn!("[sys_execve] ignore tst test: {}", path);
-            sys_exit(666);
-        }
-        if path.starts_with("ltp/testcases/bin/gen") {
-            log::warn!("[sys_execve] ignore tst test: {}", path);
-            sys_exit(666);
-        }
-        if IGNOER_TEST.contains(&path.as_str()) {
-            log::warn!("[sys_execve] ignore test: {}", path);
-            sys_exit(666);
-        }
-    }
+    // if path.starts_with("ltp/testcases/bin/") {
+    //     if path.ends_with(".sh") {
+    //         log::warn!("[sys_execve] ignore shell script: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.ends_with("loop") {
+    //         log::warn!("[sys_execve] ignore loop test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/dio") {
+    //         log::warn!("[sys_execve] ignore dio test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/dirty") {
+    //         log::warn!("[sys_execve] ignore dirty test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/setsockopt") {
+    //         log::warn!("[sys_execve] ignore setsockopt test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/cpuset") {
+    //         log::warn!("[sys_execve] ignore cpuset test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/mount") {
+    //         log::warn!("[sys_execve] ignore mount test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/crypto_user") {
+    //         log::warn!("[sys_execve] ignore crypto_user test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     // if path.starts_with("ltp/testcases/bin/fstatfs") {
+    //     //     log::warn!("[sys_execve] ignore crypto_user test: {}", path);
+    //     //     sys_exit(666);
+    //     // }
+    //     if path.starts_with("ltp/testcases/bin/ftest") {
+    //         log::warn!("[sys_execve] ignore crypto_user test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     // if path.starts_with("ltp/testcases/bin/ftruncate") {
+    //     //     log::warn!("[sys_execve] ignore ftruncate test: {}", path);
+    //     //     sys_exit(666);
+    //     // }
+    //     if path.starts_with("ltp/testcases/bin/memcg") {
+    //         log::warn!("[sys_execve] ignore memcg_subgroup test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/mmapstress") {
+    //         log::warn!("[sys_execve] ignore mmapstress test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/mmstress") {
+    //         log::warn!("[sys_execve] ignore mmstress test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     // if path.starts_with("ltp/testcases/bin/mtest") {
+    //     //     log::warn!("[sys_execve] ignore mtest test: {}", path);
+    //     //     sys_exit(666);
+    //     // }
+    //     if path.starts_with("ltp/testcases/bin/pcrypt") {
+    //         log::warn!("[sys_execve] ignore pcrypt test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/pidns") {
+    //         log::warn!("[sys_execve] ignore pidns test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/pids") {
+    //         log::warn!("[sys_execve] ignore pids test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     // if path.starts_with("ltp/testcases/bin/ppoll") {
+    //     //     log::warn!("[sys_execve] ignore ppoll test: {}", path);
+    //     //     sys_exit(666);
+    //     // }
+    //     if path.starts_with("ltp/testcases/bin/proc") {
+    //         log::warn!("[sys_execve] ignore proc test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/pth") {
+    //         log::warn!("[sys_execve] ignore pth test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     // if path.starts_with("ltp/testcases/bin/setxattr") {
+    //     //     log::warn!("[sys_execve] ignore setxattr test: {}", path);
+    //     //     sys_exit(666);
+    //     // }
+    //     // if path.starts_with("ltp/testcases/bin/shmt") {
+    //     //     log::warn!("[sys_execve] ignore shmt test: {}", path);
+    //     //     sys_exit(666);
+    //     // }
+    //     if path.starts_with("ltp/testcases/bin/tst") {
+    //         log::warn!("[sys_execve] ignore tst test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/cve") {
+    //         log::warn!("[sys_execve] ignore tst test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if path.starts_with("ltp/testcases/bin/gen") {
+    //         log::warn!("[sys_execve] ignore tst test: {}", path);
+    //         sys_exit(666);
+    //     }
+    //     if IGNOER_TEST.contains(&path.as_str()) {
+    //         log::warn!("[sys_execve] ignore test: {}", path);
+    //         sys_exit(666);
+    //     }
+    // }
     log::info!(
         "[sys_execve] path: {}, args: {:?}, envs: {:?}",
         path,

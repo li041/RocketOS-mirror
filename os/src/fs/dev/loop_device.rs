@@ -26,6 +26,8 @@ pub const LOOP_CLR_FD: usize = 0x4C01;
 pub const LOOP_SET_STATUS: usize = 0x4C02;
 pub const LOOP_GET_STATUS: usize = 0x4C03;
 
+pub const BLKGETSIZE64: usize = 0x80081272; // _IOR(0x12,114,size_t)
+
 lazy_static! {
     static ref LOOP_MANAGER: Mutex<LoopManager> = Mutex::new(LoopManager::new(4));
 }
@@ -230,6 +232,22 @@ impl FileOp for LoopDevice {
                 let loop_info = self.loop_info.read();
                 copy_to_user(loop_info_ptr, &*loop_info as *const LoopInfo, 1)?;
                 Ok(0)
+            }
+            BLKGETSIZE64 => {
+                let size_ptr = arg as *mut u64;
+                if size_ptr.is_null() {
+                    return Err(Errno::EINVAL);
+                }
+                let file = self.backend_file.lock();
+                if let Some(f) = file.as_ref() {
+                    let size = f.get_inode().get_size() as u64;
+                    unsafe {
+                        copy_to_user(size_ptr, &size as *const u64, 1)?;
+                    }
+                    Ok(0)
+                } else {
+                    Err(Errno::ENODEV)
+                }
             }
 
             _ => Err(Errno::EINVAL),

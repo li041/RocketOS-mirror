@@ -2100,17 +2100,6 @@ impl MemorySet {
                 va.0,
                 pte
             );
-            if pte.is_valid() && pte.writable() {
-                log::error!(
-                    "[handle_recoverable_page_fault] page fault find pte, not COW, but writable"
-                );
-                // 刷新下tlb看看
-                unsafe {
-                    sfence_vma_vaddr(va.0 << PAGE_SIZE_BITS);
-                };
-                // 直接返回, 不处理
-                return Ok(());
-            }
             // 7.23 Debug
             self.page_table.dump_all_user_mapping();
             // 页表中有对应的页表项, 但不是COW, 同时也没有写权限

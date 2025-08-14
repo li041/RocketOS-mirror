@@ -4,16 +4,23 @@
  * @LastEditors: Peter/peterluck2021@163.com
  * @LastEditTime: 2025-07-19 16:34:17
  * @FilePath: /RocketOS_netperfright/os/src/fs/eventfd.rs
- * @Description: 
- * 
- * Copyright (c) 2025 by peterluck2021@163.com, All Rights Reserved. 
+ * @Description:
+ *
+ * Copyright (c) 2025 by peterluck2021@163.com, All Rights Reserved.
  */
 
 use alloc::sync::Arc;
 use bitflags::bitflags;
 use spin::Mutex;
 
-use crate::{fs::file::{FileOp, OpenFlags}, syscall::errno::{Errno, SyscallRet}, task::yield_current_task};
+use crate::{
+    ext4::inode::S_IFREG,
+    fs::file::{FileOp, OpenFlags},
+    syscall::errno::{Errno, SyscallRet},
+    task::yield_current_task,
+};
+
+use super::{inode::InodeOp, DUMMY_INODE};
 
 bitflags! {
     // https://sites.uclouvain.be/SystInfo/usr/include/sys/eventfd.h.html
@@ -29,6 +36,7 @@ pub struct EventFd {
     value: Arc<Mutex<u64>>,
     flags: u32,
 }
+
 impl EventFd {
     pub fn new(initval: u64, flags: u32) -> EventFd {
         EventFd {
@@ -136,7 +144,7 @@ impl FileOp for EventFd {
         *self.value.lock() < u64::MAX - 1
     }
     fn get_flags(&self) -> OpenFlags {
-        let mut status = OpenFlags::O_RDWR;
+        let mut status = OpenFlags::O_RDWR | OpenFlags::O_NOSPLICE;
         if self.flags & EventFdFlag::EFD_NONBLOCK.bits() != 0 {
             status |= OpenFlags::O_NONBLOCK;
         }
@@ -149,5 +157,7 @@ impl FileOp for EventFd {
     fn hang_up(&self) -> bool {
         true
     }
-
+    fn get_inode(&self) -> Arc<dyn InodeOp> {
+        DUMMY_INODE.clone()
+    }
 }

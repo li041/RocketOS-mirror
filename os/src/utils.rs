@@ -27,8 +27,6 @@ pub fn c_str_to_string(ptr: *const u8) -> Result<String, Errno> {
 
     let mut ptr = ptr as usize;
     let mut ret = String::new();
-    log::error!("[c_str_to_string] convert ptr at {:#x} to string", ptr);
-    // trace!("[c_str_to_string] convert ptr at {:#x} to string", ptr);
     loop {
         let ch: u8 = unsafe { *(ptr as *const u8) };
         if ch == 0 {

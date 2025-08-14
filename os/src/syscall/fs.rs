@@ -3620,14 +3620,17 @@ pub fn sys_splice(
             log::error!("[sys_splice] both file descriptors are not pipes or FIFOs");
             return Err(Errno::EINVAL);
         }
-        if out_file.get_flags().contains(OpenFlags::O_APPEND) {
+        if out_file.get_flags().contains(OpenFlags::O_APPEND)
+            || out_file.get_flags().contains(OpenFlags::O_NOSPLICE)
+            || in_file.get_flags().contains(OpenFlags::O_NOSPLICE)
+        {
             log::error!("[sys_splice] O_APPEND files cannot be written to");
             return Err(Errno::EINVAL);
         }
-        // if (in_file_mode & S_IFMT) == S_IFDIR || (out_file_mode & S_IFMT) == S_IFDIR {
-        //     log::error!("[sys_splice] operations on directories are not allowed");
-        //     return Err(Errno::EISDIR);
-        // }
+        if (in_file_mode & S_IFMT) == S_IFDIR || (out_file_mode & S_IFMT) == S_IFDIR {
+            log::error!("[sys_splice] operations on directories are not allowed");
+            return Err(Errno::EINVAL);
+        }
 
         let mut in_off = 0isize;
         let mut out_off = 0isize;

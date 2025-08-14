@@ -1147,9 +1147,83 @@ pub fn sys_shmctl(shmid: usize, op: i32, buf: usize) -> SyscallRet {
 }
 
 /* shm end */
-pub fn sys_membarrier(_cmd: i32, _flags: i32, _cpu_id: u32) -> SyscallRet {
-    log::error!("Unimplemented sys_membarrier");
-    Ok(0)
+// pub fn sys_membarrier(_cmd: i32, _flags: i32, _cpu_id: u32) -> SyscallRet {
+//     log::error!("Unimplemented sys_membarrier");
+//     Ok(0)
+// }
+const MEMBARRIER_CMD_QUERY: i32 = 0;
+const MEMBARRIER_CMD_GLOBAL: i32 = 1 << 0;
+const MEMBARRIER_CMD_GLOBAL_EXPEDITED: i32 = 1 << 1;
+const MEMBARRIER_CMD_REGISTER_GLOBAL_EXPEDITED: i32 = 1 << 2;
+const MEMBARRIER_CMD_PRIVATE_EXPEDITED: i32 = 1 << 3;
+const MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED: i32 = 1 << 4;
+const MEMBARRIER_CMD_PRIVATE_EXPEDITED_SYNC_CORE: i32 = 1 << 5;
+const MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED_SYNC_CORE: i32 = 1 << 6;
+
+static mut REGISTERED_PRIVATE_EXPEDITED: bool = false;
+static mut REGISTERED_PRIVATE_EXPEDITED_SYNC_CORE: bool = false;
+static mut REGISTERED_GLOBAL_EXPEDITED: bool = false;
+
+pub fn sys_membarrier(cmd: i32, flags: i32, _cpu_id: u32) -> SyscallRet {
+    log::warn!("Unimplemented sys_membarrier");
+    // flags 必须为 0
+    if flags != 0 {
+        return Err(Errno::EINVAL);
+    }
+
+    match cmd {
+        MEMBARRIER_CMD_QUERY => {
+            // 模拟返回支持的命令位掩码
+            let supported = MEMBARRIER_CMD_GLOBAL
+                | MEMBARRIER_CMD_PRIVATE_EXPEDITED
+                | MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED
+                | MEMBARRIER_CMD_PRIVATE_EXPEDITED_SYNC_CORE
+                | MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED_SYNC_CORE
+                | MEMBARRIER_CMD_GLOBAL_EXPEDITED
+                | MEMBARRIER_CMD_REGISTER_GLOBAL_EXPEDITED;
+            Ok(supported as usize)
+        }
+
+        MEMBARRIER_CMD_GLOBAL => Ok(0),
+
+        MEMBARRIER_CMD_PRIVATE_EXPEDITED => unsafe {
+            if REGISTERED_PRIVATE_EXPEDITED {
+                Ok(0)
+            } else {
+                Err(Errno::EPERM)
+            }
+        },
+
+        MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED => unsafe {
+            REGISTERED_PRIVATE_EXPEDITED = true;
+            Ok(0)
+        },
+
+        MEMBARRIER_CMD_PRIVATE_EXPEDITED_SYNC_CORE => unsafe {
+            if REGISTERED_PRIVATE_EXPEDITED_SYNC_CORE {
+                Ok(0)
+            } else {
+                Err(Errno::EPERM)
+            }
+        },
+
+        MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED_SYNC_CORE => unsafe {
+            REGISTERED_PRIVATE_EXPEDITED_SYNC_CORE = true;
+            Ok(0)
+        },
+
+        MEMBARRIER_CMD_GLOBAL_EXPEDITED => unsafe {
+            // global expedited 不要求注册
+            Ok(0)
+        },
+
+        MEMBARRIER_CMD_REGISTER_GLOBAL_EXPEDITED => unsafe {
+            REGISTERED_GLOBAL_EXPEDITED = true;
+            Ok(0)
+        },
+
+        _ => Err(Errno::EINVAL), // 未知命令
+    }
 }
 
 pub fn sys_get_mempolicy(
@@ -1166,8 +1240,12 @@ pub fn sys_get_mempolicy(
 // Todo: 目前没有实现页锁定功能
 pub fn sys_mlock(addr: usize, len: usize) -> SyscallRet {
     log::warn!("Unimplemented sys_mlock");
+    log::info!("[sys_mlock] addr: {:#x}, len: {:#x}", addr, len);
     let task = current_task();
-    if addr % PAGE_SIZE != 0 || len == 0 {
+    // if addr % PAGE_SIZE != 0 || len == 0 {
+    //     return Err(Errno::EINVAL);
+    // }
+    if len == 0 {
         return Err(Errno::EINVAL);
     }
     let start_vpn = VirtPageNum::from(addr >> PAGE_SIZE_BITS);

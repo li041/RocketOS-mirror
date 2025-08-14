@@ -12,6 +12,8 @@ use crate::{
     syscall::errno::Errno,
 };
 
+use super::{DummyInode, DUMMY_INODE};
+
 pub const IN_NONBLOCK: i32 = 0o0004000;
 pub const IN_CLOEXEC: i32 = 0o02000000;
 // 实例信息
@@ -98,6 +100,9 @@ impl FileOp for InotifyHandle {
     }
     fn writable(&self) -> bool {
         false
+    }
+    fn get_inode(&self) -> Arc<dyn super::inode::InodeOp> {
+        DUMMY_INODE.clone()
     }
 }
 

@@ -7,7 +7,11 @@ use core::{
 use spin::Mutex;
 
 use crate::{
-    fs::file::{FileOp, OpenFlags},
+    fs::{
+        file::{FileOp, OpenFlags},
+        inode::InodeOp,
+        DUMMY_INODE,
+    },
     syscall::errno::Errno,
     task::wakeup,
     timer::ITimerSpec,
@@ -85,8 +89,8 @@ pub struct Sigevent {
 impl Default for Sigevent {
     fn default() -> Self {
         Self {
-            sigev_notify: 1, // SIGEV_SIGNAL
-            sigev_signo: 14, // SIGALRM
+            sigev_notify: SIGEV_SIGNAL, // SIGEV_SIGNAL
+            sigev_signo: 14,            // SIGALRM
             sigev_value: 0,
             sigev_notify_function: 0,
             sigev_notify_attributes: 0,
@@ -252,6 +256,9 @@ impl FileOp for TimerFd {
     }
     fn add_wait_queue(&self, tid: usize) {
         self.add_waiter(tid);
+    }
+    fn get_inode(&self) -> Arc<dyn InodeOp> {
+        DUMMY_INODE.clone()
     }
     fn get_flags(&self) -> OpenFlags {
         if self.is_nonblocking {

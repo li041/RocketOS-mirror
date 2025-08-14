@@ -1,4 +1,6 @@
 //! File system in os
+use alloc::sync::Arc;
+use inode::InodeOp;
 use spin::RwLock;
 // use alloc::sync::Arc;
 
@@ -48,6 +50,7 @@ lazy_static! {
 }
 #[allow(unused)]
 use crate::drivers::block::VIRTIO_BLOCK_SIZE;
+use crate::ext4::inode::S_IFREG;
 
 // 指示在当前工作目录下打开文件
 pub const AT_FDCWD: i32 = -100;
@@ -55,3 +58,21 @@ pub const AT_REMOVEDIR: i32 = 0x200;
 
 // ext4文件系统的最大文件大小: 16TB
 pub const EXT4_MAX_FILE_SIZE: usize = 0x1000000000000;
+
+lazy_static::lazy_static! {
+    pub static ref DUMMY_INODE: Arc<dyn InodeOp> = Arc::new(DummyInode {});
+}
+
+pub struct DummyInode;
+
+impl DummyInode {
+    pub fn new() -> Arc<DummyInode> {
+        Arc::new(DummyInode {})
+    }
+}
+
+impl InodeOp for DummyInode {
+    fn get_mode(&self) -> u16 {
+        S_IFREG
+    }
+}

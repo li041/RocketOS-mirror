@@ -727,7 +727,7 @@ pub fn sys_timerfd_settime(
                     it_interval: timer.itimer_sepc.it_interval,
                 };
                 log::warn!("old_value: {:?}", old);
-                let mut dur;
+                let dur;
                 // 更新定时器的值
                 if flags & TIMER_ABSTIME != 0 {
                     // 如果设置了TIMER_ABSTIME, 则it_value是绝对时间
@@ -806,14 +806,14 @@ pub fn sys_timerfd_settime(
                 }
                 // 禁用定时器
                 if new_value.it_value.is_zero() {
-                    log::info!("[sys_timer_settimer] disable timer");
+                    log::info!("[sys_timerfd_settimer] disable timer");
                     let clock_id = (timerid + 3) as i32;
                     remove_timer(task.tid(), clock_id);
                     return Ok(0);
                 }
                 // 设置或更新已有定时器
                 if should_update {
-                    log::warn!("[sys_timer_settimer] update timer");
+                    log::warn!("[sys_timerfd_settimer] update timer");
                     update_posix_timer(task.tid(), timerid, dur);
                 } else {
                     add_posix_timer(task.tid(), dur, timerid);
@@ -821,12 +821,12 @@ pub fn sys_timerfd_settime(
                 return Ok(0);
             }
             ClockId::IDLE => {
-                log::error!("[sys_timer_settimer] timer not created: {}", timerid);
+                log::error!("[sys_timerfd_settimer] timer not created: {}", timerid);
                 return Err(Errno::EINVAL); // 定时器未创建
             }
             _ => {
                 log::warn!(
-                    "[sys_timer_settimer] timer {} clock_id: {:?}, Unimplemented",
+                    "[sys_timerfd_settimer] timer {} clock_id: {:?}, Unimplemented",
                     timerid,
                     timer.clock_id
                 );
@@ -988,7 +988,7 @@ pub fn sys_timer_settimer(
                     it_interval: timer.itimer_sepc.it_interval,
                 };
                 log::warn!("old_value: {:?}", old);
-                let mut dur;
+                let dur;
                 // 更新定时器的值
                 if flags & TIMER_ABSTIME != 0 {
                     // 如果设置了TIMER_ABSTIME, 则it_value是绝对时间
@@ -1004,6 +1004,13 @@ pub fn sys_timer_settimer(
                     dur = new_value.it_value;
                 }
                 timer.itimer_sepc.it_interval = new_value.it_interval;
+                // 8.14 Debug
+                log::info!(
+                    "[sys_timer_settimer] timerid: {}, it_value: {:?}, it_interval: {:?}",
+                    timerid,
+                    timer.itimer_sepc.it_value,
+                    timer.itimer_sepc.it_interval
+                );
                 // 将旧的定时器值写入old_value_ptr
                 if !old_value_ptr.is_null() {
                     copy_to_user(old_value_ptr, &old as *const ITimerSpec, 1)?;
@@ -1061,6 +1068,17 @@ pub fn sys_timer_settimer(
                     dur = new_value.it_value;
                 }
                 timer.itimer_sepc.it_interval = new_value.it_interval;
+                log::info!(
+                    "[sys_timer_settimer] new_value.it_interval: {:?}",
+                    new_value.it_interval
+                );
+                // 8.14 Debug
+                log::info!(
+                    "[sys_timer_settimer] timerid: {}, it_value: {:?}, it_interval: {:?}",
+                    timerid,
+                    timer.itimer_sepc.it_value,
+                    timer.itimer_sepc.it_interval
+                );
                 // 将旧的定时器值写入old_value_ptr
                 if !old_value_ptr.is_null() {
                     copy_to_user(old_value_ptr, &old as *const ITimerSpec, 1)?;
