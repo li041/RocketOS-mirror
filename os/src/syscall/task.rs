@@ -20,8 +20,8 @@ use crate::syscall::AT_SYMLINK_NOFOLLOW;
 use crate::task::{
     add_group, dump_scheduler, for_each_task, get_all_tasks, get_group, get_task, info_allocator,
     new_group, nice_to_priority, nice_to_rlimit, priority_to_nice, unregister_task, wait,
-    wait_timeout, CloneFlags, Task, MAX_NICE, MAX_PRIO, MIN_NICE, PRIO_PGRP, PRIO_PROCESS,
-    PRIO_USER,
+    wait_timeout, CapFlags, CloneFlags, Task, MAX_NICE, MAX_PRIO, MIN_NICE, PRIO_PGRP,
+    PRIO_PROCESS, PRIO_USER,
 };
 use crate::timer::{TimeSpec, TimeVal};
 use crate::{
@@ -242,8 +242,6 @@ pub const IGNOER_TEST: &[&str] = &[
     "ltp/testcases/bin/mknod09",
     "ltp/testcases/bin/mprotect04",
     "ltp/testcases/bin/nice05",
-    "ltp/testcases/bin/sigsuspend01",
-    "ltp/testcases/bin/rt_sigsuspend01",
     "ltp/testcases/bin/setfsgid03",
     "ltp/testcases/bin/setfsgid03_16",
     "ltp/testcases/bin/setpgid03",
@@ -267,10 +265,10 @@ pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> Sy
 
     // 过滤掉一些不必要的测试
     if path.starts_with("ltp/testcases/bin/") {
-        if path.ends_with(".sh") {
-            log::warn!("[sys_execve] ignore shell script: {}", path);
-            sys_exit(666);
-        }
+        // if path.ends_with(".sh") {
+        //     log::warn!("[sys_execve] ignore shell script: {}", path);
+        //     sys_exit(666);
+        // }
         if path.ends_with("loop") {
             log::warn!("[sys_execve] ignore loop test: {}", path);
             sys_exit(666);
@@ -1885,104 +1883,408 @@ struct CloneArgs {
     cgroups: u64,
 }
 
-// //fake
-// pub fn sys_capget(user_cap_header: usize, user_cap_data: usize) -> SyscallRet {
-//     log::warn!("[sys_capget] unimplemented");
-//     log::error!(
-//         "[sys_capget] header: {:x}, data: {:x}",
-//         user_cap_header,
-//         user_cap_data
-//     );
-//     let mut header = user_cap_header::default();
-//     let mut data = user_cap_data::default();
-//     copy_from_user(
-//         user_cap_header as *const user_cap_header,
-//         &mut header as *mut user_cap_header,
-//         1,
-//     )?;
-//     copy_from_user(
-//         user_cap_data as *const user_cap_data,
-//         &mut data as *mut user_cap_data,
-//         1,
-//     )?;
-//     if header.version == 0 {
-//         header.version = 0x20080522; // 这个版本号是Linux内核的一个常量
-//         copy_to_user(
-//             user_cap_header as *mut user_cap_header,
-//             &header as *const user_cap_header,
-//             1,
-//         )?;
-//         return Err(Errno::EINVAL);
-//     }
-//     if header.pid < 0 {
-//         return Err(Errno::EINVAL);
-//     }
-//     if let Some(task) = get_task(header.pid as usize) {
-//         // fake
-//     } else {
-//         return Err(Errno::ESRCH);
-//     }
-//     return Ok(0);
-// }
+const _LINUX_CAPABILITY_VERSION_1: u32 = 0x19980330;
+const _LINUX_CAPABILITY_VERSION_2: u32 = 0x20071026;
+const _LINUX_CAPABILITY_VERSION_3: u32 = 0x20080522;
 
-// // fake
-// pub fn sys_capset(user_cap_header: usize, user_cap_data: usize) -> SyscallRet {
-//     log::warn!("[sys_capset] unimplemented");
-//     log::error!(
-//         "[sys_capset] header: {:x}, data: {:x}",
-//         user_cap_header,
-//         user_cap_data
-//     );
-//     let mut header = user_cap_header::default();
-//     let mut data = user_cap_data::default();
-//     copy_from_user(
-//         user_cap_header as *const user_cap_header,
-//         &mut header as *mut user_cap_header,
-//         1,
-//     )?;
-//     copy_from_user(
-//         user_cap_data as *const user_cap_data,
-//         &mut data as *mut user_cap_data,
-//         1,
-//     )?;
-//     log::error!(
-//         "[sys_capset] header: {:?}, data: {:?}",
-//         header, data
-//     );
-//     if header.version == 0 {
-//         header.version = 0x20080522; // 这个版本号是Linux内核的一个常量
-//         copy_to_user(
-//             user_cap_header as *mut user_cap_header,
-//             &header as *const user_cap_header,
-//             1,
-//         )?;
-//         return Err(Errno::EINVAL);
-//     }
-//     if header.pid < 0 {
-//         return Err(Errno::EINVAL);
-//     }
-//     if data.inheritable == 8224 { // fake
-//         return Err(Errno::EPERM);
-//     }
-//     if let Some(task) = get_task(header.pid as usize) {
-//         if header.pid != 0 && header.pid != current_task().tid() as i32 { //fake
-//             return Err(Errno::EPERM);
-//         }
-//     } else {
-//         return Err(Errno::ESRCH);
-//     }
-//     return Ok(0);
-// }
+pub fn sys_capget(user_cap_header: usize, user_cap_data: usize) -> SyscallRet {
+    log::error!(
+        "[sys_capget] header: {:x}, data: {:x}",
+        user_cap_header,
+        user_cap_data
+    );
+    // 获取header和data
+    let mut header = user_cap_header::default();
+    let mut data = user_cap_data::default();
+    copy_from_user(
+        user_cap_header as *const user_cap_header,
+        &mut header as *mut user_cap_header,
+        1,
+    )?;
+    copy_from_user(
+        user_cap_data as *const user_cap_data,
+        &mut data as *mut user_cap_data,
+        1,
+    )?;
+    log::error!("[sys_capget] header: {:?}, data: {:?}", header, data);
 
-// #[derive(Default, Debug, Clone, Copy)]
-// pub struct user_cap_header {
-//     pub version: u32,
-//     pub pid: i32,
-// }
+    // 版本非法
+    if header.version != _LINUX_CAPABILITY_VERSION_1
+        && header.version != _LINUX_CAPABILITY_VERSION_2
+        && header.version != _LINUX_CAPABILITY_VERSION_3
+    {
+        header.version = _LINUX_CAPABILITY_VERSION_3;
+        copy_to_user(
+            user_cap_header as *mut user_cap_header,
+            &header as *const user_cap_header,
+            1,
+        )?;
+        return Err(Errno::EINVAL);
+    }
 
-// #[derive(Default, Debug, Clone, Copy)]
-// pub struct user_cap_data {
-//     pub effective: u32,
-//     pub permitted: u32,
-//     pub inheritable: u32,
-// }
+    // pid 非法
+    if header.pid < 0 {
+        return Err(Errno::EINVAL);
+    } else if header.pid == 0 {
+        // 如果pid为0，表示当前进程
+        header.pid = current_task().tid() as i32;
+    }
+
+    if let Some(task) = get_task(header.pid as usize) {
+        let effective = task.effective();
+        let permitted = task.permitted();
+        let inheritable = task.inheritable();
+        let header = user_cap_header::new(task.tid() as i32);
+        let data = user_cap_data::new(effective, permitted, inheritable);
+        copy_to_user(
+            user_cap_data as *mut user_cap_data,
+            &data as *const user_cap_data,
+            1,
+        )?;
+        return Ok(0);
+    } else {
+        return Err(Errno::ESRCH);
+    }
+}
+
+pub fn sys_capset(user_cap_header: usize, user_cap_data: usize) -> SyscallRet {
+    // 获取header和data
+    let mut header = user_cap_header::default();
+    let mut data = user_cap_data::default();
+    copy_from_user(
+        user_cap_header as *const user_cap_header,
+        &mut header as *mut user_cap_header,
+        1,
+    )?;
+    copy_from_user(
+        user_cap_data as *const user_cap_data,
+        &mut data as *mut user_cap_data,
+        1,
+    )?;
+    log::error!("[sys_capset] header: {:?}, data: {:?}", header, data);
+
+    // 版本非法
+    if header.version != _LINUX_CAPABILITY_VERSION_1
+        && header.version != _LINUX_CAPABILITY_VERSION_2
+        && header.version != _LINUX_CAPABILITY_VERSION_3
+    {
+        header.version = _LINUX_CAPABILITY_VERSION_3;
+        copy_to_user(
+            user_cap_header as *mut user_cap_header,
+            &header as *const user_cap_header,
+            1,
+        )?;
+        return Err(Errno::EINVAL);
+    }
+
+    // pid 非法
+    if header.pid < 0 {
+        return Err(Errno::EINVAL);
+    } else if header.pid == 0 {
+        // 如果pid为0，表示当前进程
+        header.pid = current_task().tid() as i32;
+    } else if header.pid != current_task().tid() as i32 {
+        // 不允许修改其他进程（有待商榷）
+        return Err(Errno::EPERM);
+    }
+
+    if let Some(task) = get_task(header.pid as usize) {
+        // 判断effective 是否为 permitted的子集
+        if data.effective & !data.permitted != 0 {
+            log::error!("[sys_capset] effective capabilities cannot exceed permitted capabilities");
+            return Err(Errno::EPERM);
+        }
+        // 判断新permitted 是否为 老permitted的子集
+        let old_permitted = task.permitted();
+        if data.permitted & !old_permitted != 0 {
+            log::error!(
+                "[sys_capset] new permitted capabilities cannot exceed old permitted capabilities"
+            );
+            return Err(Errno::EPERM);
+        }
+        // 判断新inheritable 是否为 bset的子集
+        let bset = task.bset();
+        if data.inheritable & !bset != 0 {
+            log::error!(
+                "[sys_capset] new inheritable capabilities cannot exceed bset capabilities"
+            );
+            return Err(Errno::EPERM);
+        }
+        // 如果任务不包含CAP_SETPCAP
+        if task.effective() & CapFlags::CAP_SETPCAP.bits() == 0 {
+            //只能把 pP 或 pI 减少或保持
+            let old_permitted = task.permitted();
+            if data.inheritable & !old_permitted != 0 {
+                log::error!("[sys_capset] task does not have CAP_SETPCAP capability");
+                return Err(Errno::EPERM);
+            }
+        }
+
+        log::warn!(
+            "[sys_capset] task{} set effective: {:#b}, permitted: {:#b}, inheritable: {:#b}",
+            task.tid(),
+            data.effective,
+            data.permitted,
+            data.inheritable
+        );
+        task.set_effective(data.effective);
+        task.set_permitted(data.permitted);
+        task.set_inheritable(data.inheritable);
+
+        return Ok(0);
+    } else {
+        return Err(Errno::ESRCH);
+    }
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+pub struct user_cap_header {
+    pub version: u32,
+    pub pid: i32,
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+pub struct user_cap_data {
+    pub effective: u32,
+    pub permitted: u32,
+    pub inheritable: u32,
+}
+
+impl user_cap_header {
+    pub fn new(pid: i32) -> Self {
+        user_cap_header {
+            version: _LINUX_CAPABILITY_VERSION_3,
+            pid,
+        }
+    }
+}
+
+impl user_cap_data {
+    pub fn new(effective: u32, permitted: u32, inheritable: u32) -> Self {
+        user_cap_data {
+            effective,
+            permitted,
+            inheritable,
+        }
+    }
+}
+
+const PR_SET_PDEATHSIG: i32 = 1;
+const PR_GET_PDEATHSIG: i32 = 2;
+const PR_GET_DUMPABLE: i32 = 3;
+const PR_SET_DUMPABLE: i32 = 4;
+const PR_GET_UNALIGN: i32 = 5;
+const PR_SET_UNALIGN: i32 = 6;
+const PR_SET_KEEPCAPS: i32 = 7;
+const PR_GET_FPEMU: i32 = 9;
+const PR_SET_FPEMU: i32 = 10;
+const PR_GET_FPEXC: i32 = 11;
+const PR_SET_FPEXC: i32 = 12;
+const PR_GET_TIMING: i32 = 13;
+const PR_SET_TIMING: i32 = 14;
+const PR_SET_NAME: i32 = 15;
+const PR_GET_NAME: i32 = 16;
+const PR_GET_ENDIAN: i32 = 19;
+const PR_SET_ENDIAN: i32 = 20;
+const PR_GET_SECCOMP: i32 = 21;
+const PR_SET_SECCOMP: i32 = 22;
+const PR_CAPBSET_READ: i32 = 23;
+const PR_CAPBSET_DROP: i32 = 24;
+const PR_SET_SECUREBITS: i32 = 28;
+const PR_SET_NO_NEW_PRIVS: i32 = 38;
+const PR_GET_NO_NEW_PRIVS: i32 = 39;
+const PR_SET_THP_DISABLE: i32 = 41;
+const PR_GET_THP_DISABLE: i32 = 42;
+const PR_CAP_AMBIENT: i32 = 47;
+const PR_GET_SPECULATION_CTRL: i32 = 52;
+const PR_MAX: i32 = 100;
+
+pub fn sys_prctl(op: i32, arg1: usize, arg2: usize, arg3: usize, arg4: usize) -> SyscallRet {
+    log::error!(
+        "[sys_prctl] op: {}, arg1: {:x}, arg2: {:x}, arg3: {:x}, arg4: {:x}",
+        op,
+        arg1,
+        arg2,
+        arg3,
+        arg4
+    );
+    if op > PR_MAX {
+        log::warn!("[sys_prctl] invalid op: {}", op);
+        return Err(Errno::EINVAL);
+    }
+    match op {
+        PR_SET_PDEATHSIG => {
+            // 将调用进程的父进程死亡信号设置为 sig
+            // arg1 为sig号
+            let sig = Sig::from(arg1 as i32);
+            if !sig.is_valid() {
+                return Err(Errno::EINVAL);
+            }
+            return Err(Errno::ENOSYS); // 目前不支持
+        }
+        PR_SET_DUMPABLE => {
+            // 设置“dumpable”属性的状态
+            // arg1 为转储状态
+            if arg1 != 0 && arg1 != 1 {
+                log::warn!("[sys_prctl] PR_SET_DUMPABLE with invalid arg1: {}", arg1);
+                return Err(Errno::EINVAL);
+            }
+            return Err(Errno::ENOSYS); // 目前不支持
+        }
+        PR_SET_TIMING => {
+            // 控制内核是否记录进程时间统计
+            // arg1 为mode (必须为0)
+            if arg1 != 0 {
+                return Err(Errno::EINVAL);
+            }
+            return Err(Errno::ENOSYS);
+        }
+        PR_SET_NAME => {
+            // 设置进程名
+            // arg1 为进程名指针
+            let mut name = vec![0u8; 16];
+            copy_from_user(arg1 as *const u8, name.as_mut_ptr(), name.len())?;
+            return Err(Errno::ENOSYS); // 目前不支持
+        }
+        PR_SET_SECCOMP => {
+            // 为调用线程设置安全计算 (seccomp) 模式，以限制可用的系统调用。
+            // arg1 为 seccomp 模式
+            // arg2 为 过滤器地址
+            match arg1 {
+                1 => {
+                    // Strict 模式
+                }
+                2 => {
+                    //Filter 模式
+                    // Todo: 待完善
+                    let mut filter = vec![0u8; 1]; // 过滤器内容
+                    copy_from_user(arg2 as *const u8, filter.as_mut_ptr(), 1)?;
+                    // 检查权限
+                    let task = current_task();
+                    let effective = task.effective();
+                    if (effective & CapFlags::CAP_SYS_ADMIN.bits() == 0) {
+                        log::warn!("[sys_prctl] non-root task cannot drop capabilities");
+                        return Err(Errno::EACCES);
+                    }
+                }
+                _ => {
+                    return Err(Errno::EINVAL);
+                }
+            }
+            return Err(Errno::ENOSYS); // 目前不支持
+        }
+        PR_CAPBSET_DROP => {
+            // PR_CAPBSET_DROP 用于从进程的能力集中删除指定的能力。
+            // arg1 为cap索引
+            if arg1 == 0 {
+                log::warn!("[sys_prctl] PR_CAPBSET_DROP with arg1 = 0, no capabilities dropped");
+                return Ok(0);
+            }
+            let task = current_task();
+            // 检查权限
+            let effective = task.effective();
+            if (effective & CapFlags::CAP_SETPCAP.bits() == 0) {
+                log::warn!("[sys_prctl] non-root task cannot drop capabilities");
+                return Err(Errno::EPERM);
+            }
+            let bset = task.bset();
+            task.set_bset(bset & !(1 << arg1));
+            Ok(0)
+        }
+        PR_SET_SECUREBITS => {
+            // 设置调用线程的安全位
+            // arg1 为flag
+            let task = current_task();
+            // 检查权限
+            let effective = task.effective();
+            if (effective & CapFlags::CAP_SETPCAP.bits() == 0) {
+                log::warn!("[sys_prctl] non-root task cannot drop capabilities");
+                return Err(Errno::EPERM);
+            }
+            return Err(Errno::ENOSYS); // 目前不支持
+        }
+        PR_SET_NO_NEW_PRIVS => {
+            // 设置调用线程的 no_new_privs 属性
+            // arg1 必须为 1，其余必须为 0
+            if arg1 != 1 {
+                return Err(Errno::EINVAL);
+            }
+            if arg2 != 0 || arg3 != 0 || arg4 != 0 {
+                return Err(Errno::EINVAL);
+            }
+            return Err(Errno::ENOSYS); // 目前不支持
+        }
+        PR_GET_NO_NEW_PRIVS => {
+            // 获取调用线程的 no_new_privs 属性
+            // 所有参数必须为0
+            if arg1 != 0 || arg2 != 0 || arg3 != 0 || arg4 != 0 {
+                return Err(Errno::EINVAL);
+            }
+            return Err(Errno::ENOSYS); // 目前不支持
+        }
+        PR_SET_THP_DISABLE => {
+            // 设置调用线程的“THP disable”标志的状态
+            // arg1 为 flag
+            // 其余必须为0
+            if arg2 != 0 || arg3 != 0 || arg4 != 0 {
+                return Err(Errno::EINVAL);
+            }
+            return Err(Errno::ENOSYS); // 目前不支持
+        }
+        PR_GET_THP_DISABLE => {
+            // 获取调用线程的“THP disable”标志的状态
+            // 所有参数必须为0
+            if arg1 != 0 || arg2 != 0 || arg3 != 0 || arg4 != 0 {
+                return Err(Errno::EINVAL);
+            }
+            return Err(Errno::ENOSYS); // 目前不支持
+        }
+        PR_CAP_AMBIENT => {
+            const PR_CAP_AMBIENT_IS_SET: usize = 1;
+            const PR_CAP_AMBIENT_RAISE: usize = 2;
+            const PR_CAP_AMBIENT_LOWER: usize = 3;
+            const PR_CAP_AMBIENT_CLEAR_ALL: usize = 4;
+
+            // 获取调用线程的能力环境
+            // arg1 为op
+            match arg1 {
+                PR_CAP_AMBIENT_IS_SET => {
+                    const CAP_INDEX_MAX: usize = 31;
+                    // This call returns 1 if the capability in cap is in the ambient
+                    // arg2 为 cap，其余为0
+                    if arg3 != 0 || arg4 != 0 {
+                        return Err(Errno::EINVAL);
+                    }
+                    if arg2 > CAP_INDEX_MAX {
+                        return Err(Errno::EINVAL);
+                    }
+                }
+                PR_CAP_AMBIENT_RAISE => {}
+                PR_CAP_AMBIENT_LOWER => {}
+                PR_CAP_AMBIENT_CLEAR_ALL => {
+                    // 所有cap删除
+                    // 其余arg必须为0
+                    if arg2 != 0 || arg3 != 0 || arg4 != 0 {
+                        return Err(Errno::EINVAL);
+                    }
+                }
+                _ => {
+                    return Err(Errno::EINVAL);
+                }
+            }
+            return Err(Errno::ENOSYS); // 目前不支持
+        }
+        PR_GET_SPECULATION_CTRL => {
+            // 返回 misfeature 中指定的推测 misfeature 的状态。
+            // arg1 为misfeature，其余必须为0
+            if arg2 != 0 || arg3 != 0 || arg4 != 0 {
+                return Err(Errno::EINVAL);
+            }
+            return Err(Errno::ENOSYS); // 目前不支持
+        }
+        _ => {
+            log::warn!("[sys_prctl] unimplemented op: {}", op);
+            return Err(Errno::ENOSYS);
+        }
+    }
+}

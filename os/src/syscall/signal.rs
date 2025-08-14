@@ -200,6 +200,7 @@ pub fn sys_rt_sigsuspend(mask: usize) -> SyscallRet {
     let mut new_mask: SigSet = SigSet::empty();
     copy_from_user(mask as *const SigSet, &mut new_mask as *mut SigSet, 1)?;
     new_mask.remove(SigSet::SIGKILL | SigSet::SIGCONT);
+    // 改为临时掩码
     task.op_sig_pending_mut(|pending| {
         origin_mask = pending.change_mask(new_mask);
         log::error!(
@@ -215,11 +216,8 @@ pub fn sys_rt_sigsuspend(mask: usize) -> SyscallRet {
     {
         let mut trap_cx = get_trap_context(&task);
         let new_sp = get_stack_top_by_sp(task.kstack()) - core::mem::size_of::<TrapContext>();
-        trap_cx.set_a0((usize::MAX - 3) as usize); // 设置返回值为-4
+        trap_cx.set_a0((usize::MAX - 3) as usize); // 设置返回值为-4（EINTR）
         save_trap_context(&task, trap_cx);
-        unsafe {
-            asm!("mv sp, {}", in(reg) new_sp);
-        }
         handle_signal();
         // Todo: 这样做应该会破坏信号处理时的掩码，此时并不支持信号嵌套
         task.op_sig_pending_mut(|pending| {
@@ -227,9 +225,10 @@ pub fn sys_rt_sigsuspend(mask: usize) -> SyscallRet {
             pending.change_mask(origin_mask);
         });
         task.cancel_restore_mask();
-
+        let new_sp = get_stack_top_by_sp(task.kstack()) - core::mem::size_of::<TrapContext>();
         drop(task);
         unsafe {
+            asm!("mv sp, {}", in(reg) new_sp);
             asm!(
                 "lla t0, __return_to_user", // 加载地址到寄存器 t0
                 "jr t0",                    // 跳转到 t0 指向的位置

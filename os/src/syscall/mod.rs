@@ -75,7 +75,7 @@ use crate::{
             sys_setpriority,
         },
         signal::{sys_rt_sigqueueinfo, sys_sigaltstack},
-        task::{sys_clone3, sys_execveat, sys_getcpu, sys_waitid},
+        task::{sys_capget, sys_capset, sys_clone3, sys_execveat, sys_getcpu, sys_prctl, sys_waitid},
     },
     task::rusage::RUsage,
     time::KernelTimex,
@@ -257,6 +257,7 @@ const SYSCALL_GETRLIMIT: usize = 163;
 const SYSCALL_SETRLIMIT: usize = 164;
 const SYSCALL_GETRUSAGE: usize = 165;
 const SYSCALL_UMASK: usize = 166;
+const SYSCALL_PRCTL: usize = 167;
 const SYSCALL_GETCPU: usize = 168;
 const SYSCALL_GET_TIME: usize = 169;
 const SYSCALL_SETTIMEOFDAY: usize = 170;
@@ -470,8 +471,8 @@ pub fn syscall(
             sys_utimensat(a0 as i32, a1 as *const u8, a2 as *const TimeSpec, a3 as i32)
         }
         SYSCALL_ACCT => sys_acct(a0 as *const u8),
-        // SYSCALL_CAPGET => sys_capget(a0, a1),
-        // SYSCALL_CAPSET => sys_capset(a0, a1),
+        SYSCALL_CAPGET => sys_capget(a0, a1),
+        SYSCALL_CAPSET => sys_capset(a0, a1),
         SYSCALL_EXIT => sys_exit(a0 as i32),
         SYSCALL_EXIT_GROUP => sys_exit_group(a0 as i32),
         SYSCALL_WAITID => sys_waitid(a0 as i32, a1 as isize, a2, a3 as i32),
@@ -538,6 +539,7 @@ pub fn syscall(
         SYSCALL_UNAME => sys_uname(a0),
         SYSCALL_GETRUSAGE => sys_getrusage(a0 as i32, a1 as *mut RUsage),
         SYSCALL_UMASK => sys_umask(a0),
+        SYSCALL_PRCTL => sys_prctl(a0 as i32, a1, a2, a3, a4),
         SYSCALL_GETCPU => sys_getcpu(a0, a1),
         SYSCALL_GET_TIME => sys_get_time(a0),
         SYSCALL_GITPID => sys_getpid(),

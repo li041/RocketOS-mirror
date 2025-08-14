@@ -91,7 +91,7 @@ pub trait FileOp: Any + Send + Sync {
         unimplemented!();
     }
     fn fadvise(&self, _offset: usize, _len: usize, _advice: i32) -> SyscallRet {
-        unimplemented!();
+        Ok(0)
     }
     // Get the file offset
     fn get_offset(&self) -> usize {

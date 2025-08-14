@@ -20,6 +20,10 @@ impl Environment {
         env.vars
             .insert(String::from("SHELL"), String::from("/bin/shell"));
         env.vars.insert(String::from("USER"), String::from("root"));
+        env.vars.insert(
+            String::from("PATH"),
+            String::from("/bin:/usr/bin:/glibc/ltp/testcases/bin"),
+        );
 
         env
     }

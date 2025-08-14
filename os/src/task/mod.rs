@@ -50,7 +50,7 @@ pub use scheduler::{
     SCHED_FIFO, SCHED_IDLE, SCHED_OTHER, SCHED_RR,
 };
 pub use task::kernel_exit;
-pub use task::CloneFlags;
+pub use task::{CloneFlags, CapFlags};
 pub use task::{CpuMask, Task, TaskStatus, INIT_PROC_PID};
 pub use timer::{
     ClockId, PosixTimer, Sigevent, TimerFd, MAX_POSIX_TIMER_COUNT, SIGEV_COUNT, SIGEV_NONE,

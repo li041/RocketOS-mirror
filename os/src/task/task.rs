@@ -120,8 +120,6 @@ pub struct Task {
     sig_pending: Mutex<SigPending>,         // 待处理信号
     sig_handler: Arc<Mutex<SigHandler>>,    // 信号处理函数
     interrupted: AtomicBool,                // 是否被信号中断
-    re_start: AtomicBool,                   // 是否需要重启
-    restore_mask: AtomicBool,               // 是否需要恢复信号掩码(用于sigsuspend)
     itimerval: Arc<RwLock<[ITimerVal; 3]>>, // 定时器
     timers: Arc<Mutex<[PosixTimer; MAX_POSIX_TIMER_COUNT]>>, // POSIX定时器
     // 资源限制
@@ -136,6 +134,15 @@ pub struct Task {
     sgid: AtomicU32,              // 保存组id
     fsgid: AtomicU32,             // 文件系统组id
     sup_groups: RwLock<Vec<u32>>, // 附加组列表
+    effective: AtomicU32,         // 当前生效的能力
+    permitted: AtomicU32,         // 当前允许的能力
+    inheritable: AtomicU32,       // 当前继承的能力
+    bset: AtomicU32,              // 限制进程未来可获得的Permitted能力
+    // 判断标志
+    re_start: AtomicBool,                   // 是否需要重启
+    restore_mask: AtomicBool,               // 是否需要恢复信号掩码(用于sigsuspend)
+    vfork: AtomicBool,                      // 是否启用vfork
+
     // CFS调度字段
     #[cfg(feature = "cfs")]
     sched_entity: Arc<CFSSchedEntity>, // CFS调度实体(内部结构为原子属性)
@@ -233,6 +240,11 @@ impl Task {
             sgid: AtomicU32::new(0),
             fsgid: AtomicU32::new(0),
             sup_groups: RwLock::new(Vec::new()),
+            effective: AtomicU32::new(CapFlags::CAP_ALL.bits()),
+            permitted: AtomicU32::new(CapFlags::CAP_ALL.bits()),
+            inheritable: AtomicU32::new(CapFlags::CAP_EMPTY.bits()),
+            bset: AtomicU32::new(CapFlags::CAP_ALL.bits()),
+            vfork: AtomicBool::new(false),
             task_inner: RwLock::new(TaskInner::idle_init()),
             #[cfg(feature = "cfs")]
             sched_entity: Arc::new(CFSSchedEntity::zero_init()),
@@ -302,6 +314,11 @@ impl Task {
             sgid: AtomicU32::new(0),
             fsgid: AtomicU32::new(0),
             sup_groups: RwLock::new(Vec::new()),
+            effective: AtomicU32::new(CapFlags::CAP_ALL.bits()),
+            permitted: AtomicU32::new(CapFlags::CAP_ALL.bits()),
+            inheritable: AtomicU32::new(CapFlags::CAP_EMPTY.bits()),
+            bset: AtomicU32::new(CapFlags::CAP_ALL.bits()),
+            vfork: AtomicBool::new(false),
             task_inner: RwLock::new(TaskInner::new()),
             #[cfg(feature = "cfs")]
             sched_entity: Arc::new(CFSSchedEntity::new(tgid, priority_to_nice(DEFAULT_PRIO), 0)),
@@ -377,6 +394,11 @@ impl Task {
             sgid: AtomicU32::new(0),
             fsgid: AtomicU32::new(0),
             sup_groups: RwLock::new(Vec::new()),
+            effective: AtomicU32::new(CapFlags::CAP_ALL.bits()),
+            permitted: AtomicU32::new(CapFlags::CAP_ALL.bits()),
+            inheritable: AtomicU32::new(CapFlags::CAP_EMPTY.bits()),
+            bset: AtomicU32::new(CapFlags::CAP_ALL.bits()),
+            vfork: AtomicBool::new(false),
             task_inner: RwLock::new(TaskInner::idle_init()),
             #[cfg(feature = "cfs")]
             sched_entity: Arc::new(CFSSchedEntity::zero_init()),
@@ -427,6 +449,11 @@ impl Task {
         let fsgid;
         let sup_groups;
         let cpu_id;
+        let effective;
+        let permitted;
+        let inheritable;
+        let bset;
+        let vfork;
         log::info!("[kernel_clone] task{} ready to clone ...", self.tid());
 
         // 是否与父进程共享信号处理器
@@ -458,6 +485,10 @@ impl Task {
         sgid = AtomicU32::new(self.sgid());
         fsgid = AtomicU32::new(self.fsgid());
         sup_groups = RwLock::new(self.op_sup_groups_mut(|groups| groups.clone()));
+        effective = AtomicU32::new(self.effective());
+        permitted = AtomicU32::new(self.permitted());
+        inheritable = AtomicU32::new(self.inheritable());
+        bset = AtomicU32::new(self.bset());
         // cpu_id = select_cpu();
         cpu_id = self.cpu_id; // 继承父进程的cpu_id
 
@@ -500,6 +531,13 @@ impl Task {
         }
 
         // 对vfork情况做特殊处理
+        if flags.contains(CloneFlags::CLONE_VFORK) {
+            log::warn!("[kernel_clone] handle CLONE_VFORK");
+            vfork = AtomicBool::new(true);
+        } else {
+            vfork = AtomicBool::new(false);
+        }
+
         if flags.contains(CloneFlags::CLONE_VM) {
             log::warn!("[kernel_clone] handle CLONE_VM");
             memory_set = RwLock::new(self.memory_set.read().clone());
@@ -594,6 +632,11 @@ impl Task {
             sgid,
             fsgid,
             sup_groups,
+            effective,
+            permitted,
+            inheritable,
+            bset,
+            vfork,
             task_inner,
             #[cfg(feature = "cfs")]
             sched_entity,
@@ -848,6 +891,22 @@ impl Task {
         // 重置信号处理器
         self.op_sig_handler_mut(|handler| handler.reset());
         log::trace!("[kernel_execve] task{} handler reset", self.tid());
+        // 更新cap权限
+        // Todo: 加入文件cap权限
+        let permitted = self.permitted();
+        let bset = self.bset();
+        log::warn!("permitted: {:#b}, bset: {:#b}", permitted, bset);
+        let new_permitted = permitted & bset;
+        self.set_permitted(new_permitted);
+        self.set_effective(new_permitted);
+        // 如果是vfork出来的进程，唤醒父进程
+        if self.vfork() {
+            self.op_parent(|parent|{
+                if let Some(parent) = parent {
+                    wakeup(parent.upgrade().unwrap().tid());
+                }
+            })
+        }
 
         log::info!(
             "[kernel_execve] task{}-tgid:\t{:x}",
@@ -1216,6 +1275,27 @@ impl Task {
     pub fn sched_entity(&self) -> Arc<CFSSchedEntity> {
         self.sched_entity.clone()
     }
+
+    pub fn effective(&self) -> u32 {
+        self.effective.load(core::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn permitted(&self) -> u32 {
+        self.permitted.load(core::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn inheritable(&self) -> u32 {
+        self.inheritable.load(core::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn bset(&self) -> u32 {
+        self.bset.load(core::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn vfork(&self) -> bool {
+        self.vfork.load(core::sync::atomic::Ordering::SeqCst)
+    }
+
     /*********************************** setter *************************************/
     pub fn set_root(&self, root: Arc<Path>) {
         *self.root.lock() = root;
@@ -1306,6 +1386,18 @@ impl Task {
     pub fn set_restore_mask(&self, restore_mask: bool) {
         self.restore_mask
             .store(restore_mask, core::sync::atomic::Ordering::SeqCst);
+    }
+    pub fn set_effective(&self, effective: u32) {
+        self.effective.store(effective, core::sync::atomic::Ordering::SeqCst);
+    }
+    pub fn set_permitted(&self, permitted: u32) {
+        self.permitted.store(permitted, core::sync::atomic::Ordering::SeqCst);
+    }
+    pub fn set_inheritable(&self, inheritable: u32) {
+        self.inheritable.store(inheritable, core::sync::atomic::Ordering::SeqCst);
+    }
+    pub fn set_bset(&self, bset: u32) {
+        self.bset.store(bset, core::sync::atomic::Ordering::SeqCst);
     }
     pub fn raise_sched_prio(&self) {
         let mut prio = self.sched_prio.load(core::sync::atomic::Ordering::SeqCst);
@@ -2174,5 +2266,45 @@ bitflags! {
         const CPU2 = 0b0100;
         const CPU3 = 0b1000;
         const ALL = 0b1111;
+    }
+}
+
+// 目前只支持前32位
+bitflags! {
+    pub struct CapFlags: u32 {
+        const CAP_EMPTY = 0;
+        const CAP_CHOWN = 1 << 0;
+        const CAP_DAC_OVERRIDE = 1 << 1;
+        const CAP_DAC_READ_SEARCH = 1 << 2;
+        const CAP_FOWNER = 1 << 3;
+        const CAP_FSETID = 1 << 4;
+        const CAP_KILL = 1 << 5;
+        const CAP_SETGID = 1 << 6;
+        const CAP_SETUID = 1 << 7;
+        const CAP_SETPCAP = 1 << 8;
+        const CAP_LINUX_IMMUTABLE = 1 << 9;
+        const CAP_NET_BIND_SERVICE = 1 << 10;
+        const CAP_NET_BROADCAST = 1 << 11;
+        const CAP_NET_ADMIN = 1 << 12;
+        const CAP_NET_RAW = 1 << 13;
+        const CAP_IPC_LOCK = 1 << 14;
+        const CAP_IPC_OWNER = 1 << 15;
+        const CAP_SYS_MODULE = 1 << 16;
+        const CAP_SYS_RAWIO = 1 << 17;
+        const CAP_SYS_CHROOT = 1 << 18;
+        const CAP_SYS_PTRACE = 1 << 19;
+        const CAP_SYS_PACCT = 1 << 20;
+        const CAP_SYS_ADMIN = 1 << 21;
+        const CAP_SYS_BOOT = 1 << 22;
+        const CAP_SYS_NICE = 1 << 23;
+        const CAP_SYS_RESOURCE = 1 << 24;
+        const CAP_SYS_TIME = 1 << 25;
+        const CAP_SYS_TTY_CONFIG = 1 << 26;
+        const CAP_SYSLOG = 1 << 27;
+        const CAP_WAKE_ALARM = 1 << 28;
+        const CAP_AUDIT_WRITE = 1 << 29;
+        const CAP_AUDIT_CONTROL = 1 << 30;
+        const CAP_SETFCAP = 1 << 31;
+        const CAP_ALL = !0;
     }
 }
