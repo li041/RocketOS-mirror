@@ -3268,12 +3268,12 @@ pub fn sys_listxattr(pathname: *const u8, list_ptr: *mut u8, size: usize) -> Sys
     }
     // 将属性名列表复制到用户空间
     let mut offset = 0;
-    for name in xattrs {
+    for mut name in xattrs {
+        name.push('\0'); // 添加空字符结尾
         unsafe {
             copy_to_user(list_ptr.add(offset), name.as_ptr(), name.len())?;
         }
-        unsafe { *(list_ptr.add(offset + name.len())) = 0 }; // 添加空字符结尾
-        offset += name.len() + 1;
+        offset += name.len();
     }
     Ok(total_size)
 }
@@ -3305,12 +3305,12 @@ pub fn sys_llistxattr(pathname: *const u8, list_ptr: *mut u8, size: usize) -> Sy
     }
     // 将属性名列表复制到用户空间
     let mut offset = 0;
-    for name in xattrs {
+    for mut name in xattrs {
+        name.push('\0'); // 添加空字符结尾
         unsafe {
             copy_to_user(list_ptr.add(offset), name.as_ptr(), name.len())?;
         }
-        unsafe { *(list_ptr.add(offset + name.len())) = 0 }; // 添加空字符结尾
-        offset += name.len() + 1;
+        offset += name.len();
     }
     Ok(total_size)
 }
