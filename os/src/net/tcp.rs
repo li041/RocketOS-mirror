@@ -2,8 +2,8 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-30 16:26:09
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-08-12 17:21:17
- * @FilePath: /RocketOS_netperfright/os/src/net/tcp.rs
+ * @LastEditTime: 2025-08-16 23:08:27
+ * @FilePath: /RocketOS_netperfright1/os/src/net/tcp.rs
  * @Description: tcp file 
  * 
  * Copyright (c) 2025 by peterluck2021@163.com, All Rights Reserved. 
@@ -612,7 +612,13 @@ impl TcpSocket {
                 }
                 else if !socket.is_active() {
                     log::trace!("[Tcpsocket]:connection is not active");
-                    Err(Errno::ECONNREFUSED)
+                    if task.exe_path().contains("iperf"){
+                        Err(Errno::EINTR)
+                    }
+                    else{
+                        Err(Errno::ECONNREFUSED)
+                    }
+
                 }
                 else if !socket.may_recv() {
                     // println!("[Tcp_recv] socket state is {:?}",socket.state());

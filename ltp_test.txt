@@ -258,7 +258,7 @@ ioctl_ns07
 kill03
 kill05
 kill06
-lftest
+kill11
 lgetxattr01
 lgetxattr02
 link02
@@ -552,6 +552,7 @@ signal03
 signal04
 signal05
 sigpending02
+sigsuspend01
 sigwait01
 socket01
 socket02

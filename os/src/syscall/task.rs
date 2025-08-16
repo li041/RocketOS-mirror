@@ -1587,7 +1587,7 @@ pub fn sys_setresgid(rgid: i32, egid: i32, sgid: i32) -> SyscallRet {
     Ok(0)
 }
 
-pub fn sys_getresuid(ruid_ptr: u32, euid_ptr: u32, suid_ptr: u32) -> SyscallRet {
+pub fn sys_getresuid(ruid_ptr: usize, euid_ptr: usize, suid_ptr: usize) -> SyscallRet {
     log::info!(
         "[sys_getresuid] ruid_ptr: {:x}, euid_ptr: {:x}, suid_ptr: {:x}",
         ruid_ptr,
@@ -1607,7 +1607,7 @@ pub fn sys_getresuid(ruid_ptr: u32, euid_ptr: u32, suid_ptr: u32) -> SyscallRet 
     Ok(0)
 }
 
-pub fn sys_getresgid(rgid_ptr: u32, egid_ptr: u32, sgid_ptr: u32) -> SyscallRet {
+pub fn sys_getresgid(rgid_ptr: usize, egid_ptr: usize, sgid_ptr: usize) -> SyscallRet {
     log::info!(
         "[sys_getresgid] rgid_ptr: {:x}, egid_ptr: {:x}, sgid_ptr: {:x}",
         rgid_ptr,
@@ -1833,6 +1833,9 @@ pub fn sys_clone3(clone_args: usize, size: usize) -> SyscallRet {
         log::warn!("[sys_clone3] CLONE_PIDFD is not supported");
         return Err(Errno::ENOSYS);
     }
+    if args.pidfd != 0 {
+        return Err(Errno::ENOSYS);
+    }
     if exit_signal.raw() != 0 && !exit_signal.is_valid() {
         return Err(Errno::EINVAL);
     }
@@ -1872,6 +1875,7 @@ pub fn sys_clone3(clone_args: usize, size: usize) -> SyscallRet {
     Ok(new_task_tid)
 }
 
+// Todo 补全参数
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 struct CloneArgs {
