@@ -202,6 +202,18 @@ pub fn trap_handler(cx: &mut TrapContext) {
                 );
             }
         }
+        Trap::Exception(Exception::AddressError) => {
+            let task = current_task();
+            println!(
+                "AddressError: era: {:#x}, bad instruction: {:#x}",
+                register::BadV::read().get_vaddr(),
+                badi
+            );
+            task.receive_siginfo(
+                SigInfo::new(Sig::SIGSEGV.raw(), SigInfo::KERNEL, SiField::NULL),
+                false,
+            );
+        }
         _ => {
             panic!(
                 "Unhandled exception: {:?}, era: {:#x}, bad instruction: {:#x}",

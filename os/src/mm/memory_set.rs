@@ -626,7 +626,7 @@ impl MemorySet {
         if argv.len() > 0 {
             let file_name = &argv[0];
             // 文件后缀是.sh或者file_data是#!开头
-            #[cfg(not(feature = "la2000"))]
+            #[cfg(target_arch = "riscv64")]
             if file_name.ends_with(".sh") || sh_head.starts_with(b"#!") || file_name == "/tmp/hello"
             {
                 let prepend_args = vec![String::from("/glibc/busybox"), String::from("sh")];
@@ -646,14 +646,33 @@ impl MemorySet {
                 }
             }
 
-            #[cfg(feature = "la2000")]
+            #[cfg(target_arch = "loongarch64")]
             if file_name.ends_with(".sh") || sh_head.starts_with(b"#!") || file_name == "/tmp/hello"
             {
-                let prepend_args = vec![String::from("/glibc/busybox"), String::from("sh")];
+                if file_name.starts_with("ltp/testcases/bin") {
+                    let prepend_args = vec![String::from("/bin/dash")];
+                    argv.splice(0..0, prepend_args);
+                    if let Ok(dash) = path_openat("/bin/dash", OpenFlags::empty(), AT_FDCWD, 0) {
+                        elf_file = dash;
+                    }
+                } else {
+                    let prepend_args = vec![String::from("/glibc/busybox"), String::from("sh")];
+                    argv.splice(0..0, prepend_args);
+                    if let Ok(busybox) =
+                        path_openat("/glibc/busybox", OpenFlags::empty(), AT_FDCWD, 0)
+                    {
+                        elf_file = busybox;
+                    }
+                }
+            }
+            // 处理py文件
+            else if file_name.ends_with(".py") {
+                let prepend_args = vec![String::from("/python/bin/python3.10")];
                 argv.splice(0..0, prepend_args);
-                if let Ok(busybox) = path_openat("/glibc/busybox", OpenFlags::empty(), AT_FDCWD, 0)
+                if let Ok(python) =
+                    path_openat("/python/bin/python3.10", OpenFlags::empty(), AT_FDCWD, 0)
                 {
-                    elf_file = busybox;
+                    elf_file = python;
                 }
             }
         }
