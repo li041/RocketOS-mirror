@@ -5,3 +5,22 @@ target = "riscv64gc-unknown-none-elf"
 rustflags = [
     "-Clink-arg=-Tsrc/linker.ld", "-Cforce-frame-pointers=yes"
 ]
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/BiorelaxA/smoltcp.git?branch=main"]
+git = "https://github.com/BiorelaxA/smoltcp.git"
+branch = "main"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/li041/virtio-drivers?branch=lxh"]
+git = "https://github.com/li041/virtio-drivers"
+branch = "lxh"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/rcore-os/riscv"]
+git = "https://github.com/rcore-os/riscv"
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"

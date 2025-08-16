@@ -2,8 +2,8 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-03 16:40:04
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-08-15 13:23:25
- * @FilePath: /RocketOS_netperfright/os/src/net/socket.rs
+ * @LastEditTime: 2025-08-16 17:47:20
+ * @FilePath: /RocketOS_netperfright1/os/src/net/socket.rs
  * @Description: socket file
  *
  * Copyright (c) 2025 by peterluck2021@163.com, All Rights Reserved.
@@ -1508,6 +1508,7 @@ impl FileOp for Socket {
         //     wakeup(read_waiter);
         // }
         if self.domain == Domain::AF_UNIX {
+            log::trace!("[socket_read]");
             if self.buffer.is_some() {
                 // Todo: 这里不对, 不应该使用r_ready()检查, 同时r_ready()返回false时也不应该返回Ok(0)
                 return self.buffer.as_ref().unwrap().read(buf);
@@ -1527,6 +1528,7 @@ impl FileOp for Socket {
             }
             let s_path = core::str::from_utf8(path.as_slice()).unwrap();
             if s_path.contains("/etc") || s_path.contains("/var/run/nscd/socket") {
+                log::trace!("socket read unix");
                 let passwd_blob = PasswdEntry::passwd_lookup(self, buf.len())?;
                 // log::error!("[socket_read]: passwd blob len is {:?}", passwd_blob.len());
                 if buf.len() < passwd_blob.len() {
@@ -1609,8 +1611,15 @@ impl FileOp for Socket {
                 self.is_nonblocking(),
                 self.is_connected()
             );
+            let mut times=0;
             if !self.is_block() && self.is_connected() {
                 loop {
+                    log::trace!("[loop]");
+                    // times+=1;
+                    // if times>30 {
+                    //     return Err(Errno::EINVAL);
+                    // }
+                    log::trace!("[socket_read]");
                     if self.r_ready() {
                         match &self.inner {
                             SocketInner::Tcp(tcp_socket) => {

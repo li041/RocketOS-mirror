@@ -3,6 +3,8 @@ use crate::timer::TimeSpec;
 
 use bitflags::bitflags;
 
+use super::uapi::DevT;
+
 bitflags! {
     /// `stx_mask` 的标志位（bitmask），用于 `statx()` 请求和返回的字段掩码
     #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
@@ -176,6 +178,13 @@ pub struct Statx {
 
 impl From<Kstat> for Statx {
     fn from(kstat: Kstat) -> Self {
+        // 区分是否是旧的设备ID
+        let (rdev_major, rdev_minor) = if kstat.rdev <= u16::MAX as u64 {
+            DevT(kstat.rdev).old_decode_dev()
+        } else {
+            DevT(kstat.rdev).new_decode_dev()
+        };
+
         Self {
             mask: kstat.result_mask.bits(),
             blksize: kstat.blksize,
@@ -192,8 +201,8 @@ impl From<Kstat> for Statx {
             btime: StatxTimeStamp::from(kstat.btime),
             ctime: StatxTimeStamp::from(kstat.ctime),
             mtime: StatxTimeStamp::from(kstat.mtime),
-            rdev_major: 0,
-            rdev_minor: 0,
+            rdev_major,
+            rdev_minor,
             dev_major: 0,
             dev_minor: 0,
             mnt_id: 0,
