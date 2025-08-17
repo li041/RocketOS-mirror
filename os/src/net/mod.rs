@@ -4,8 +4,8 @@ use alloc::borrow::ToOwned;
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-30 16:26:05
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-08-13 16:27:34
- * @FilePath: /RocketOS_netperfright/os/src/net/mod.rs
+ * @LastEditTime: 2025-08-17 12:10:10
+ * @FilePath: /RocketOS-mirror/os/src/net/mod.rs
  * @Description: net mod for interface wrapper,socketset
  *
  * Copyright (c) 2025 by peterluck2021@163.com, All Rights Reserved.
@@ -71,6 +71,8 @@ static ETH0_LA2000: Mutex<OnceCell<Mutex<Interface>>> =Mutex::new(OnceCell::new(
 static NET_DEV_LA2000: Mutex<OnceCell<NetDeviceWrapper>> =Mutex::new(OnceCell::new());
 static LOOPBACK_DEV: LazyInit<Mutex<LoopbackDev>> = LazyInit::new();
 static LOOPBACK: LazyInit<Mutex<Interface>> = LazyInit::new();
+static LOOPBACK_DEV_LA2000:Mutex<OnceCell<LoopbackDev>>=Mutex::new(OnceCell::new());
+static LOOPBACK_ETH_LA2000:Mutex<OnceCell<Mutex<Interface>>>=Mutex::new(OnceCell::new());
 static LISTEN_TABLE: Mutex<OnceCell<ListenTable>> = Mutex::new(OnceCell::new());
 const TCP_RX_BUF_LEN_IPERF: usize = 128 * 1024;
 const TCP_TX_BUF_LEN_IPERF: usize = 128 * 1024;
@@ -376,6 +378,29 @@ pub fn init_la2000_net() {
             ListenTable::new()
         });
         log::error!("[init_la2000_net] listentable init complete");
+        let mut device = LoopbackDev::new(Medium::Ip);
+        let config = Config::new(smoltcp::wire::HardwareAddress::Ip);
+        let mut iface = Interface::new(
+            config,
+            &mut device,
+            SmolInstant::from_micros_const((get_time() / 1000) as i64),
+        );
+        let lo_addr=Ipv4Address::new(127, 0, 0, 1);
+        let ipv4_lo_addr=IpAddress::Ipv4(lo_addr);
+        let lo_cidr=IpCidr::new(ipv4_lo_addr, 8);
+        iface.update_ip_addrs(|ip_addrs| {
+            ip_addrs
+                .push(lo_cidr)
+                .unwrap();
+        });
+        let lo_iface=LOOPBACK_ETH_LA2000.lock();
+        lo_iface.get_or_init(||{
+            Mutex::new(iface)
+        });
+        let lo_dev=LOOPBACK_DEV_LA2000.lock();
+        lo_dev.get_or_init(||{
+            device
+        });
 
         //notion! here we didn`t open local device`
     }
@@ -467,7 +492,7 @@ impl<'a> SocketSetWrapper<'a> {
         drop(socket);
     }
     //todo 判断到底是哪个网卡poll
-    pub fn poll_interfaces(&self) {
+      pub fn poll_interfaces(&self) {
         // if LISTEN_TABLE.isipv4_ipv6(5555);
         // if LISTEN_TABLE.is_local(5555) {
         // yield_current_task();
@@ -486,11 +511,17 @@ impl<'a> SocketSetWrapper<'a> {
         }
         else{
             // #[cfg(any(feature = "virt", feature = "la2000",feature="vf2"))]
+            #[cfg(not(feature="la2000"))]
             let b = LOOPBACK.lock().poll(
                 SmolInstant::from_micros_const((get_time() / 1000) as i64),
                 LOOPBACK_DEV.lock().deref_mut(),
                 &mut self.0.lock(),
             );
+            #[cfg(feature="la2000")]
+            let b=LOOPBACK_ETH_LA2000.lock().get_mut().unwrap().lock().poll(
+                SmolInstant::from_micros_const((get_time() / 1000) as i64),
+                LOOPBACK_DEV_LA2000.lock().get_mut().unwrap().deref_mut(), 
+                &mut  self.0.lock());
         }
         // log::error!("[poll_interfaces]:LoopbackDev may readiness {}",b);
     }

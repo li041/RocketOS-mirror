@@ -12,7 +12,7 @@
 ARCH ?= riscv64
 MODE := release
 FEATURES ?= virt
-BACKTRACE_FEATURES = virt,debug-symbols
+BACKTRACE_FEATURES ?= virt,debug-symbols
 #ip option not unspecified
 IP ?= 10.0.2.15
 GW ?= 10.0.2.2
