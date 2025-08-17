@@ -17,7 +17,7 @@ const BS: u8 = 0x08u8;
 const THEME_COLOR: &str = "\u{1B}[38;5;14m";
 const RESET_COLOR: &str = "\u{1B}[0m";
 
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use shell::command::parse_pipeline;
 use user_lib::console::getchar;
@@ -67,6 +67,14 @@ pub fn main() -> i32 {
                         line.clear();
                     } else {
                         let expanded_line = env.expand_variables(&line);
+                        // 判断是否后台运行(行尾有 &)
+                        let mut is_background = false;
+                        let mut cmd_line = expanded_line.trim().to_string();
+                        if cmd_line.ends_with('&') {
+                            is_background = true;
+                            cmd_line.pop(); // 去掉末尾的 &
+                            cmd_line = cmd_line.trim().to_string();
+                        }
                         let cmds = parse_pipeline(expanded_line.as_str());
                         if cmds.len() == 1 {
                             let cmd = &cmds[0];
@@ -74,11 +82,20 @@ pub fn main() -> i32 {
                             if pid == 0 {
                                 cmd.exec(&env);
                             } else {
-                                let mut exit_code: i32 = 0;
-                                let exit_pid = waitpid(pid, &mut exit_code);
-                                println!("pid: {}, exit_pid: {}", pid, exit_pid);
-                                assert_eq!(pid, exit_pid);
-                                println!("Shell: Process {} exited with code {}", pid, exit_code);
+                                if is_background {
+                                    // 后台运行
+                                    println!("Shell: Process {} started in background", pid);
+                                } else {
+                                    println!("Shell: Waiting for process {}", pid);
+                                    let mut exit_code: i32 = 0;
+                                    let exit_pid = waitpid(pid, &mut exit_code);
+                                    println!("pid: {}, exit_pid: {}", pid, exit_pid);
+                                    assert_eq!(pid, exit_pid);
+                                    println!(
+                                        "Shell: Process {} exited with code {}",
+                                        pid, exit_code
+                                    );
+                                }
                             }
                         } else {
                             // 多个命令的pipeline情况

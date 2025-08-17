@@ -795,6 +795,8 @@ pub fn sys_mremap(
             log::info!("[sys_mremap] grow in place");
             if let Some(area) = memory_set.areas.get_mut(&old_start_vpn) {
                 area.vpn_range.set_end(new_end_vpn);
+                // 更新mmap_start
+                memory_set.mmap_start += (new_end_vpn.0 - old_end_vpn.0) << PAGE_SIZE_BITS;
                 return Ok(old_addr);
             } else {
                 return Err(Errno::EINVAL);

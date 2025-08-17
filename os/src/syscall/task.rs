@@ -411,8 +411,8 @@ pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> Sy
         Err(err) if err == Errno::ENOENT && !path.starts_with("/") => {
             // 从内核中加载的应用程序
             if let Some(elf_data) = get_app_data_by_name(&path) {
-                args_vec.insert(0, path);
-                task.kernel_execve(elf_data, args_vec, envs_vec);
+                args_vec.insert(0, path.clone());
+                task.kernel_execve(path, elf_data, args_vec, envs_vec);
                 Ok(0)
             } else {
                 log::error!("[sys_execve] path: {} not found", path);
@@ -487,8 +487,8 @@ pub fn sys_execveat(
         Err(err) if err == Errno::ENOENT && !path.starts_with("/") => {
             // 从内核中加载的应用程序
             if let Some(elf_data) = get_app_data_by_name(&path) {
-                args_vec.insert(0, path);
-                task.kernel_execve(elf_data, args_vec, envs_vec);
+                args_vec.insert(0, path.clone());
+                task.kernel_execve(path, elf_data, args_vec, envs_vec);
                 Ok(0)
             } else {
                 log::error!("[sys_execve] path: {} not found", path);
