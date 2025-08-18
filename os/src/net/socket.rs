@@ -2,8 +2,8 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-03 16:40:04
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-08-16 17:47:20
- * @FilePath: /RocketOS_netperfright1/os/src/net/socket.rs
+ * @LastEditTime: 2025-08-18 15:09:46
+ * @FilePath: /RocketOS-mirror/os/src/net/socket.rs
  * @Description: socket file
  *
  * Copyright (c) 2025 by peterluck2021@163.com, All Rights Reserved.
@@ -2305,7 +2305,8 @@ impl TcpSocketOption {
             SocketInner::Tcp(tcp_socket) => tcp_socket,
             SocketInner::Udp(udp_socket) => panic!("only tcp socket can call on this functino"),
         };
-        let buf_len = unsafe { *opt_len };
+        let buf_len = unsafe { opt_len } as u32;
+        log::error!("[TcpSocketOption] buf_len is {:?}, opt_len is {:?}", buf_len, opt_len);
         match self {
             TcpSocketOption::TCP_NODELAY => {
                 if buf_len < 4 {

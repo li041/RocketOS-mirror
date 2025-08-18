@@ -2,8 +2,8 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-02 23:04:54
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-08-14 17:37:48
- * @FilePath: /RocketOS_netperfright/os/src/syscall/net.rs
+ * @LastEditTime: 2025-08-18 13:19:11
+ * @FilePath: /RocketOS-mirror/os/src/syscall/net.rs
  * @Description: net syscall
  *
  * Copyright (c) 2025 by peterluck2021@163.com, All Rights Reserved.
@@ -651,7 +651,7 @@ pub fn syscall_recvfrom(
                 socket_address_to(addr, socketaddr, socketlen)?;
             }
             if size == 0 {
-                if task.exe_path().contains("git")||  task.exe_path().contains("curl"){
+                if task.exe_path().contains("git")||  task.exe_path().contains("curl")||task.exe_path().contains("ssh"){
                     return Err(Errno::EAGAIN);
                 }
                 else{

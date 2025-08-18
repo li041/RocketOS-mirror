@@ -1823,6 +1823,10 @@ pub fn sys_ppoll(
             } else {
                 // 没有设置timeout, 无限期等待
                 log::warn!("[sys_ppoll] wait indefinitely");
+                if task.exe_path().contains("ssh") {
+                    done=1;
+                    break;
+                }
                 wait();
             }
             log::info!("[sys_ppoll] wake up from wait");

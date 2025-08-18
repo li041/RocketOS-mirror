@@ -4,7 +4,7 @@ use alloc::borrow::ToOwned;
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-30 16:26:05
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-08-17 12:10:10
+ * @LastEditTime: 2025-08-18 13:17:41
  * @FilePath: /RocketOS-mirror/os/src/net/mod.rs
  * @Description: net mod for interface wrapper,socketset
  *
@@ -498,7 +498,7 @@ impl<'a> SocketSetWrapper<'a> {
         // yield_current_task();
         //vf2不支持git网络
         let task=current_task();
-        if task.exe_path().contains("git") ||task.exe_path().contains("curl"){
+        if task.exe_path().contains("git") ||task.exe_path().contains("curl")||task.exe_path().contains("ssh"){
             #[cfg(not(feature="la2000"))]
             ETH0.poll(&self.0);
             #[cfg(feature="la2000")]

@@ -2,8 +2,8 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-30 16:26:09
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-08-16 23:08:27
- * @FilePath: /RocketOS_netperfright1/os/src/net/tcp.rs
+ * @LastEditTime: 2025-08-18 15:22:44
+ * @FilePath: /RocketOS-mirror/os/src/net/tcp.rs
  * @Description: tcp file 
  * 
  * Copyright (c) 2025 by peterluck2021@163.com, All Rights Reserved. 
@@ -135,16 +135,17 @@ impl TcpSocket {
         let task=current_task();
         debug_assert!(port!=0);
         //确保addr不是0.0.0.0
+        // println!("[bound_endpoint] task exe_path is {:?}",task.exe_path());
         let addr=if is_unspecified(local_addr.addr) {
             #[cfg(feature="vf2")]
-            if task.exe_path().contains("git")|| task.exe_path().contains("curl"){
+            if task.exe_path().contains("git")|| task.exe_path().contains("curl")||task.exe_path().contains("ssh"){
                 Some(smoltcp::wire::IpAddress::Ipv4(Ipv4Address::new(192, 168, 5, 100)))
             }
             else {
                 Some(smoltcp::wire::IpAddress::Ipv4(Ipv4Address::new(127, 0, 0, 1)))
             }
             #[cfg(feature = "la2000")]
-            if task.exe_path().contains("git")|| task.exe_path().contains("curl"){
+            if task.exe_path().contains("git")|| task.exe_path().contains("curl")||task.exe_path().contains("ssh"){
                 Some(smoltcp::wire::IpAddress::Ipv4(Ipv4Address::new(192, 168, 5, 100)))
             }
             else {
@@ -153,7 +154,7 @@ impl TcpSocket {
             // #[cfg(feature="git")]
             // {Some(smoltcp::wire::IpAddress::Ipv4(Ipv4Address::new(10, 0, 2, 15)))}
             #[cfg(feature="virt")]
-            if task.exe_path().contains("git")|| task.exe_path().contains("curl"){
+            if task.exe_path().contains("git")|| task.exe_path().contains("ssh")||task.exe_path().contains("curl"){
                 Some(smoltcp::wire::IpAddress::Ipv4(Ipv4Address::new(10, 0, 2, 15)))
             }
             else {
@@ -626,7 +627,7 @@ impl TcpSocket {
                     // socket.close();
                     Ok(0)
                 }
-                else if (socket.recv_queue()==0)&&(task.exe_path().contains("git")||task.exe_path().contains("curl")){
+                else if (socket.recv_queue()==0)&&(task.exe_path().contains("git")||task.exe_path().contains("ssh")||task.exe_path().contains("curl")){
                     Ok(0)
                 }
                 else{

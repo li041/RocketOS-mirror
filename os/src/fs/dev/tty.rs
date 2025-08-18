@@ -386,7 +386,8 @@ impl FileOp for TtyFile {
                 Ok(0)
             }
             _ => {
-                panic!("[TtyFile::ioctl] Unsupported ioctl cmd: {:?}", op);
+                Ok(0)
+                // panic!("[TtyFile::ioctl] Unsupported ioctl cmd: {:?}", op);
             }
         }
     }
