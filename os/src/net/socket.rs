@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-04-03 16:40:04
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-08-18 15:09:46
+ * @LastEditTime: 2025-08-19 21:36:44
  * @FilePath: /RocketOS-mirror/os/src/net/socket.rs
  * @Description: socket file
  *
@@ -21,8 +21,7 @@ use crate::{
     arch::{config::SysResult, mm::copy_to_user},
     ext4::inode::{self, Ext4InodeDisk, S_IFDIR, S_IFIFO, S_IFSOCK},
     fs::{
-        fdtable::FdFlags, file::OpenFlags, inode::InodeOp, namei::path_openat, path::Path,
-        pipe::Pipe, uapi::IoVec, AT_FDCWD,
+        fdtable::FdFlags, file::OpenFlags, inode::InodeOp, kstat::Kstat, namei::path_openat, path::Path, pipe::Pipe, uapi::IoVec, AT_FDCWD
     },
     net::{
         alg::{encode_text, AlgType},
@@ -85,8 +84,44 @@ impl SocketInode {
 }
 
 impl InodeOp for SocketInode {
+    //hack
+   fn getattr(&self) -> Kstat {
+        let mut kstat = Kstat::new();
+        let inner_guard = self.inner.read();
+        let inode_on_disk = &inner_guard.inode_on_disk;
+        kstat.ino = self.inode_num as u64;
+        kstat.dev = 0;
+        kstat.rdev = 0; // 通常特殊文件才会有 rdev
+
+        kstat.mode = inode_on_disk.get_mode();
+        kstat.uid = inode_on_disk.get_uid() as u32;
+        kstat.gid = inode_on_disk.get_gid() as u32;
+        kstat.size = 0;
+        kstat.blocks = 0;
+
+        kstat.atime = self.get_atime();
+        kstat.mtime = self.get_mtime();
+        kstat.ctime = self.get_ctime();
+
+        // Todo: Direct I/O 对齐参数
+        // inode版本号
+        kstat.change_cookie = inode_on_disk.generation as u64;
+
+        kstat
+        // todo!()
+    }
     fn as_any(&self) -> &dyn core::any::Any {
         self
+    }
+    //hack
+    fn get_atime(&self) -> TimeSpec {
+        TimeSpec::new_wall_time()
+    }
+    fn get_mtime(&self) -> TimeSpec {
+        TimeSpec::new_machine_time()
+    }
+    fn get_ctime(&self) -> TimeSpec {
+        TimeSpec::new_wall_time()
     }
     fn get_mode(&self) -> u16 {
         S_IFSOCK
@@ -1356,12 +1391,12 @@ pub unsafe fn socket_address_from(
             // let ipv6 = std::net::Ipv6Addr::from(ip_bytes);
 
             // 4) Scope ID （network-order -> host-order），通常只在 link-local 时用到
-            let scope_id = u32::from_be_bytes([
-                kernel_addr_from_user[24],
-                kernel_addr_from_user[25],
-                kernel_addr_from_user[26],
-                kernel_addr_from_user[27],
-            ]);
+            // let scope_id = u32::from_be_bytes([
+            //     kernel_addr_from_user[24],
+            //     kernel_addr_from_user[25],
+            //     kernel_addr_from_user[26],
+            //     kernel_addr_from_user[27],
+            // ]);
             log::error!("[socket_address_from] ip {:?},port {:?}", ip_bytes, port);
             // 3) 如果首字节为 32，返回一个“假”IPv6 地址；否则按正常流程
             if ip_bytes[0] == 32 {

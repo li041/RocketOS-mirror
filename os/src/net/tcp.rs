@@ -2,7 +2,7 @@
  * @Author: Peter/peterluck2021@163.com
  * @Date: 2025-03-30 16:26:09
  * @LastEditors: Peter/peterluck2021@163.com
- * @LastEditTime: 2025-08-18 15:22:44
+ * @LastEditTime: 2025-08-19 20:03:25
  * @FilePath: /RocketOS-mirror/os/src/net/tcp.rs
  * @Description: tcp file 
  * 
@@ -138,14 +138,14 @@ impl TcpSocket {
         // println!("[bound_endpoint] task exe_path is {:?}",task.exe_path());
         let addr=if is_unspecified(local_addr.addr) {
             #[cfg(feature="vf2")]
-            if task.exe_path().contains("git")|| task.exe_path().contains("curl")||task.exe_path().contains("ssh"){
+            if task.exe_path().contains("curl")||task.exe_path().contains("ssh"){
                 Some(smoltcp::wire::IpAddress::Ipv4(Ipv4Address::new(192, 168, 5, 100)))
             }
             else {
                 Some(smoltcp::wire::IpAddress::Ipv4(Ipv4Address::new(127, 0, 0, 1)))
             }
             #[cfg(feature = "la2000")]
-            if task.exe_path().contains("git")|| task.exe_path().contains("curl")||task.exe_path().contains("ssh"){
+            if task.exe_path().contains("curl")||task.exe_path().contains("ssh"){
                 Some(smoltcp::wire::IpAddress::Ipv4(Ipv4Address::new(192, 168, 5, 100)))
             }
             else {
@@ -154,7 +154,7 @@ impl TcpSocket {
             // #[cfg(feature="git")]
             // {Some(smoltcp::wire::IpAddress::Ipv4(Ipv4Address::new(10, 0, 2, 15)))}
             #[cfg(feature="virt")]
-            if task.exe_path().contains("git")|| task.exe_path().contains("ssh")||task.exe_path().contains("curl"){
+            if task.exe_path().contains("ssh")||task.exe_path().contains("curl"){
                 Some(smoltcp::wire::IpAddress::Ipv4(Ipv4Address::new(10, 0, 2, 15)))
             }
             else {
