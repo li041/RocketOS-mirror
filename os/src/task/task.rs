@@ -139,9 +139,9 @@ pub struct Task {
     inheritable: AtomicU32,       // 当前继承的能力
     bset: AtomicU32,              // 限制进程未来可获得的Permitted能力
     // 判断标志
-    re_start: AtomicBool,                   // 是否需要重启
-    restore_mask: AtomicBool,               // 是否需要恢复信号掩码(用于sigsuspend)
-    vfork: AtomicBool,                      // 是否启用vfork
+    re_start: AtomicBool,     // 是否需要重启
+    restore_mask: AtomicBool, // 是否需要恢复信号掩码(用于sigsuspend)
+    vfork: AtomicBool,        // 是否启用vfork
 
     // CFS调度字段
     #[cfg(feature = "cfs")]
@@ -713,6 +713,7 @@ impl Task {
     // Todo: sgid 与文件权限检查
     pub fn kernel_execve(
         self: &Arc<Self>,
+        exe_path: String,
         elf_data: &[u8],
         mut args_vec: Vec<String>,
         envs_vec: Vec<String>,
@@ -723,6 +724,8 @@ impl Task {
             MemorySet::from_elf(elf_data.to_vec(), &mut args_vec);
         // 更新页表
         memory_set.activate();
+        // 更新exe_path
+        *self.exe_path.write() = exe_path.clone();
 
         #[cfg(target_arch = "loongarch64")]
         memory_set.push_with_offset(
@@ -901,7 +904,7 @@ impl Task {
         self.set_effective(new_permitted);
         // 如果是vfork出来的进程，唤醒父进程
         if self.vfork() {
-            self.op_parent(|parent|{
+            self.op_parent(|parent| {
                 if let Some(parent) = parent {
                     wakeup(parent.upgrade().unwrap().tid());
                 }
@@ -1388,13 +1391,16 @@ impl Task {
             .store(restore_mask, core::sync::atomic::Ordering::SeqCst);
     }
     pub fn set_effective(&self, effective: u32) {
-        self.effective.store(effective, core::sync::atomic::Ordering::SeqCst);
+        self.effective
+            .store(effective, core::sync::atomic::Ordering::SeqCst);
     }
     pub fn set_permitted(&self, permitted: u32) {
-        self.permitted.store(permitted, core::sync::atomic::Ordering::SeqCst);
+        self.permitted
+            .store(permitted, core::sync::atomic::Ordering::SeqCst);
     }
     pub fn set_inheritable(&self, inheritable: u32) {
-        self.inheritable.store(inheritable, core::sync::atomic::Ordering::SeqCst);
+        self.inheritable
+            .store(inheritable, core::sync::atomic::Ordering::SeqCst);
     }
     pub fn set_bset(&self, bset: u32) {
         self.bset.store(bset, core::sync::atomic::Ordering::SeqCst);

@@ -42,15 +42,8 @@ pub fn init_devfs(root_path: Arc<Path>) {
         Err(e) => {
             // panic!("create {} failed: {:?}", dev_path, e);
             // 8.19 tmp 统计哪些文件夹是已在的
-            println!(
-                "create {} failed: {:?}, maybe already exists",
-                nd.dentry.absolute_path, e
-            );
-            log::debug!(
-                "create {} failed: {:?}, maybe already exists",
-                nd.dentry.absolute_path,
-                e
-            );
+            println!("create {} failed: {:?}, maybe already exists", dev_path, e);
+            log::debug!("create {} failed: {:?}, maybe already exists", dev_path, e);
         }
     };
     // /dev/cpu_dma_latency
@@ -72,11 +65,11 @@ pub fn init_devfs(root_path: Arc<Path>) {
             // panic!("create {} failed: {:?}", dev_path, e);
             println!(
                 "create {} failed: {:?}, maybe already exists",
-                nd.dentry.absolute_path, e
+                cpu_dma_latency_path, e
             );
             log::debug!(
                 "create {} failed: {:?}, maybe already exists",
-                nd.dentry.absolute_path,
+                cpu_dma_latency_path,
                 e
             );
         }
@@ -97,8 +90,8 @@ pub fn init_devfs(root_path: Arc<Path>) {
         }
         Err(e) => {
             // 8.19 tmp 统计哪些文件夹是已在的
-            println!("create {} failed: {:?}, maybe already exists", dev_path, e);
-            log::debug!("create {} failed: {:?}, maybe already exists", dev_path, e);
+            println!("create {} failed: {:?}, maybe already exists", shm_path, e);
+            log::debug!("create {} failed: {:?}, maybe already exists", shm_path, e);
         }
     };
     // /dev/tty

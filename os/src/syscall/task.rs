@@ -37,6 +37,7 @@ use crate::{
     utils::{c_str_to_string, extract_cstrings},
 };
 use crate::{drivers, dump_system_info};
+use alloc::string::ToString;
 use alloc::task;
 use alloc::vec::Vec;
 use alloc::{sync::Arc, vec};
@@ -268,117 +269,6 @@ pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> Sy
         sys_exit(666);
     }
 
-    // 过滤掉一些不必要的测试
-    // if path.starts_with("ltp/testcases/bin/") {
-    //     if path.ends_with(".sh") {
-    //         log::warn!("[sys_execve] ignore shell script: {}", path);
-    //         sys_exit(666);
-    //     }
-    //     if path.ends_with("loop") {
-    //         log::warn!("[sys_execve] ignore loop test: {}", path);
-    //         sys_exit(666);
-    //     }
-    //     if path.starts_with("ltp/testcases/bin/dio") {
-    //         log::warn!("[sys_execve] ignore dio test: {}", path);
-    //         sys_exit(666);
-    //     }
-    //     if path.starts_with("ltp/testcases/bin/dirty") {
-    //         log::warn!("[sys_execve] ignore dirty test: {}", path);
-    //         sys_exit(666);
-    //     }
-    //     if path.starts_with("ltp/testcases/bin/setsockopt") {
-    //         log::warn!("[sys_execve] ignore setsockopt test: {}", path);
-    //         sys_exit(666);
-    //     }
-    //     if path.starts_with("ltp/testcases/bin/cpuset") {
-    //         log::warn!("[sys_execve] ignore cpuset test: {}", path);
-    //         sys_exit(666);
-    //     }
-    //     if path.starts_with("ltp/testcases/bin/mount") {
-    //         log::warn!("[sys_execve] ignore mount test: {}", path);
-    //         sys_exit(666);
-    //     }
-    //     if path.starts_with("ltp/testcases/bin/crypto_user") {
-    //         log::warn!("[sys_execve] ignore crypto_user test: {}", path);
-    //         sys_exit(666);
-    //     }
-    //     // if path.starts_with("ltp/testcases/bin/fstatfs") {
-    //     //     log::warn!("[sys_execve] ignore crypto_user test: {}", path);
-    //     //     sys_exit(666);
-    //     // }
-    //     if path.starts_with("ltp/testcases/bin/ftest") {
-    //         log::warn!("[sys_execve] ignore crypto_user test: {}", path);
-    //         sys_exit(666);
-    //     }
-    //     // if path.starts_with("ltp/testcases/bin/ftruncate") {
-    //     //     log::warn!("[sys_execve] ignore ftruncate test: {}", path);
-    //     //     sys_exit(666);
-    //     // }
-    //     if path.starts_with("ltp/testcases/bin/memcg") {
-    //         log::warn!("[sys_execve] ignore memcg_subgroup test: {}", path);
-    //         sys_exit(666);
-    //     }
-    //     if path.starts_with("ltp/testcases/bin/mmapstress") {
-    //         log::warn!("[sys_execve] ignore mmapstress test: {}", path);
-    //         sys_exit(666);
-    //     }
-    //     if path.starts_with("ltp/testcases/bin/mmstress") {
-    //         log::warn!("[sys_execve] ignore mmstress test: {}", path);
-    //         sys_exit(666);
-    //     }
-    //     // if path.starts_with("ltp/testcases/bin/mtest") {
-    //     //     log::warn!("[sys_execve] ignore mtest test: {}", path);
-    //     //     sys_exit(666);
-    //     // }
-    //     if path.starts_with("ltp/testcases/bin/pcrypt") {
-    //         log::warn!("[sys_execve] ignore pcrypt test: {}", path);
-    //         sys_exit(666);
-    //     }
-    //     if path.starts_with("ltp/testcases/bin/pidns") {
-    //         log::warn!("[sys_execve] ignore pidns test: {}", path);
-    //         sys_exit(666);
-    //     }
-    //     if path.starts_with("ltp/testcases/bin/pids") {
-    //         log::warn!("[sys_execve] ignore pids test: {}", path);
-    //         sys_exit(666);
-    //     }
-    //     // if path.starts_with("ltp/testcases/bin/ppoll") {
-    //     //     log::warn!("[sys_execve] ignore ppoll test: {}", path);
-    //     //     sys_exit(666);
-    //     // }
-    //     if path.starts_with("ltp/testcases/bin/proc") {
-    //         log::warn!("[sys_execve] ignore proc test: {}", path);
-    //         sys_exit(666);
-    //     }
-    //     if path.starts_with("ltp/testcases/bin/pth") {
-    //         log::warn!("[sys_execve] ignore pth test: {}", path);
-    //         sys_exit(666);
-    //     }
-    //     // if path.starts_with("ltp/testcases/bin/setxattr") {
-    //     //     log::warn!("[sys_execve] ignore setxattr test: {}", path);
-    //     //     sys_exit(666);
-    //     // }
-    //     // if path.starts_with("ltp/testcases/bin/shmt") {
-    //     //     log::warn!("[sys_execve] ignore shmt test: {}", path);
-    //     //     sys_exit(666);
-    //     // }
-    //     if path.starts_with("ltp/testcases/bin/tst") {
-    //         log::warn!("[sys_execve] ignore tst test: {}", path);
-    //         sys_exit(666);
-    //     }
-    //     if path.starts_with("ltp/testcases/bin/cve") {
-    //         log::warn!("[sys_execve] ignore tst test: {}", path);
-    //         sys_exit(666);
-    //     }
-    //     if path.starts_with("ltp/testcases/bin/gen") {
-    //         log::warn!("[sys_execve] ignore tst test: {}", path);
-    //         sys_exit(666);
-    //     }
-    //     if IGNOER_TEST.contains(&path.as_str()) {
-    //         log::warn!("[sys_execve] ignore test: {}", path);
-    //         sys_exit(666);
-    //     }
-    // }
     log::info!(
         "[sys_execve] path: {}, args: {:?}, envs: {:?}",
         path,
@@ -399,11 +289,6 @@ pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> Sy
     // OpenFlags::empty() = RDONLY = 0, 以只读方式打开文件
     match path_openat(&path, OpenFlags::empty(), AT_FDCWD, X_OK) {
         Ok(file) => {
-            // let all_data = file.read_all();
-            // if all_data.is_empty() {
-            //     log::error!("[sys_execve] file {} is empty", path);
-            //     return Err(Errno::ENOEXEC);
-            // }
             let absolute_path = file.get_path().dentry.absolute_path.clone();
             task.kernel_execve_lazily(absolute_path, file, args_vec, envs_vec)?;
             Ok(0)
@@ -411,8 +296,8 @@ pub fn sys_execve(path: *const u8, args: *const usize, envs: *const usize) -> Sy
         Err(err) if err == Errno::ENOENT && !path.starts_with("/") => {
             // 从内核中加载的应用程序
             if let Some(elf_data) = get_app_data_by_name(&path) {
-                args_vec.insert(0, path);
-                task.kernel_execve(elf_data, args_vec, envs_vec);
+                let absolute_path = "/".to_string() + &path;
+                task.kernel_execve(absolute_path, elf_data, args_vec, envs_vec);
                 Ok(0)
             } else {
                 log::error!("[sys_execve] path: {} not found", path);
@@ -487,8 +372,8 @@ pub fn sys_execveat(
         Err(err) if err == Errno::ENOENT && !path.starts_with("/") => {
             // 从内核中加载的应用程序
             if let Some(elf_data) = get_app_data_by_name(&path) {
-                args_vec.insert(0, path);
-                task.kernel_execve(elf_data, args_vec, envs_vec);
+                let absolute_path = "/".to_string() + &path;
+                task.kernel_execve(absolute_path, elf_data, args_vec, envs_vec);
                 Ok(0)
             } else {
                 log::error!("[sys_execve] path: {} not found", path);
