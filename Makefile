@@ -35,13 +35,23 @@ all :
 	cd ./os && make build ARCH=loongarch64 MODE=release
 	cp ./os/target/riscv64gc-unknown-none-elf/release/os.bin ./kernel-rv && cp ./os/target/loongarch64-unknown-none/release/os ./kernel-la
 
-kernel:
-	@cd ./img && make pack
-	@cd ./user && make build ARCH=riscv64 MODE=release
-	@cd ./os && make build ARCH=riscv64 MODE=release 
-	@cd ./user && make build ARCH=loongarch64 MODE=release
-	@cd ./os && make build ARCH=loongarch64 MODE=release
-	@cp ./os/target/riscv64gc-unknown-none-elf/release/os.bin ./kernel-rv && cp ./os/target/loongarch64-unknown-none/release/os ./kernel-la
+kernel: build-riscv build-loongarch
+# 	@cd ./img && make pack
+# 	@cd ./user && make build ARCH=riscv64 MODE=release
+# 	@cd ./os && make build ARCH=riscv64 MODE=release 
+# 	@cd ./user && make build ARCH=loongarch64 MODE=release
+# 	@cd ./os && make build ARCH=loongarch64 MODE=release
+# 	@cp ./os/target/riscv64gc-unknown-none-elf/release/os.bin ./kernel-rv && cp ./os/target/loongarch64-unknown-none/release/os ./kernel-la
+
+build-riscv:
+	@cd ./user && make build ARCH=riscv64 MODE=$(MODE)
+	@cd ./os && make build ARCH=riscv64 MODE=$(MODE)
+	@cp ./os/target/riscv64gc-unknown-none-elf/$(MODE)/os.bin ./kernel-rv
+
+build-loongarch:
+	@cd ./user && make build ARCH=loongarch64 MODE=$(MODE)
+	@cd ./os && make build ARCH=loongarch64 MODE=$(MODE)
+	@cp ./os/target/loongarch64-unknown-none/$(MODE)/os ./kernel-la
 	
 run-riscv:
 	qemu-system-riscv64 \
@@ -70,6 +80,17 @@ run-loongarch:
 		-drive file=disk-la.img,if=none,format=raw,id=x1 \
 		-device virtio-blk-pci,drive=x1 \
         -device virtio-net-pci,netdev=net -netdev user,id=net,hostfwd=tcp::5556-:5555,hostfwd=udp::5556-:5555 \
+
+oscamp-la: build-loongarch
+	qemu-system-loongarch64 \
+	-kernel kernel-la  \
+	-m 1G \
+	-nographic \
+	-smp 1 \
+	-drive if=none,format=raw,id=disk0,file=alpine-linux-loongarch64-ext4fs.img \
+	-device virtio-blk-pci,drive=disk0 \
+	-device virtio-net-pci,netdev=net0 \
+	-netdev user,id=net0 \
 
 pre2024: 
 	@cd ./img && make pre2024
