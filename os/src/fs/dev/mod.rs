@@ -40,7 +40,17 @@ pub fn init_devfs(root_path: Arc<Path>) {
             parent_inode.mkdir(dentry, dev_mode);
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", dev_path, e);
+            // panic!("create {} failed: {:?}", dev_path, e);
+            // 8.19 tmp 统计哪些文件夹是已在的
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     };
     // /dev/cpu_dma_latency
@@ -58,7 +68,17 @@ pub fn init_devfs(root_path: Arc<Path>) {
             parent_inode.create(dentry, cpu_dma_latency_mode);
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", cpu_dma_latency_path, e);
+            // 8.19 tmp 统计哪些文件夹是已在的
+            // panic!("create {} failed: {:?}", dev_path, e);
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     };
     // /dev/shm
@@ -76,7 +96,9 @@ pub fn init_devfs(root_path: Arc<Path>) {
             parent_inode.mkdir(dentry, shm_mode);
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", shm_path, e);
+            // 8.19 tmp 统计哪些文件夹是已在的
+            println!("create {} failed: {:?}, maybe already exists", dev_path, e);
+            log::debug!("create {} failed: {:?}, maybe already exists", dev_path, e);
         }
     };
     // /dev/tty
@@ -103,7 +125,9 @@ pub fn init_devfs(root_path: Arc<Path>) {
             insert_core_dentry(dentry.clone());
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", tty_path, e);
+            // 8.19 tmp 统计哪些文件夹是已在的
+            println!("create {} failed: {:?}, maybe already exists", dev_path, e);
+            log::debug!("create {} failed: {:?}, maybe already exists", dev_path, e);
         }
     };
     // /dev/ttyS0
@@ -130,7 +154,9 @@ pub fn init_devfs(root_path: Arc<Path>) {
             insert_core_dentry(dentry.clone());
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", tty_path, e);
+            // 8.19 tmp 统计哪些文件夹是已在的
+            println!("create {} failed: {:?}, maybe already exists", dev_path, e);
+            log::debug!("create {} failed: {:?}, maybe already exists", dev_path, e);
         }
     };
     // /dev/rtc
@@ -157,7 +183,9 @@ pub fn init_devfs(root_path: Arc<Path>) {
             insert_core_dentry(dentry.clone());
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", rtc_path, e);
+            // 8.19 tmp 统计哪些文件夹是已在的
+            println!("create {} failed: {:?}, maybe already exists", dev_path, e);
+            log::debug!("create {} failed: {:?}, maybe already exists", dev_path, e);
         }
     }
     // /dev/null
@@ -184,7 +212,16 @@ pub fn init_devfs(root_path: Arc<Path>) {
             insert_core_dentry(dentry.clone());
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", null_path, e);
+            // panic!("create {} failed: {:?}", null_path, e);
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     }
     // /dev/zero
@@ -210,7 +247,16 @@ pub fn init_devfs(root_path: Arc<Path>) {
             insert_core_dentry(dentry.clone());
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", zero_path, e);
+            // panic!("create {} failed: {:?}", zero_path, e);
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     }
     //dev/urandom
@@ -237,7 +283,16 @@ pub fn init_devfs(root_path: Arc<Path>) {
             insert_core_dentry(dentry.clone());
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", urandom_path, e);
+            // panic!("create {} failed: {:?}", urandom_path, e);
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     }
     // /dev/loop-control
@@ -264,7 +319,16 @@ pub fn init_devfs(root_path: Arc<Path>) {
             insert_core_dentry(dentry.clone());
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", loop_control_path, e);
+            // panic!("create {} failed: {:?}", loop_control_path, e);
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     }
     // /dev/loop0
@@ -291,7 +355,16 @@ pub fn init_devfs(root_path: Arc<Path>) {
             insert_core_dentry(dentry.clone());
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", loop0_path, e);
+            // panic!("create {} failed: {:?}", loop0_path, e);
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     }
 }

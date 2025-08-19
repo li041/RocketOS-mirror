@@ -58,7 +58,17 @@ pub fn init_procfs(root_path: Arc<Path>) {
             insert_core_dentry(dentry);
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", proc_path, e);
+            // panic!("create {} failed: {:?}", proc_path, e);
+            // 8.19 tmp 统计哪些文件夹是已在的
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     };
     // rename, 把/config.gz重命名为/proc/config
@@ -126,7 +136,17 @@ pub fn init_procfs(root_path: Arc<Path>) {
             parent_inode.mkdir(dentry.clone(), sys_mode);
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", sys_path, e);
+            // panic!("create {} failed: {:?}", sys_path, e);
+            // 8.19 tmp 统计哪些文件夹是已在的
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     };
     let fs_path = "/proc/sys/fs";
@@ -143,7 +163,17 @@ pub fn init_procfs(root_path: Arc<Path>) {
             parent_inode.mkdir(dentry.clone(), kernel_mode);
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", fs_path, e);
+            // panic!("create {} failed: {:?}", fs_path, e);
+            // 8.19 tmp 统计哪些文件夹是已在的
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     };
     let pipe_max_size_path = "/proc/sys/fs/pipe-max-size";
@@ -163,7 +193,17 @@ pub fn init_procfs(root_path: Arc<Path>) {
             insert_core_dentry(dentry.clone());
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", pipe_max_size_path, e);
+            // panic!("create {} failed: {:?}", pipe_max_size_path, e);
+            // 8.19 tmp 统计哪些文件夹是已在的
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     };
     let kernel_path = "/proc/sys/kernel";
@@ -180,7 +220,16 @@ pub fn init_procfs(root_path: Arc<Path>) {
             parent_inode.mkdir(dentry.clone(), kernel_mode);
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", kernel_path, e);
+            // panic!("create {} failed: {:?}", kernel_path, e);
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     };
     let domain_path = "/proc/sys/kernel/domainname";
@@ -199,7 +248,16 @@ pub fn init_procfs(root_path: Arc<Path>) {
             insert_core_dentry(dentry.clone());
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", domain_path, e);
+            // panic!("create {} failed: {:?}", domain_path, e);
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     };
 
@@ -221,7 +279,16 @@ pub fn init_procfs(root_path: Arc<Path>) {
             SHMMAX.call_once(|| dentry.get_inode().clone());
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", shmmax_path, e);
+            // panic!("create {} failed: {:?}", shmmax_path, e);
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     }
 
@@ -242,7 +309,16 @@ pub fn init_procfs(root_path: Arc<Path>) {
             insert_core_dentry(dentry.clone());
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", shmmni_path, e);
+            // panic!("create {} failed: {:?}", shmmni_path, e);
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     }
 
@@ -269,7 +345,16 @@ pub fn init_procfs(root_path: Arc<Path>) {
             insert_core_dentry(dentry.clone());
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", taint_path, e);
+            // panic!("create {} failed: {:?}", taint_path, e);
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     };
     let osrelease_path = "/proc/sys/kernel/osrelease";
@@ -290,7 +375,16 @@ pub fn init_procfs(root_path: Arc<Path>) {
             inode.write(0, buf);
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", osrelease_path, e);
+            // panic!("create {} failed: {:?}", osrelease_path, e);
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     }
     let pid_max_path = "/proc/sys/kernel/pid_max";
@@ -316,7 +410,16 @@ pub fn init_procfs(root_path: Arc<Path>) {
             insert_core_dentry(dentry.clone());
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", pid_max_path, e);
+            // panic!("create {} failed: {:?}", pid_max_path, e);
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     };
     // /proc/mounts
@@ -344,7 +447,16 @@ pub fn init_procfs(root_path: Arc<Path>) {
             insert_core_dentry(dentry.clone());
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", mounts_path, e);
+            // panic!("create {} failed: {:?}", mounts_path, e);
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     };
     // /proc/meminfo
@@ -372,7 +484,16 @@ pub fn init_procfs(root_path: Arc<Path>) {
             insert_core_dentry(dentry.clone());
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", meminfo_path, e);
+            // panic!("create {} failed: {:?}", meminfo_path, e);
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     };
     // /proc/self/exe
@@ -391,7 +512,16 @@ pub fn init_procfs(root_path: Arc<Path>) {
             parent_inode.mkdir(dentry, self_mode);
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", self_path, e);
+            // panic!("create {} failed: {:?}", self_path, e);
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     };
     // /proc/self/exe
@@ -421,7 +551,16 @@ pub fn init_procfs(root_path: Arc<Path>) {
             insert_core_dentry(dentry.clone());
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", exe_path, e);
+            // panic!("create {} failed: {:?}", exe_path, e);
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     }
     // /proc/self/fd
@@ -455,7 +594,16 @@ pub fn init_procfs(root_path: Arc<Path>) {
             insert_core_dentry(dentry);
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", fd_path, e);
+            // panic!("create {} failed: {:?}", fd_path, e);
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     };
     // /proc/self/maps
@@ -481,7 +629,16 @@ pub fn init_procfs(root_path: Arc<Path>) {
             insert_core_dentry(dentry.clone());
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", maps_path, e);
+            // panic!("create {} failed: {:?}", maps_path, e);
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     }
     // /proc/self/smaps
@@ -507,7 +664,16 @@ pub fn init_procfs(root_path: Arc<Path>) {
             insert_core_dentry(dentry.clone());
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", smaps_path, e);
+            // panic!("create {} failed: {:?}", smaps_path, e);
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     }
     // /proc/self/pagemap
@@ -533,7 +699,16 @@ pub fn init_procfs(root_path: Arc<Path>) {
             insert_core_dentry(dentry.clone());
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", pagemap_path, e);
+            // panic!("create {} failed: {:?}", pagemap_path, e);
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     }
     // /proc/self/status
@@ -559,7 +734,16 @@ pub fn init_procfs(root_path: Arc<Path>) {
             insert_core_dentry(dentry.clone());
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", status_path, e);
+            // panic!("create {} failed: {:?}", status_path, e);
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     }
     // /proc/self/stat
@@ -585,7 +769,16 @@ pub fn init_procfs(root_path: Arc<Path>) {
             insert_core_dentry(dentry.clone());
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", stat_path, e);
+            // panic!("create {} failed: {:?}", stat_path, e);
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     }
 
@@ -604,7 +797,16 @@ pub fn init_procfs(root_path: Arc<Path>) {
             parent_inode.mkdir(dentry, pid_mode);
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", pid_path, e);
+            // panic!("create {} failed: {:?}", pid_path, e);
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     };
     // /proc/pid/stat
@@ -630,7 +832,16 @@ pub fn init_procfs(root_path: Arc<Path>) {
             insert_core_dentry(dentry.clone());
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", pid_stat_path, e);
+            // panic!("create {} failed: {:?}", pid_stat_path, e);
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     }
     // /proc/cpuinfo
@@ -658,7 +869,16 @@ pub fn init_procfs(root_path: Arc<Path>) {
             insert_core_dentry(dentry.clone());
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", mounts_path, e);
+            // panic!("create {} failed: {:?}", mounts_path, e);
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     };
 
@@ -687,7 +907,16 @@ pub fn init_procfs(root_path: Arc<Path>) {
             insert_core_dentry(dentry.clone());
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", mounts_path, e);
+            // panic!("create {} failed: {:?}", mounts_path, e);
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     };
 }

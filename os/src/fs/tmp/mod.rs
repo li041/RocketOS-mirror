@@ -25,7 +25,16 @@ pub fn init_tmpfs(root_path: Arc<Path>) {
             insert_core_dentry(dentry);
         }
         Err(e) => {
-            panic!("create {} failed: {:?}", tmp_path, e);
+            // panic!("create {} failed: {:?}", tmp_path, e);
+            println!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path, e
+            );
+            log::debug!(
+                "create {} failed: {:?}, maybe already exists",
+                nd.dentry.absolute_path,
+                e
+            );
         }
     };
 }
