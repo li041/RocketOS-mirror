@@ -23,7 +23,10 @@ use crate::{
     },
     mm::VirtAddr,
     syscall::errno::Errno,
-    task::{continue_task, current_task, get_stack_top_by_sp, kernel_exit, remove_task, schedule, stop_task, Task},
+    task::{
+        continue_task, current_task, get_stack_top_by_sp, kernel_exit, remove_task, schedule,
+        stop_task, Task,
+    },
 };
 
 // 用户栈构造如下
@@ -73,7 +76,7 @@ pub fn handle_signal() {
             log::warn!("[handle_signal] handle SA_RESTART");
             trap_cx.set_sepc(trap_cx.sepc - 4);
             trap_cx.restore_a0(); // 从last_a0中恢复a0
-        } 
+        }
         // 处理ERESTARTSYS
         else if (trap_cx.get_a0() == Errno::ERESTARTSYS as usize)
             && action.flags.contains(SigActionFlag::SA_RESTART)
@@ -83,10 +86,9 @@ pub fn handle_signal() {
             log::warn!("[handle_signal] handle ERESTARTSYS");
             trap_cx.set_sepc(trap_cx.sepc - 4);
             trap_cx.restore_a0();
-        } 
+        }
         // 当返回ERESTARTSYS却未注册或不包含 SA_RESTART 时
-        else if (trap_cx.get_a0() == Errno::ERESTARTSYS as usize)
-        {
+        else if (trap_cx.get_a0() == Errno::ERESTARTSYS as usize) {
             log::warn!("[handle_signal] handle ERESTARTNOINTR");
             trap_cx.set_a0(Errno::EINTR as usize);
         }
@@ -115,7 +117,7 @@ pub fn handle_signal() {
             log::warn!("[handle_signal] handle SA_RESTART");
             trap_cx.set_sepc(trap_cx.era - 4);
             trap_cx.restore_a0(); // 从last_a0中恢复a0
-        } 
+        }
         // 处理ERESTARTSYS
         else if (trap_cx.get_a0() == Errno::ERESTARTSYS as usize)
             && action.flags.contains(SigActionFlag::SA_RESTART)
@@ -262,10 +264,13 @@ fn terminate(task: Arc<Task>, sig: Sig) {
 }
 
 fn stop(task: Arc<Task>, sig: Sig) {
-    task.op_parent(|parent|{
+    task.op_parent(|parent| {
         // 向父进程发送SIGCHLD
         if let Some(parent) = parent {
-            log::warn!("[stop] task{} stopped, send SIGCHLD to parent", current_task().tid());
+            log::warn!(
+                "[stop] task{} stopped, send SIGCHLD to parent",
+                current_task().tid()
+            );
             let siginfo = SigInfo::new(
                 Sig::SIGCHLD.raw(),
                 crate::signal::SigInfo::CLD_STOPPED,
@@ -284,10 +289,13 @@ fn stop(task: Arc<Task>, sig: Sig) {
 }
 
 fn cont(task: Arc<Task>, sig: Sig) {
-    task.op_parent(|parent|{
+    task.op_parent(|parent| {
         // 向父进程发送SIGCHLD
         if let Some(parent) = parent {
-            log::warn!("[cont] task{} continued, send SIGCHLD to parent", current_task().tid());
+            log::warn!(
+                "[cont] task{} continued, send SIGCHLD to parent",
+                current_task().tid()
+            );
             let siginfo = SigInfo::new(
                 Sig::SIGCHLD.raw(),
                 crate::signal::SigInfo::CLD_CONTINUED,
@@ -313,7 +321,9 @@ fn core(task: Arc<Task>, sig: Sig) {
     task.close_thread();
     // 将信号放入低7位 (第8位是core dump标志,在gdb调试崩溃程序中用到)
     kernel_exit(task, sig.raw() as i32 & 0x7F | 0x80);
-    // panic!("core dump: {:?}", sig); //调试使用
-    log::error!("[core] core dump: {:?}", sig);
-    schedule();
+    // 8.20 tmp panic
+   panic!("core dump: {:?}", sig); //调试使用
+
+    // log::error!("[core] core dump: {:?}", sig);
+    // schedule();
 }

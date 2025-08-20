@@ -633,7 +633,8 @@ impl MemorySet {
             {
                 let prepend_args = vec![String::from("/glibc/busybox"), String::from("sh")];
                 argv.splice(0..0, prepend_args);
-                if let Ok(busybox) = path_openat("/glibc/busybox", OpenFlags::empty(), AT_FDCWD, 0) {
+                if let Ok(busybox) = path_openat("/glibc/busybox", OpenFlags::empty(), AT_FDCWD, 0)
+                {
                     elf_file = busybox;
                 }
             }
@@ -1440,7 +1441,12 @@ impl MemorySet {
         if let Some(area) = self.areas.get_mut(&start_vpn) {
             let old_end_vpn = area.vpn_range.get_end();
             if old_end_vpn < new_end_vpn {
-                // 懒分配
+                // 如果懒分配, 这里不需要代码
+                // 直接分配新页
+                let alloc_vpn_range = VPNRange::new(old_end_vpn, new_end_vpn);
+                for vpn in alloc_vpn_range {
+                    area.alloc_one_page_framed_private(&mut self.page_table, vpn);
+                }
             } else {
                 let dealloc_vpn_range = VPNRange::new(new_end_vpn, old_end_vpn);
                 for vpn in dealloc_vpn_range {

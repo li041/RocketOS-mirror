@@ -101,8 +101,8 @@ custom:
 	mkdir -p mnt
 	sudo mount $(EXT4_OUT) mnt
 	sudo cp -r ./$(CUSTOM)/* mnt
-	sudo cp ./custom/.vimrc mnt
-	sudo cp ./custom/.viminfo mnt
+# 	sudo cp ./custom/.vimrc mnt
+# 	sudo cp ./custom/.viminfo mnt
 	sudo umount mnt
 
 compile_custom:

@@ -535,6 +535,16 @@ pub fn sys_munmap(start: usize, len: usize) -> SyscallRet {
         if !memory_set.remove_area_with_overlap(unmap_vpn_range) {
             log::warn!("[sys_munmap] {:#x} not found", start);
             // memory_set.page_table.dump_all_user_mapping();
+        } else {
+            // 找到了对应区域
+            if memory_set.mmap_start == end_vpn.0 << PAGE_SIZE_BITS {
+                log::info!(
+                    "[sys_munmap] reset mmap_start from {:#x} to {:#x}",
+                    memory_set.mmap_start,
+                    start_vpn.0 << PAGE_SIZE_BITS
+                );
+                memory_set.mmap_start -= (end_vpn.0 - start_vpn.0) << PAGE_SIZE_BITS;
+            }
         }
     });
     Ok(0)

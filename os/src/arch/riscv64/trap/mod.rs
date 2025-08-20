@@ -128,7 +128,8 @@ pub fn trap_handler(cx: &mut TrapContext) {
             let task = current_task();
             task.op_memory_set_mut(|memory_set| {
                 if let Err(sig) = memory_set.handle_recoverable_page_fault(va, casue) {
-                    memory_set.page_table.dump_all_user_mapping();
+                    // 8.20 tmp commit
+                    // memory_set.page_table.dump_all_user_mapping();
                     // dump_trap_context(&current_task());
                     // panic!(
                     log::error!(
@@ -221,7 +222,9 @@ pub fn kernel_trap_handler(cx: &mut TrapContext) {
                     memory_set.page_table.dump_all_user_mapping();
                     // dump_trap_context(&current_task());
                     // panic!(
-                    log::error!(
+                    // 8.20 tmp panic
+                    // log::error!(
+                    panic!(
                         "Unrecoverble page fault in application, bad addr = {:#x}, scause = {:?}, sepc = {:#x}",
                         stval,
                         scause.cause(),
@@ -237,9 +240,9 @@ pub fn kernel_trap_handler(cx: &mut TrapContext) {
         }
         Trap::Exception(Exception::InstructionPageFault) => {
             panic!(
-            "Instruction page fault at 0x{:x}, badaddr = {:#x}",
-            cx.sepc,
-            stval::read()
+                "Instruction page fault at 0x{:x}, badaddr = {:#x}",
+                cx.sepc,
+                stval::read()
             );
         }
         Trap::Exception(Exception::UserEnvCall) => {
@@ -257,5 +260,5 @@ pub fn kernel_trap_handler(cx: &mut TrapContext) {
             );
         }
     }
-// return to the next instruction
+    // return to the next instruction
 }
