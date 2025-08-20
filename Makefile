@@ -92,6 +92,18 @@ oscamp-la: build-loongarch
 	-device virtio-net-pci,netdev=net0 \
 	-netdev user,id=net0 \
 
+oscamp-rv: build-riscv
+	qemu-system-riscv64 \
+	-machine virt \
+	-kernel kernel-rv \
+	-m 1G \
+	-nographic \
+	-smp 1 \
+	-bios default \
+	-drive if=none,format=raw,id=disk0,file=alpine-linux-riscv64-ext4fs.img \
+	-device virtio-blk-device,drive=disk0,bus=virtio-mmio-bus.0 \
+	-device virtio-net-device,netdev=net -netdev user,id=net,hostfwd=tcp::5555-:5555,hostfwd=udp::5555-:5555 \
+
 pre2024: 
 	@cd ./img && make pre2024
 	make run

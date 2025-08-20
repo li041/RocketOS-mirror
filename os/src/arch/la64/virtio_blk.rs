@@ -220,7 +220,7 @@ impl VirtIOBlock {
                     if let Some(virtio_type) = virtio_device_type(&info) {
                         log::info!("  VirtIO {:?}", virtio_type);
                         if virtio_type == DeviceType::Block {
-                            if blk_index == 1 {
+                            if blk_index == 0 {
                                 // 第2个 virtio-blk（drive=x1）
                                 allocate_bars(&mut pci_root, device_function, &mut allocator);
                                 dump_bar_contents(&mut pci_root, device_function, 4);
