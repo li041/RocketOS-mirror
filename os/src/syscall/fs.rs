@@ -151,9 +151,10 @@ pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> SyscallRet {
 }
 
 pub fn sys_readv(fd: usize, iov_ptr: *const IoVec, iovcnt: usize) -> SyscallRet {
-    if fd > 3 {
-        log::info!("sys_readv: fd: {}, iovcnt: {}", fd, iovcnt);
-    }
+    // 8.20 tmp comment
+    // if fd > 3 {
+    //     log::info!("sys_readv: fd: {}, iovcnt: {}", fd, iovcnt);
+    // }
     let task = current_task();
     let file = task.fd_table().get_file(fd);
     if file.is_none() {
@@ -182,7 +183,7 @@ pub fn sys_readv(fd: usize, iov_ptr: *const IoVec, iovcnt: usize) -> SyscallRet 
     let mut iov: Vec<IoVec> = vec![IoVec::default(); iovcnt];
 
     copy_from_user(iov_ptr, iov.as_mut_ptr(), iovcnt)?;
-    log::info!("sys_readv: iov: {:?}", iov);
+    // log::info!("sys_readv: iov: {:?}", iov);
     let mut iovec_total_len = 0;
     for iovec in iov.iter() {
         iovec_total_len += iovec.len;
@@ -196,17 +197,19 @@ pub fn sys_readv(fd: usize, iov_ptr: *const IoVec, iovcnt: usize) -> SyscallRet 
         // let buf = copy_from_user_mut(iovec.base as *mut u8, iovec.len).unwrap();
         let mut ker_buf = vec![0u8; iovec.len];
         let read = file.read(&mut ker_buf)?;
-        log::info!(
-            "[sys_readv] read: {}, iovec.base: {:#x}, iovec.len: {}",
-            read,
-            iovec.base,
-            iovec.len
-        );
-        log::error!(
-            "[copy_to_user]iovec.base {:#x},ker_buf: {:?}",
-            iovec.base,
-            ker_buf.as_ptr()
-        );
+        // log::info!(
+        //     "[sys_readv] read: {}, iovec.base: {:#x}, iovec.len: {}, fd: {}",
+        //     read,
+        //     iovec.base,
+        //     iovec.len,
+        //     fd
+        // );
+        // 8.20 tmp comment
+        // log::error!(
+        //     "[copy_to_user]iovec.base {:#x},ker_buf: {:?}",
+        //     iovec.base,
+        //     ker_buf.as_ptr()
+        // );
         copy_to_user(iovec.base as *mut u8, ker_buf.as_ptr(), read)?;
         // 如果读取失败, 则返回已经读取的字节数, 或错误码
 
@@ -219,7 +222,7 @@ pub fn sys_readv(fd: usize, iov_ptr: *const IoVec, iovcnt: usize) -> SyscallRet 
         }
         total_read += read;
     }
-    log::info!("[sys_readv] total_read: {}", total_read);
+    log::info!("[sys_readv] total_read: {}, fd: {}", total_read, fd);
     Ok(total_read)
 }
 
@@ -1718,132 +1721,6 @@ pub fn sys_pselect6(
 //     return Ok(0);
 // }
 
-pub fn sys_ppoll(
-    fds: *mut PollFd,
-    nfds: usize,
-    timeout: *const TimeSpec,
-    sigmask: usize,
-) -> SyscallRet {
-    log::error!(
-        "[sys_ppoll] fds: {:?}, nfds: {}, timeout: {:?}, sigmask: {}",
-        fds,
-        nfds,
-        timeout,
-        sigmask
-    );
-    if nfds > i32::MAX as usize {
-        log::error!("[sys_ppoll] nfds is too large: {}", nfds);
-        return Err(Errno::EINVAL);
-    }
-    let task = current_task();
-    // 处理参数
-    let has_deadline = !timeout.is_null();
-    let mut tmo: TimeSpec = TimeSpec::default();
-    if has_deadline {
-        copy_from_user(timeout, &mut tmo as *mut TimeSpec, 1)?;
-    }
-    // Todo: 设置sigmaskconst
-    // 用于保存原来的sigmask, 后续需要恢复
-    let origin_sigset = task.op_sig_pending_mut(|sig_pending| sig_pending.mask.clone());
-    if sigmask != 0 {
-        let mut sigset: SigSet = SigSet::default();
-        copy_from_user(sigmask as *const SigSet, &mut sigset as *mut SigSet, 1)?;
-        task.op_sig_pending_mut(|sig_pending| sig_pending.mask = sigset);
-    }
-    drop(task);
-
-    // Todo: 把fd的监听改成阻塞
-    if !fds.is_null() {
-        let mut poll_fds: Vec<PollFd> = vec![PollFd::default(); nfds];
-        copy_from_user(fds, poll_fds.as_mut_ptr(), nfds)?;
-        for poll_fd in poll_fds.iter_mut() {
-            poll_fd.revents = PollEvents::empty();
-        }
-        let mut done;
-        loop {
-            log::trace!("[sys_ppoll]:loop");
-            done = 0;
-            let task = current_task();
-            let mut file_vec = Vec::new();
-            for i in 0..nfds {
-                let poll_fd = &mut poll_fds[i];
-                log::info!("[sys_ppoll] poll_fd: {:?}", poll_fd);
-                if poll_fd.fd < 0 {
-                    continue;
-                } else {
-                    if let Some(file) = task.fd_table().get_file(poll_fd.fd as usize) {
-                        let mut trigger = 0;
-                        if file.hang_up() {
-                            poll_fd.revents |= PollEvents::HUP;
-                            trigger = 1;
-                        }
-                        if poll_fd.events.contains(PollEvents::IN) && file.r_ready() {
-                            poll_fd.revents |= PollEvents::IN;
-                            trigger = 1;
-                        }
-                        if poll_fd.events.contains(PollEvents::OUT) && file.w_ready() {
-                            poll_fd.revents |= PollEvents::OUT;
-                            trigger = 1;
-                        }
-                        file_vec.push(file);
-                        done += trigger;
-                    } else {
-                        // pollfd的fd字段大于0, 但是对应文件描述符并没有打开, 设置pollfd.revents为POLLNVAL
-                        poll_fd.revents |= PollEvents::INVAL;
-                        log::error!("[sys_ppoll] invalid fd: {}", poll_fd.fd);
-                    }
-                }
-            }
-            if done > 0 {
-                log::error!("[sys_ppoll] done: {}", done);
-                break;
-            }
-            // 添加等待队列
-            for file in file_vec {
-                // 添加到等待队列
-                file.add_wait_queue(task.tid());
-            }
-            if has_deadline {
-                if tmo == TimeSpec::default() {
-                    // timeout为0表示立即返回, 即使没有fd准备好
-                    log::error!("[sys_ppoll] timeout is 0");
-                    break;
-                } else {
-                    let ret = wait_timeout(tmo, -1);
-                    if ret == -1 {
-                        // 被信号唤醒
-                        log::error!("[sys_ppoll] wakeup by signal");
-                        return Err(Errno::EINTR);
-                    } else if ret == -2 {
-                        // 超时了, 返回
-                        log::error!("[sys_ppoll] timeout");
-                        break;
-                    }
-                }
-            } else {
-                // 没有设置timeout, 无限期等待
-                log::warn!("[sys_ppoll] wait indefinitely");
-                wait();
-            }
-            log::info!("[sys_ppoll] wake up from wait");
-        }
-        // 写回用户空间
-        copy_to_user(fds, poll_fds.as_ptr(), nfds)?;
-        // 恢复origin sigmask
-        if sigmask != 0 {
-            let task = current_task();
-            task.op_sig_pending_mut(|sig_pending| sig_pending.mask = origin_sigset);
-        }
-        Ok(done)
-    } else {
-        // 不监听fd，只是为了等待信号
-        wait();
-        current_task().cancel_restart();
-        log::error!("[sys_ppoll] wakeup by signal");
-        return Err(Errno::EINTR);
-    }
-}
-
 // pub fn sys_ppoll(
 //     fds: *mut PollFd,
 //     nfds: usize,
@@ -1857,16 +1734,17 @@ pub fn sys_ppoll(
 //         timeout,
 //         sigmask
 //     );
+//     if nfds > i32::MAX as usize {
+//         log::error!("[sys_ppoll] nfds is too large: {}", nfds);
+//         return Err(Errno::EINVAL);
+//     }
 //     let task = current_task();
 //     // 处理参数
-//     let timeout = if timeout.is_null() {
-//         // timeout为负数对于poll来说是无限等待
-//         -1
-//     } else {
-//         let mut tmo: TimeSpec = TimeSpec::default();
+//     let has_deadline = !timeout.is_null();
+//     let mut tmo: TimeSpec = TimeSpec::default();
+//     if has_deadline {
 //         copy_from_user(timeout, &mut tmo as *mut TimeSpec, 1)?;
-//         (tmo.sec * 1000 + tmo.nsec / 1000000) as isize
-//     };
+//     }
 //     // Todo: 设置sigmaskconst
 //     // 用于保存原来的sigmask, 后续需要恢复
 //     let origin_sigset = task.op_sig_pending_mut(|sig_pending| sig_pending.mask.clone());
@@ -1889,8 +1767,10 @@ pub fn sys_ppoll(
 //             log::trace!("[sys_ppoll]:loop");
 //             done = 0;
 //             let task = current_task();
+//             let mut file_vec = Vec::new();
 //             for i in 0..nfds {
 //                 let poll_fd = &mut poll_fds[i];
+//                 log::info!("[sys_ppoll] poll_fd: {:?}", poll_fd);
 //                 if poll_fd.fd < 0 {
 //                     continue;
 //                 } else {
@@ -1908,6 +1788,7 @@ pub fn sys_ppoll(
 //                             poll_fd.revents |= PollEvents::OUT;
 //                             trigger = 1;
 //                         }
+//                         file_vec.push(file);
 //                         done += trigger;
 //                     } else {
 //                         // pollfd的fd字段大于0, 但是对应文件描述符并没有打开, 设置pollfd.revents为POLLNVAL
@@ -1920,17 +1801,34 @@ pub fn sys_ppoll(
 //                 log::error!("[sys_ppoll] done: {}", done);
 //                 break;
 //             }
-//             if timeout == 0 {
-//                 // timeout为0表示立即返回, 即使没有fd准备好
-//                 break;
-//             } else if timeout > 0 {
-//                 if get_time_ms() > timeout as usize {
-//                     // 超时了, 返回
-//                     break;
-//                 }
+//             // 添加等待队列
+//             for file in file_vec {
+//                 // 添加到等待队列
+//                 file.add_wait_queue(task.tid());
 //             }
-//             drop(task);
-//             yield_current_task();
+//             if has_deadline {
+//                 if tmo == TimeSpec::default() {
+//                     // timeout为0表示立即返回, 即使没有fd准备好
+//                     log::error!("[sys_ppoll] timeout is 0");
+//                     break;
+//                 } else {
+//                     let ret = wait_timeout(tmo, -1);
+//                     if ret == -1 {
+//                         // 被信号唤醒
+//                         log::error!("[sys_ppoll] wakeup by signal");
+//                         return Err(Errno::EINTR);
+//                     } else if ret == -2 {
+//                         // 超时了, 返回
+//                         log::error!("[sys_ppoll] timeout");
+//                         break;
+//                     }
+//                 }
+//             } else {
+//                 // 没有设置timeout, 无限期等待
+//                 log::warn!("[sys_ppoll] wait indefinitely");
+//                 wait();
+//             }
+//             log::info!("[sys_ppoll] wake up from wait");
 //         }
 //         // 写回用户空间
 //         copy_to_user(fds, poll_fds.as_ptr(), nfds)?;
@@ -1943,10 +1841,115 @@ pub fn sys_ppoll(
 //     } else {
 //         // 不监听fd，只是为了等待信号
 //         wait();
+//         current_task().cancel_restart();
 //         log::error!("[sys_ppoll] wakeup by signal");
 //         return Err(Errno::EINTR);
 //     }
 // }
+
+pub fn sys_ppoll(
+    fds: *mut PollFd,
+    nfds: usize,
+    timeout: *const TimeSpec,
+    sigmask: usize,
+) -> SyscallRet {
+    log::error!(
+        "[sys_ppoll] fds: {:?}, nfds: {}, timeout: {:?}, sigmask: {}",
+        fds,
+        nfds,
+        timeout,
+        sigmask
+    );
+    let task = current_task();
+    // 处理参数
+    let timeout = if timeout.is_null() {
+        // timeout为负数对于poll来说是无限等待
+        -1
+    } else {
+        let mut tmo: TimeSpec = TimeSpec::default();
+        copy_from_user(timeout, &mut tmo as *mut TimeSpec, 1)?;
+        (tmo.sec * 1000 + tmo.nsec / 1000000) as isize
+    };
+    // Todo: 设置sigmaskconst
+    // 用于保存原来的sigmask, 后续需要恢复
+    let origin_sigset = task.op_sig_pending_mut(|sig_pending| sig_pending.mask.clone());
+    if sigmask != 0 {
+        let mut sigset: SigSet = SigSet::default();
+        copy_from_user(sigmask as *const SigSet, &mut sigset as *mut SigSet, 1)?;
+        task.op_sig_pending_mut(|sig_pending| sig_pending.mask = sigset);
+    }
+    drop(task);
+
+    // Todo: 把fd的监听改成阻塞
+    if !fds.is_null() {
+        let mut poll_fds: Vec<PollFd> = vec![PollFd::default(); nfds];
+        copy_from_user(fds, poll_fds.as_mut_ptr(), nfds)?;
+        for poll_fd in poll_fds.iter_mut() {
+            poll_fd.revents = PollEvents::empty();
+        }
+        let mut done;
+        loop {
+            log::trace!("[sys_ppoll]:loop");
+            done = 0;
+            let task = current_task();
+            for i in 0..nfds {
+                let poll_fd = &mut poll_fds[i];
+                if poll_fd.fd < 0 {
+                    continue;
+                } else {
+                    if let Some(file) = task.fd_table().get_file(poll_fd.fd as usize) {
+                        let mut trigger = 0;
+                        if file.hang_up() {
+                            poll_fd.revents |= PollEvents::HUP;
+                            trigger = 1;
+                        }
+                        if poll_fd.events.contains(PollEvents::IN) && file.r_ready() {
+                            poll_fd.revents |= PollEvents::IN;
+                            trigger = 1;
+                        }
+                        if poll_fd.events.contains(PollEvents::OUT) && file.w_ready() {
+                            poll_fd.revents |= PollEvents::OUT;
+                            trigger = 1;
+                        }
+                        done += trigger;
+                    } else {
+                        // pollfd的fd字段大于0, 但是对应文件描述符并没有打开, 设置pollfd.revents为POLLNVAL
+                        poll_fd.revents |= PollEvents::INVAL;
+                        log::error!("[sys_ppoll] invalid fd: {}", poll_fd.fd);
+                    }
+                }
+            }
+            if done > 0 {
+                log::error!("[sys_ppoll] done: {}", done);
+                break;
+            }
+            if timeout == 0 {
+                // timeout为0表示立即返回, 即使没有fd准备好
+                break;
+            } else if timeout > 0 {
+                if get_time_ms() > timeout as usize {
+                    // 超时了, 返回
+                    break;
+                }
+            }
+            drop(task);
+            yield_current_task();
+        }
+        // 写回用户空间
+        copy_to_user(fds, poll_fds.as_ptr(), nfds)?;
+        // 恢复origin sigmask
+        if sigmask != 0 {
+            let task = current_task();
+            task.op_sig_pending_mut(|sig_pending| sig_pending.mask = origin_sigset);
+        }
+        Ok(done)
+    } else {
+        // 不监听fd，只是为了等待信号
+        wait();
+        log::error!("[sys_ppoll] wakeup by signal");
+        return Err(Errno::EINTR);
+    }
+}
 
 pub fn sys_readlinkat(dirfd: i32, pathname: *const u8, buf: *mut u8, bufsiz: isize) -> SyscallRet {
     if bufsiz <= 0 {

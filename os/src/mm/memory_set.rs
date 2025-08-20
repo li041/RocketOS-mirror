@@ -1598,7 +1598,8 @@ impl MemorySet {
                             map_perm.insert(MapPermission::W);
                             let pte_flags = PTEFlags::from(map_perm);
                             let ppn = new_page.ppn();
-                            log::error!("vpn: {:#x}, ppn: {:#x}", vpn.0, ppn.0);
+                            // 8.20 tmp comment
+                            // log::error!("vpn: {:#x}, ppn: {:#x}", vpn.0, ppn.0);
                             self.page_table.map(vpn, ppn, pte_flags);
                             // 增加页的引用计数
                             area.pages.insert(va.floor(), Arc::new(new_page));
@@ -1633,7 +1634,7 @@ impl MemorySet {
                                     self.areas.range(..old_start_vpn).next_back()
                                 {
                                     let prev_end = prev_area.vpn_range.get_end();
-                                    log::warn!(
+                                    log::debug!(
                                         "[handle_lazy_allocation_area] stack lazy alloc, prev_end: {:#x}, old_start_vpn: {:#x}",
                                         prev_end.0,
                                         old_start_vpn.0
@@ -1641,7 +1642,7 @@ impl MemorySet {
 
                                     // 检查是否满足间距要求 (e.g., stack_guard_gap 页)
                                     if old_start_vpn.0 - prev_end.0 < STACK_GUARD_GAP_PAGES {
-                                        log::warn!("[handle_lazy_allocation_area] stack cannot grow: guard gap too small");
+                                        log::debug!("[handle_lazy_allocation_area] stack cannot grow: guard gap too small");
                                         return Err(Sig::SIGSEGV);
                                     }
                                 }
@@ -1649,7 +1650,7 @@ impl MemorySet {
                                 // 向下增长一页
                                 let mut area = self.areas.remove(&old_start_vpn).unwrap();
                                 let new_start_vpn = VirtPageNum(old_start_vpn.0 - 1);
-                                log::warn!(
+                                log::debug!(
                                     "[handle_lazy_allocation_area] stack lazy alloc, vpn: {:#x}, ppn: {:#x}",
                                     new_start_vpn.0,
                                     ppn.0
@@ -1679,7 +1680,7 @@ impl MemorySet {
                                 let vpn = VirtPageNum(vpn);
                                 if let Some(page) = pages.get(&vpn) {
                                     // 如果已经有页了, 则跳过
-                                    log::warn!(
+                                    log::debug!(
                                         "[handle_lazy_allocation_area] lazy alloc area, vpn: {:#x}, ppn: {:#x} already exists",
                                         vpn.0,
                                         page.ppn().0
@@ -2127,6 +2128,19 @@ impl MemorySet {
                 va.0,
                 pte
             );
+            #[cfg(target_arch = "riscv64")]
+            if pte.is_valid() && pte.executable() {
+                log::error!(
+                    "[handle_recoverable_page_fault] page fault find pte, not COW, but writable"
+                );
+                let mut flags = pte.flags();
+                flags.insert(PTEFlags::W);
+                #[cfg(target_arch = "loongarch64")]
+                flags.insert(PTEFlags::D);
+                *pte = PageTableEntry::new(pte.ppn(), flags);
+                // 直接返回, 不处理
+                return Ok(());
+            }
             // 7.23 Debug
             self.page_table.dump_all_user_mapping();
             // 页表中有对应的页表项, 但不是COW, 同时也没有写权限

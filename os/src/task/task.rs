@@ -1948,7 +1948,7 @@ pub fn kernel_exit(task: Arc<Task>, exit_code: i32) {
                             // stime: task.time_stat().sys_time().as_ticks(),
                         },
                     },
-                    false,
+                    true,
                 );
                 log::debug!(
                     "[kernel_exit] Task{} wakeup parent-{}",

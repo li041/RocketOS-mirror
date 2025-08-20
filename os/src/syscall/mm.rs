@@ -928,12 +928,13 @@ impl From<i32> for MadviseAdvice {
 
 // Todo:
 pub fn sys_madvise(addr: usize, len: usize, advice: i32) -> SyscallRet {
-    log::info!(
-        "sys_madvise: addr: {:#x}, len: {:#x}, advice: {:#x}",
-        addr,
-        len,
-        advice
-    );
+    // 8.20 tmp comment
+    // log::info!(
+    //     "sys_madvise: addr: {:#x}, len: {:#x}, advice: {:#x}",
+    //     addr,
+    //     len,
+    //     advice
+    // );
     // addr必须页对齐
     if addr % PAGE_SIZE != 0 {
         return Err(Errno::EINVAL);
@@ -971,7 +972,7 @@ pub fn sys_madvise(addr: usize, len: usize, advice: i32) -> SyscallRet {
             //     }
             //     Ok(0)
             // })
-            log::info!("[sys_madvise] DontNeed: {:#x} ~ {:#x}", addr, addr + len);
+            // log::info!("[sys_madvise] DontNeed: {:#x} ~ {:#x}", addr, addr + len);
             Ok(0)
         }
         MadviseAdvice::WillNeed => {
