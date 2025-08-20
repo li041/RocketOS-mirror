@@ -121,7 +121,7 @@ run:
 	@cd ./os && make run ARCH=$(ARCH) MODE=$(MODE)
 
 zImage:
-	@cd ./user && make build ARCH=$(ARCH) MODE=$(MODE)
+	@cd ./user && make build ARCH=$(ARCH) MODE=$(MODE) FEATURES=$(FEATURES)
 	@cd ./os && make zImage ARCH=$(ARCH) MODE=$(MODE)
 
 bench: 

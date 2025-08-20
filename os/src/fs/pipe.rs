@@ -385,7 +385,7 @@ impl Pipe {
                 // log::error!("[Pipe::read] set waiter: {}", current_task().tid());
                 if wait() == -1 {
                     // log::error!("[Pipe::read] wait failed");
-                    return Err(Errno::ERESTARTSYS);
+                    return Err(Errno::EINTR);
                 }
                 continue;
             }

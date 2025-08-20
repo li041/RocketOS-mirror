@@ -120,7 +120,7 @@ build-vf2:
 	@rm -rf .cargo
 	@mkdir .cargo
 	@cp cargo/config_vf2.toml .cargo/config.toml
-	USER_TARGET_PATH=$(USER_TARGET_PATH) LOG=$(LOG) cargo build $(MODE_ARG) --features vf2 --target $(TARGET)
+	USER_TARGET_PATH=$(USER_TARGET_PATH) LOG=$(LOG) cargo build $(MODE_ARG) --features $(FEATURES) --target $(TARGET)
 	@$(OBJCOPY) $(KERNEL_ELF) --strip-all -O binary $(KERNEL_BIN)
 
 build-la2000:
