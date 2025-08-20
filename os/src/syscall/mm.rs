@@ -73,11 +73,11 @@ pub fn sys_brk(brk: usize) -> SyscallRet {
             } else {
                 // 扩展堆空间
                 // 懒分配
-                #[cfg(target_arch = "riscv64")]
-                {
-                    memory_set.remap_area_with_start_vpn(start_vpn, new_end_vpn);
-                }
-                #[cfg(target_arch = "loongarch64")]
+                // #[cfg(target_arch = "riscv64")]
+                // {
+                //     memory_set.remap_area_with_start_vpn(start_vpn, new_end_vpn);
+                // }
+                // #[cfg(target_arch = "loongarch64")]
                 {
                     // loongarch需要检查[heap_bottom, brk)中间是否有其他映射
                     let heap_range = VPNRange::new(start_vpn, new_end_vpn);
@@ -127,11 +127,11 @@ pub fn sys_brk(brk: usize) -> SyscallRet {
             }
         } else if brk < floor_to_page_size(current_brk) {
             // 需要释放页, 若start_vpn == new_end_vpn, 会将空间删除
-            #[cfg(target_arch = "riscv64")]
-            {
-                memory_set.remap_area_with_start_vpn(start_vpn, new_end_vpn);
-            }
-            #[cfg(target_arch = "loongarch64")]
+            // #[cfg(target_arch = "riscv64")]
+            // {
+            //     memory_set.remap_area_with_start_vpn(start_vpn, new_end_vpn);
+            // }
+            // #[cfg(target_arch = "loongarch64")]
             {
                 // loongarch需要检查[brk, current_brk)中间是否有其他映射
                 let old_end_vpn =
