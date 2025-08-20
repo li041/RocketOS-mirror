@@ -411,9 +411,10 @@ impl Pipe {
     pub fn write(&self, buf: &[u8]) -> SyscallRet {
         // 8.13 Debug
         log::info!(
-            "[Pipe::write] Entering write, buf len: {}, pipe size: {}",
+            "[Pipe::write] Entering write, buf len: {}, pipe size: {}, task: {}",
             buf.len(),
-            self.get_size()
+            self.get_size(),
+            current_task().tid()
         );
         debug_assert!(self.writable);
         let mut write_size = 0;

@@ -2257,6 +2257,44 @@ pub fn write_inode(inode: &Ext4Inode, inode_num: usize, block_device: Arc<dyn Bl
     });
 }
 
+pub fn write_inode_to_disk(
+    inode: &Ext4Inode,
+    inode_num: usize,
+    block_device: Arc<dyn BlockDevice>,
+) {
+    log::warn!(
+        "[write_inode] inode_num: {}, size: {}",
+        inode_num,
+        inode.inner.read().inode_on_disk.get_size()
+    );
+    let ext4_fs = inode.ext4_fs.upgrade().unwrap();
+    let inodes_per_group = ext4_fs.super_block.inodes_per_group as usize;
+    let bg = (inode_num - 1) / inodes_per_group;
+    let index = (inode_num - 1) % inodes_per_group;
+    let inode_table_block_id = ext4_fs.block_groups[bg].inode_table() as usize;
+    let outer_offset =
+        index * ext4_fs.super_block.inode_size as usize / ext4_fs.super_block.block_size as usize;
+    let inner_offset =
+        index * ext4_fs.super_block.inode_size as usize % ext4_fs.super_block.block_size as usize;
+    let inode_on_disk = &inode.inner.read().inode_on_disk;
+    get_block_cache(
+        inode_table_block_id + outer_offset,
+        block_device.clone(),
+        ext4_fs.super_block.block_size as usize,
+    )
+    .lock()
+    .modify(inner_offset, |inode_disk: &mut Ext4InodeDisk| {
+        *inode_disk = *inode_on_disk
+    });
+    get_block_cache(
+        inode_table_block_id + outer_offset,
+        block_device.clone(),
+        ext4_fs.super_block.block_size as usize,
+    )
+    .lock()
+    .sync();
+}
+
 pub fn write_inode_on_disk(
     dir_inode: &Ext4Inode,
     inode_on_disk: &Ext4InodeDisk,

@@ -1,7 +1,6 @@
-use alloc::vec::Vec;
-use rand::{rngs::SmallRng, RngCore, SeedableRng};
-use alloc::vec;
 use super::errno::SyscallRet;
+use crate::fs::dentry::flush;
+use crate::fs::dev::urandom::URANDOM;
 use crate::{
     arch::{
         config::PAGE_SIZE,
@@ -10,7 +9,10 @@ use crate::{
     },
     bpf::{uapi::BpfCmd, *},
     fs::{
-        fdtable::FdFlags, file::{FileOp, OpenFlags}, namei::path_openat, uapi::{RLimit, Resource}
+        fdtable::FdFlags,
+        file::{FileOp, OpenFlags},
+        namei::path_openat,
+        uapi::{RLimit, Resource},
     },
     signal::Sig,
     syscall::errno::Errno,
@@ -23,13 +25,13 @@ use crate::{
     time::{config::ClockIdFlags, do_adjtimex, KernelTimex, LAST_TIMEX},
     timer::{ITimerSpec, ITimerVal, TimeSpec, TimeVal},
 };
-use crate::fs::dev::urandom::URANDOM;
+use alloc::vec;
+use alloc::vec::Vec;
+use rand::{rngs::SmallRng, RngCore, SeedableRng};
 // pub const RANDOM_SEED:[u8;32]=[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32];
 pub const RANDOM_SEED: [u8; 32] = [
-    0x3f, 0x9a, 0x1c, 0x6b, 0x4d, 0x2e, 0x8f, 0x01,
-    0xb7, 0xc4, 0xe2, 0xa9, 0xd5, 0xf0, 0xb3, 0xc4,
-    0xa6, 0xe1, 0xf0, 0xd2, 0xc3, 0xb4, 0xa5, 0x96,
-    0x87, 0xc5, 0xe2, 0xd1, 0xa0, 0xb9, 0xc8, 0x7f,
+    0x3f, 0x9a, 0x1c, 0x6b, 0x4d, 0x2e, 0x8f, 0x01, 0xb7, 0xc4, 0xe2, 0xa9, 0xd5, 0xf0, 0xb3, 0xc4,
+    0xa6, 0xe1, 0xf0, 0xd2, 0xc3, 0xb4, 0xa5, 0x96, 0x87, 0xc5, 0xe2, 0xd1, 0xa0, 0xb9, 0xc8, 0x7f,
 ];
 
 static mut SEED: [u8; 32] = RANDOM_SEED;
@@ -40,7 +42,6 @@ fn update_seed() {
         SEED.rotate_left(1);
     }
 }
-
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -1407,10 +1408,10 @@ pub fn sys_getrandom(buf: usize, len: usize, flag: usize) -> SyscallRet {
     if flag > 4 {
         return Err(Errno::EINVAL);
     }
-    
+
     // 每次调用之前更新种子
     update_seed();
-    
+
     unsafe {
         let mut rng = SmallRng::from_seed(SEED);
         let mut kernel_buf = vec![0u8; len];
@@ -1422,6 +1423,11 @@ pub fn sys_getrandom(buf: usize, len: usize, flag: usize) -> SyscallRet {
 }
 pub fn sys_shutdown() -> SyscallRet {
     shutdown(false);
+}
+
+pub fn sys_flush() -> SyscallRet {
+    flush();
+    Ok(0)
 }
 
 #[repr(C)]

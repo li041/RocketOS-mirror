@@ -47,7 +47,7 @@ pub trait InodeOp: Any + Send + Sync {
         unimplemented!();
     }
     fn fsync<'a>(&'a self) -> SyscallRet {
-        unimplemented!();
+        Ok(0)
     }
     // 返回目录项
     // 先查找Denrty的children, 如果没有再查找目录

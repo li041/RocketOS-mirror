@@ -96,12 +96,13 @@ impl BlockCache {
 
 impl Drop for BlockCache {
     fn drop(&mut self) {
+        log::info!("[BlockCache] Drop BlockCache: block_id = {}", self.block_id);
         self.sync()
     }
 }
 
 pub struct BlockCacheManager {
-    queue: VecDeque<(usize, Arc<Mutex<BlockCache>>)>,
+    pub queue: VecDeque<(usize, Arc<Mutex<BlockCache>>)>,
 }
 
 impl BlockCacheManager {

@@ -169,3 +169,7 @@ pub fn shutdown() -> ! {
     sys_shutdown();
     loop {}
 }
+
+pub fn flush() {
+    sys_flush();
+}

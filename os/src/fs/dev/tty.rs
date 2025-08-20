@@ -172,7 +172,7 @@ struct WinSize {
 impl WinSize {
     fn new() -> Self {
         Self {
-            ws_row: 67,
+            ws_row: 15,
             ws_col: 120,
             ws_xpixel: 0,
             ws_ypixel: 0,

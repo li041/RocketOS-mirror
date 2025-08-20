@@ -13,7 +13,11 @@ use lazy_static::lazy_static;
 use spin::{Mutex, RwLock};
 
 use crate::{
-    ext4::inode::{S_IFMT, S_IFREG, S_ISGID, S_ISUID},
+    drivers::{block::block_cache::BLOCK_CACHE_MANAGER, BLOCK_DEVICE},
+    ext4::inode::{
+        write_inode, write_inode_on_disk, write_inode_to_disk, Ext4Inode, S_IFMT, S_IFREG, S_ISGID,
+        S_ISUID,
+    },
     fs::uapi::F_SEAL_SHRINK,
     syscall::errno::{Errno, SyscallRet},
     task::current_task,
@@ -494,6 +498,9 @@ impl Dentry {
     pub fn get_inode(&self) -> Arc<dyn InodeOp> {
         self.inner.lock().inode.clone().unwrap()
     }
+    pub fn get_inode_opt(&self) -> Option<Arc<dyn InodeOp>> {
+        self.inner.lock().inode.clone()
+    }
     pub fn get_parent(&self) -> Arc<Dentry> {
         self.inner
             .lock()
@@ -553,6 +560,44 @@ pub fn clean_dentry_cache() {
         cache_map.remove(&key);
         log::debug!("[DentryCache] Removed {} due to low strong count", key);
     }
+}
+
+pub fn flush_all_dentries() -> SyscallRet {
+    let cache = DENTRY_CACHE.read();
+    let mut cache_map = cache.cache.write(); // 需要写锁来删除
+    for (key, dentry) in cache_map.iter() {
+        if dentry.absolute_path.starts_with("/proc")
+            || dentry.absolute_path.starts_with("/tty")
+            || dentry.absolute_path.starts_with("/dev")
+        {
+            continue;
+        }
+        if let Some(inode) = dentry.get_inode_opt() {
+            inode.fsync();
+            if let Some(inode) = inode.as_any().downcast_ref::<Ext4Inode>() {
+                write_inode_to_disk(inode, inode.get_inode_num(), inode.block_device.clone());
+            } else {
+                log::warn!(
+                    "[flush_all_dentries] Dentry {} is not an Ext4Inode, skipping flush",
+                    dentry.absolute_path
+                );
+            }
+        } else {
+            log::warn!(
+                "[flush_all_dentries] Dentry {} has no associated inode, skipping flush",
+                dentry.absolute_path
+            );
+        }
+    }
+    Ok(0)
+}
+
+pub fn flush() -> SyscallRet {
+    flush_all_dentries();
+    DENTRY_CACHE.write().cache.write().clear();
+    // CORE_DENTRIES.lock().clear();
+    // BLOCK_CACHE_MANAGER.lock().queue.clear();
+    Ok(0)
 }
 
 pub fn dump_dentry_cache() {

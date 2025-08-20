@@ -21,7 +21,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use shell::command::parse_pipeline;
 use user_lib::console::getchar;
-use user_lib::{chdir, close, dup3, fork, pipe, waitpid};
+use user_lib::{chdir, close, dup3, flush, fork, pipe, waitpid};
 
 fn print_prompt() {
     let cwd = user_lib::getcwd(); // 假设你有这个系统调用
@@ -64,6 +64,10 @@ pub fn main() -> i32 {
                                 println!("cd: failed to change directory to '{}'", target_dir);
                             }
                         }
+                        line.clear();
+                    } else if line.contains("flush") {
+                        flush();
+                        println!("Flushed file system caches.");
                         line.clear();
                     } else {
                         let expanded_line = env.expand_variables(&line);

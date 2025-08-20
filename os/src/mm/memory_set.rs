@@ -1914,7 +1914,7 @@ impl MemorySet {
                             if area.vpn_range.contains_vpn(vpn) {
                                 let data_frame = area.pages.get(&vpn).unwrap();
                                 if Arc::strong_count(data_frame) == 1 {
-                                    log::warn!(
+                                    log::debug!(
                                         "[pre_handle_cow_and_lazy_alloc] arc strong count == 1, vpn: {:#x}",
                                         vpn.0
                                     );
@@ -1925,7 +1925,7 @@ impl MemorySet {
                                     flags.insert(PTEFlags::D);
                                     *pte = PageTableEntry::new(pte.ppn(), flags);
                                 } else {
-                                    log::warn!(
+                                    log::debug!(
                                         "[pre_handle_cow_and_lazy_alloc] arc strong count > 1, vpn: {:#x}",
                                         vpn.0
                                     );
@@ -1971,7 +1971,7 @@ impl MemorySet {
                                             pte_flags.insert(PTEFlags::W);
                                             #[cfg(target_arch = "loongarch64")]
                                             pte_flags.insert(PTEFlags::D);
-                                            log::warn!(
+                                            log::debug!(
                                                 "[pre_handle_cow_and_lazy_alloc] lazy alloc filebe, vpn: {:#x}, ppn: {:#x}",
                                                 vpn.0,
                                                 page.ppn().0
